@@ -21,6 +21,8 @@ for a binary or a Docker image — see
 | Upload & workflow | Detection | Analytics |
 |------------------|---------------------|---------------------|
 | ![Main screen](other/logstotal_main.webp) | ![Findings](other/logstotal_detection.webp) | ![Analysis](other/logstotal_analysis.webp) |
+| **Events timeline** | **Rules** | **Process tree** |
+| ![Events timeline](other/logstotal_timeline.webp) | ![Rules](other/logstotal_rules.webp) | ![Process tree](other/logstotal_process_tree.webp) |
 
 ## What you get
 
