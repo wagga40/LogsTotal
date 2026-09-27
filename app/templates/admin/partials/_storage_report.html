@@ -1,0 +1,259 @@
+{# Self-contained region and its own swap target — the `_case_notes.html` idiom. Rescan
+   re-renders exactly this. Every byte figure goes through the shared `humanbytes` filter,
+   so no two figures can format differently. #}
+<div id="storage-region">
+
+{% if report.error %}
+<div class="mb-4 rounded-lg border border-red-800 bg-red-950/30 px-4 py-3 text-sm text-red-300">
+  Could not read storage: {{ report.error }}
+</div>
+{% endif %}
+
+<!-- ── Overview ─────────────────────────────────────────────────────── -->
+<div x-show="tab === 'overview'">
+  <div class="grid gap-4 md:grid-cols-3 mb-6">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <p class="text-xs text-gray-500 mb-1">Uploaded logs</p>
+      <p class="text-2xl font-semibold">{{ report.uploads_bytes | humanbytes }}</p>
+      <p class="text-xs text-gray-500 mt-1">{{ report.uploads_count }} file{{ 's' if report.uploads_count != 1 }}</p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <p class="text-xs text-gray-500 mb-1">Tool output</p>
+      <p class="text-2xl font-semibold">{{ report.outputs_bytes | humanbytes }}</p>
+      <p class="text-xs text-gray-500 mt-1">
+        {{ report.outputs_count }} file{{ 's' if report.outputs_count != 1 }}
+        {# The dashboard figure has always been SUM(LogFile.size_bytes) alone, which
+           excludes every byte under uploads/job_*/ — usually most of the growth. #}
+        <span class="block text-gray-600">not counted by the dashboard total</span>
+      </p>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+      <p class="text-xs text-gray-500 mb-1">Total stored</p>
+      <p class="text-2xl font-semibold">{{ report.total_bytes | humanbytes }}</p>
+      <p class="text-xs text-gray-500 mt-1">{{ report.backend }} backend</p>
+    </div>
+  </div>
+
+  {% if report.free_bytes is not none %}
+  {% set used_share = (report.total_bytes / (report.total_bytes + report.free_bytes) * 100) if (report.total_bytes + report.free_bytes) else 0 %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+    <div class="flex items-baseline justify-between mb-2">
+      <p class="text-sm font-medium">Volume holding uploads</p>
+      <p class="text-xs text-gray-500">{{ report.free_bytes | humanbytes }} free</p>
+    </div>
+    <div class="h-2 rounded-full bg-gray-800 overflow-hidden">
+      <div class="h-full {% if used_share > 90 %}bg-red-500{% elif used_share > 75 %}bg-yellow-500{% else %}bg-blue-500{% endif %}"
+           style="width: {{ [used_share, 100] | min | round(1) }}%"></div>
+    </div>
+    <p class="text-xs text-gray-500 mt-2">
+      {# Shown for S3 too: the local volume still spools every upload and stages every
+         worker's output, which is where running out of space is most surprising. #}
+      This is the local volume. It matters on S3 as well &mdash; uploads are spooled here before
+      they leave, and workers stage their output here.
+    </p>
+  </div>
+  {% endif %}
+
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+    <div class="flex items-baseline justify-between mb-3">
+      <h2 class="text-sm font-semibold">Database record vs disk</h2>
+      <button class="lt-btn lt-btn--sm"
+              hx-get="/admin/storage/usage-partial?force=1"
+              hx-target="#storage-region" hx-swap="morph" hx-ext="alpine-morph"
+              hx-indicator="#storage-rescanning">Rescan</button>
+    </div>
+    <dl class="grid gap-3 sm:grid-cols-2 text-sm">
+      <div>
+        <dt class="text-xs text-gray-500">Recorded in the database</dt>
+        <dd class="text-gray-200">{{ db_file_bytes | humanbytes }} across {{ db_file_count }} file{{ 's' if db_file_count != 1 }}</dd>
+      </div>
+      <div>
+        <dt class="text-xs text-gray-500">Found on storage</dt>
+        <dd class="text-gray-200">{{ report.uploads_bytes | humanbytes }} across {{ report.uploads_count }} file{{ 's' if report.uploads_count != 1 }}</dd>
+      </div>
+    </dl>
+    <p class="text-xs text-gray-500 mt-3">
+      A gap between these two is itself the finding: files nothing claims, or rows whose file
+      has gone. The <button type="button" class="text-blue-400 hover:underline" @click="select('reclaim')">Reclaim</button> tab breaks it down.
+    </p>
+    <span id="storage-rescanning" class="htmx-indicator text-xs text-gray-500">Rescanning…</span>
+    {% if report.truncated %}
+    <p class="text-xs text-yellow-500 mt-2">
+      Scan stopped at {{ report.scanned }} objects &mdash; the figures above are a floor, not a total.
+    </p>
+    {% endif %}
+  </div>
+</div>
+
+<!-- ── Largest ──────────────────────────────────────────────────────── -->
+<div x-show="tab === 'largest'" x-cloak>
+  <h2 class="text-lg font-semibold mb-3">Largest jobs by output</h2>
+  {% if report.largest_jobs %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Job</th>
+          <th class="px-4 py-3 font-medium">File</th>
+          <th class="px-4 py-3 font-medium text-right">Output</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for job_id, size in report.largest_jobs %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3"><a href="/jobs/{{ job_id }}" class="text-blue-400 hover:underline">#{{ job_id }}</a></td>
+          <td class="px-4 py-3 text-gray-400 truncate max-w-[320px]">{{ job_names.get(job_id) or '—' }}</td>
+          <td class="px-4 py-3 text-right font-mono">{{ size | humanbytes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-sm text-gray-500 mb-6">No job output on storage.</p>
+  {% endif %}
+
+  <h2 class="text-lg font-semibold mb-3">Largest uploads</h2>
+  {% if report.largest_uploads %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Stored file</th>
+          <th class="px-4 py-3 font-medium text-right">Size</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for key, size in report.largest_uploads %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3 text-gray-300 font-mono text-xs truncate max-w-[520px]" title="{{ key }}">{{ key }}</td>
+          <td class="px-4 py-3 text-right font-mono">{{ size | humanbytes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <p class="text-sm text-gray-500">No uploads on storage.</p>
+  {% endif %}
+</div>
+
+<!-- ── Reclaim ──────────────────────────────────────────────────────── -->
+<div x-show="tab === 'reclaim'" x-cloak>
+  <h2 class="text-lg font-semibold mb-1">Unowned data</h2>
+  <p class="text-xs text-gray-500 mb-3">
+    The retention sweep walks <em>jobs</em>, so anything whose row is already gone is
+    unreachable by it. This walks storage instead. A job still running owns its directory
+    and is never listed here.
+  </p>
+
+  {% if report.orphans %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-4">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">What</th>
+          <th class="px-4 py-3 font-medium">Count</th>
+          <th class="px-4 py-3 font-medium text-right">Size</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for group in report.orphans %}
+        <tr class="hover:bg-gray-800/50 transition align-top">
+          <td class="px-4 py-3">
+            <span class="text-gray-300">{{ group.label }}</span>
+            <span class="block text-xs text-gray-500 mt-0.5">{{ group.detail }}</span>
+            {% if group.samples %}
+            <span class="block text-[11px] text-gray-600 font-mono mt-1 truncate max-w-[520px]">e.g. {{ group.samples | join(', ') }}</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 font-mono">{{ group.count }}</td>
+          <td class="px-4 py-3 text-right font-mono">{{ group.bytes | humanbytes }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <div class="lt-bar mb-8">
+    <span class="text-sm text-gray-300">{{ report.reclaimable_bytes | humanbytes }} can be reclaimed.</span>
+    <span class="flex-1"></span>
+    <form method="POST" action="/admin/storage/purge-orphans"
+          data-confirm-title="Purge orphaned storage"
+          data-confirm-message="Permanently delete {{ report.reclaimable_bytes | humanbytes }} of data nothing in the database refers to. Storage is re-scanned when the task runs, so anything claimed in the meantime is left alone. This cannot be undone.">
+      <button type="submit" class="lt-btn lt-btn--sm lt-btn--danger">Purge</button>
+    </form>
+  </div>
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-8 text-center mb-8">
+    <p class="text-sm text-gray-500">Nothing unowned. Every stored object has a row behind it.</p>
+  </div>
+  {% endif %}
+
+  <h2 class="text-lg font-semibold mb-1">Retention</h2>
+  <p class="text-xs text-gray-500 mb-3">
+    Each window is applied by a daily sweep, which only runs while a worker is up &mdash; see the
+    Scheduled tab on <a href="/admin/tasks" class="text-blue-400 hover:underline">Tasks</a>.
+  </p>
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-4">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Data</th>
+          <th class="px-4 py-3 font-medium">Kept for</th>
+          <th class="px-4 py-3 font-medium">Set by</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for row in retention %}
+        <tr class="hover:bg-gray-800/50 transition align-top">
+          <td class="px-4 py-3">
+            <span class="text-gray-300">{{ row.label }}</span>
+            <span class="block text-xs text-gray-500 mt-0.5">{{ row.note }}</span>
+          </td>
+          <td class="px-4 py-3">
+            {% if row.disabled %}<span class="text-gray-500">forever</span>
+            {% else %}<span class="font-mono">{{ row.days }} days</span>{% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs">
+            {% if row.overridden %}
+            <span class="badge-base badge-running">set here</span>
+            {% else %}
+            <span class="text-gray-500 font-mono">{{ row.source }}</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  <form method="POST" action="/admin/storage/retention" class="lt-bar mb-4">
+    <span class="lt-ctl__label">Keep raw tool output for</span>
+    <input type="number" name="job_output_retention_days" min="0" placeholder="use .env"
+           value="{{ retention[0].days if retention[0].overridden else '' }}"
+           class="lt-field lt-field--sm w-28">
+    <span class="text-xs text-gray-500">days &mdash; leave empty to follow <code>JOB_OUTPUT_RETENTION_DAYS</code>, <code>0</code> to keep forever.</span>
+    <button type="submit" class="lt-btn lt-btn--sm">Save</button>
+  </form>
+
+  {# Its own form, not nested in the one above: a form inside a form is invalid HTML and
+     the browser silently drops the inner one, so the button would post nothing. #}
+  <form method="POST" action="/admin/storage/run-retention" class="lt-bar mb-8"
+        data-confirm-title="Run the sweep now"
+        data-confirm-message="Delete raw output for every job past the retention window, immediately. Findings and the events timeline are kept; the histogram, process tree and RAW ZIP export are not.">
+    <button type="submit" class="lt-btn lt-btn--sm lt-btn--warn">Run the output sweep now</button>
+    <span class="text-xs text-gray-500">Otherwise it runs daily at 04:45 UTC.</span>
+  </form>
+
+  <h2 class="text-lg font-semibold mb-1">Database</h2>
+  <div hx-get="/admin/storage/db-footprint-partial"
+       hx-trigger="loadDatabaseFootprint from:body once"
+       hx-swap="outerHTML">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-8 text-center">
+      <p class="text-sm text-gray-500">Measuring…</p>
+    </div>
+  </div>
+</div>
+
+</div>

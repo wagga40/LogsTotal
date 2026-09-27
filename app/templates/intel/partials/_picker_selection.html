@@ -1,0 +1,16 @@
+{#
+  Chip list of pending picker selections, shared by the Add-entity and Add-job dialogs.
+  Expects the `casePicker()` Alpine scope (selected[], remove(id)).
+
+  Labels are member-controlled (entity values, filenames), so they render through Alpine
+  `x-text`, which sets textContent — never innerHTML. The hidden inputs that actually
+  carry the ids are built with createElement in casePicker.syncHidden().
+#}
+<div x-show="selected.length" x-cloak class="flex flex-wrap gap-1.5">
+  <template x-for="item in selected" :key="item.id">
+    <span class="inline-flex items-center gap-1.5 max-w-full px-2 py-0.5 rounded-full text-xs border border-gray-700 bg-gray-800 text-gray-200">
+      <span class="truncate" x-text="item.label"></span>
+      <button type="button" @click="remove(item.id)" class="opacity-50 hover:opacity-100 leading-none" title="Remove">&times;</button>
+    </span>
+  </template>
+</div>

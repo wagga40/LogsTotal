@@ -1,0 +1,207 @@
+{
+  "attr_flags": [
+    "dga",
+    "gtfobin",
+    "lolbin",
+    "machine",
+    "private",
+    "privileged",
+    "signed_path",
+    "suspicious_tld"
+  ],
+  "colors": {
+    "kind": {
+      "finding": "#fbbf24",
+      "job": "#475569",
+      "typed": "#38bdf8"
+    },
+    "severity": {
+      "critical": "#ef4444",
+      "high": "#f97316",
+      "informational": "#6b7280",
+      "low": "#3b82f6",
+      "medium": "#eab308",
+      "unknown": "#4b5563"
+    },
+    "tactic": {
+      "_other": "#4b5563",
+      "collection": "#6366f1",
+      "command_and_control": "#a855f7",
+      "credential_access": "#14b8a6",
+      "defense_evasion": "#22c55e",
+      "discovery": "#38bdf8",
+      "execution": "#f97316",
+      "exfiltration": "#ec4899",
+      "impact": "#ef4444",
+      "initial_access": "#e11d48",
+      "lateral_movement": "#3b82f6",
+      "persistence": "#eab308",
+      "privilege_escalation": "#84cc16",
+      "reconnaissance": "#b04bff",
+      "resource_development": "#7c3aed"
+    },
+    "type": {
+      "cmdline_file": "#f43f5e",
+      "computer": "#a855f7",
+      "domain": "#06b6d4",
+      "executable": "#f97316",
+      "hash": "#eab308",
+      "ip_address": "#22c55e",
+      "service": "#14b8a6",
+      "task": "#6366f1",
+      "user": "#3b82f6"
+    },
+    "ui": {
+      "bg": "#0b1120",
+      "focal": "#fbbf24",
+      "label": "#e5e7eb",
+      "muted": "#374151",
+      "mutedLabel": "#6b7280",
+      "selection": "#60a5fa",
+      "watchlist": "#fbbf24"
+    }
+  },
+  "edge_kinds": [
+    "job",
+    "finding"
+  ],
+  "flags": {
+    "allowlisted": 2,
+    "dga": 16,
+    "focal": 4,
+    "gtfobin": 32,
+    "in_case": 8,
+    "lolbin": 64,
+    "machine": 128,
+    "private": 256,
+    "privileged": 512,
+    "signed_path": 1024,
+    "suspicious_tld": 2048,
+    "watchlist": 1
+  },
+  "labels": {
+    "kinds": {
+      "finding": "Same Sigma finding",
+      "job": "Same job (co-occurrence)",
+      "typed": "Typed relationship"
+    },
+    "rels": {
+      "communicates_with": "communicates with",
+      "connects_to": "connects to",
+      "creates": "creates",
+      "hashes_to": "hashes to",
+      "loads": "loads",
+      "logs_on_from": "logs on from",
+      "logs_on_to": "logs on to",
+      "parent_of": "parent of",
+      "resolves_to": "resolves to",
+      "runs_as": "runs as",
+      "runs_on": "runs on"
+    },
+    "tactics": {
+      "_other": "Other",
+      "collection": "Collection",
+      "command_and_control": "Command and Control",
+      "credential_access": "Credential Access",
+      "defense_evasion": "Defense Evasion",
+      "discovery": "Discovery",
+      "execution": "Execution",
+      "exfiltration": "Exfiltration",
+      "impact": "Impact",
+      "initial_access": "Initial Access",
+      "lateral_movement": "Lateral Movement",
+      "persistence": "Persistence",
+      "privilege_escalation": "Privilege Escalation",
+      "reconnaissance": "Reconnaissance",
+      "resource_development": "Resource Development"
+    },
+    "types": {
+      "cmdline_file": "Cmdline",
+      "computer": "Computer",
+      "domain": "Domain",
+      "executable": "Executable",
+      "hash": "Hash",
+      "ip_address": "IP",
+      "service": "Service",
+      "task": "Task",
+      "user": "User"
+    },
+    "verdicts": {
+      "clean": "Clean",
+      "malicious": "Malicious",
+      "suspicious": "Suspicious",
+      "unknown": "Unknown"
+    }
+  },
+  "rels": [
+    "hashes_to",
+    "resolves_to",
+    "parent_of",
+    "runs_as",
+    "runs_on",
+    "logs_on_from",
+    "logs_on_to",
+    "connects_to",
+    "loads",
+    "creates",
+    "communicates_with"
+  ],
+  "severities": [
+    "critical",
+    "high",
+    "medium",
+    "low",
+    "informational",
+    "unknown"
+  ],
+  "subtypes": [
+    "cgnat",
+    "link_local",
+    "loopback",
+    "md5",
+    "multicast",
+    "public",
+    "reserved",
+    "rfc1918",
+    "sha1",
+    "sha256",
+    "sha512"
+  ],
+  "tactics": [
+    "reconnaissance",
+    "resource_development",
+    "initial_access",
+    "execution",
+    "persistence",
+    "privilege_escalation",
+    "defense_evasion",
+    "credential_access",
+    "discovery",
+    "lateral_movement",
+    "collection",
+    "command_and_control",
+    "exfiltration",
+    "impact",
+    "_other"
+  ],
+  "typed_base": 2,
+  "types": [
+    "user",
+    "computer",
+    "ip_address",
+    "hash",
+    "executable",
+    "domain",
+    "cmdline_file",
+    "service",
+    "task"
+  ],
+  "v": 1,
+  "verdicts": [
+    "none",
+    "clean",
+    "unknown",
+    "suspicious",
+    "malicious"
+  ]
+}

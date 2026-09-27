@@ -1,0 +1,52 @@
+{% from "intel/partials/_tag_chip.html" import tag_chip %}
+{# `with context`: the macro renders the colour swatches from `tag_colors`, and a
+   Jinja macro cannot see the caller's context without it — the loop would silently
+   produce nothing, which is exactly how colour picking broke. #}
+{% from "intel/partials/_tag_combobox.html" import tag_combobox with context %}
+{#
+  Tag region for the entity header. The whole div is the HTMX swap target for the add and
+  remove routes (outerHTML), so it must stay self-contained.
+
+  `entityTagInput()` and `tagCombobox()` live in /static/app.js, not an inline <script>
+  here: this markup is swapped in by HTMX, and a factory defined in swapped content is
+  hostage to script/init ordering. app.js is guaranteed to run before Alpine starts.
+#}
+<div id="entity-tags-region" class="flex flex-wrap items-center gap-1.5"
+     x-data="entityTagInput()">
+  {#
+    Two chips per tag: the name links to the dashboard filtered by that tag (the pivot),
+    and a separate × removes it. Combining them into one element would make "remove" and
+    "show me everything else tagged this" the same click target.
+  #}
+  {% for t in tags %}
+  <span class="inline-flex items-center gap-1">
+    {{ tag_chip(t.tag, t.color, href='/intel?tags=' ~ (t.tag | urlencode)) }}
+    <button hx-post="/intel/entities/{{ entity.id }}/tags/remove"
+            hx-vals='{"tag": {{ t.tag | tojson }}}'
+            hx-target="#entity-tags-region"
+            hx-swap="outerHTML"
+            class="text-xs text-gray-600 hover:text-gray-300 leading-none"
+            title="Remove tag">&times;</button>
+  </span>
+  {% endfor %}
+
+  <button x-show="!adding"
+          @click="open()"
+          class="lt-chip lt-chip--btn border-dashed border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-500">
+    + tag
+  </button>
+
+  <form x-show="adding" x-cloak
+        x-data="tagCombobox({ max: {{ tag_write_max }} })"
+        hx-post="/intel/entities/{{ entity.id }}/tags"
+        hx-target="#entity-tags-region"
+        hx-swap="outerHTML"
+        @htmx:after-request="window.tagVocabChanged(); cancel(); reset()"
+        @keydown.window.escape="cancel()"
+        class="inline-flex items-center gap-1">
+    {{ tag_combobox(size='lt-field--sm', width='w-80', placeholder='Search or create a tag…') }}
+    <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary"
+            :disabled="isEmpty()" title="Type or pick a tag first">Add</button>
+    <button type="button" @click="cancel()" class="lt-btn lt-btn--sm lt-btn--ghost">&times;</button>
+  </form>
+</div>

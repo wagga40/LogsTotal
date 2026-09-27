@@ -1,0 +1,422 @@
+# Lists — the named sets a rule condition can test with `list:<name>`.
+#
+# Loaded into the database at start and edited on the Rules page (Lists section). A list
+# nobody edited takes this file's newer version at the next start; an edited one is left
+# alone. `match: exact` compares the whole value, case-insensitively; `match: suffix` is
+# for the TLD list — the value must end with an entry.
+#
+# These are the rules' own copies. config/threat_detection.yaml carries the detection
+# pipeline's sets separately: that file decides what a finding is, this one decides what
+# happens after.
+
+lists:
+  - name: lolbas
+    match: exact
+    description: Windows binaries from the LOLBAS project (https://lolbas-project.github.io/) — living-off-the-land executables, by exact file name.
+    values:
+      - aspnet_compiler.exe
+      - at.exe
+      - atbroker.exe
+      - bitsadmin.exe
+      - certreq.exe
+      - certutil.exe
+      - cipher.exe
+      - cmstp.exe
+      - csc.exe
+      - cscript.exe
+      - datasvcutil.exe
+      - diantz.exe
+      - diskshadow.exe
+      - dnscmd.exe
+      - esentutl.exe
+      - eventvwr.exe
+      - expand.exe
+      - extrac32.exe
+      - findstr.exe
+      - finger.exe
+      - fltmc.exe
+      - forfiles.exe
+      - fsutil.exe
+      - ftp.exe
+      - hh.exe
+      - iediagcmd.exe
+      - ieexec.exe
+      - ilasm.exe
+      - installutil.exe
+      - jsc.exe
+      - ldifde.exe
+      - makecab.exe
+      - mavinject.exe
+      - microsoft.workflow.compiler.exe
+      - mpcmdrun.exe
+      - msbuild.exe
+      - msdt.exe
+      - mshta.exe
+      - msiexec.exe
+      - netsh.exe
+      - ngen.exe
+      - odbcconf.exe
+      - pcalua.exe
+      - pktmon.exe
+      - pnputil.exe
+      - printbrm.exe
+      - rasautou.exe
+      - rdrleakdiag.exe
+      - reg.exe
+      - regasm.exe
+      - regini.exe
+      - register-cimprovider.exe
+      - regsvcs.exe
+      - regsvr32.exe
+      - rpcping.exe
+      - rundll32.exe
+      - sc.exe
+      - schtasks.exe
+      - sftp.exe
+      - ssh.exe
+      - stordiag.exe
+      - tar.exe
+      - ttdinject.exe
+      - tttracer.exe
+      - vbc.exe
+      - wbadmin.exe
+      - wbemtest.exe
+      - winget.exe
+      - wmic.exe
+      - wscript.exe
+      - wuauclt.exe
+      - xwizard.exe
+
+  - name: gtfobins
+    match: exact
+    description: Unix binaries from GTFOBins (https://gtfobins.github.io/) with shell-escape, download or file-write functions. Plain shells and everyday coreutils are left out on purpose.
+    values:
+      - nmap
+      - vim
+      - rvim
+      - vi
+      - view
+      - nano
+      - pico
+      - emacs
+      - find
+      - awk
+      - gawk
+      - mawk
+      - nawk
+      - sed
+      - perl
+      - python
+      - python2
+      - python3
+      - ruby
+      - irb
+      - php
+      - node
+      - nodejs
+      - lua
+      - tclsh
+      - expect
+      - socat
+      - nc
+      - ncat
+      - netcat
+      - telnet
+      - openssl
+      - scp
+      - sftp
+      - rsync
+      - curl
+      - wget
+      - ftp
+      - tftp
+      - busybox
+      - env
+      - ionice
+      - nice
+      - stdbuf
+      - strace
+      - ltrace
+      - gdb
+      - valgrind
+      - script
+      - screen
+      - tmux
+      - less
+      - more
+      - man
+      - pg
+      - xxd
+      - base64
+      - base32
+      - openvpn
+      - docker
+      - lxc
+      - kubectl
+      - crontab
+      - at
+      - batch
+      - timeout
+      - watch
+      - flock
+      - taskset
+      - setarch
+      - unshare
+      - nsenter
+      - chroot
+      - capsh
+      - dd
+      - install
+      - split
+      - tee
+      - mksquashfs
+      - apt
+      - apt-get
+      - dpkg
+      - yum
+      - dnf
+      - rpm
+      - pip
+      - pip3
+      - gem
+      - npm
+      - make
+      - gcc
+      - cc
+
+  - name: suspicious_tlds
+    match: suffix
+    description: Top-level domains that are cheap, anonymous or abused often enough to be worth a look. Entries keep their leading dot, so `.tk` cannot match `stk`.
+    values:
+      - .tk
+      - .top
+      - .pw
+      - .bit
+      - .onion
+  # ── analyst lists: tooling ──
+  - name: offensive_tools
+    match: exact
+    description: Offensive and dual-use tooling by file name — credential dumpers, lateral-movement and tunnelling tools, AD reconnaissance, Impacket scripts. Exact names, so near-zero noise.
+    values:
+      - mimikatz.exe
+      - mimikatz
+      - mimidrv.sys
+      - safetykatz.exe
+      - sharpkatz.exe
+      - invoke-mimikatz.ps1
+      - pypykatz
+      - procdump.exe
+      - procdump64.exe
+      - dumpert.exe
+      - nanodump.exe
+      - lazagne.exe
+      - psexec.exe
+      - psexec64.exe
+      - psexesvc.exe
+      - paexec.exe
+      - sharphound.exe
+      - sharphound.ps1
+      - azurehound.exe
+      - bloodhound-python
+      - rubeus.exe
+      - kekeo.exe
+      - certify.exe
+      - certipy
+      - whisker.exe
+      - seatbelt.exe
+      - sharpup.exe
+      - sharpview.exe
+      - powerview.ps1
+      - powerup.ps1
+      - invoke-kerberoast.ps1
+      - powercat.ps1
+      - winpeas.exe
+      - winpeasany.exe
+      - linpeas.sh
+      - mimipenguin
+      - adfind.exe
+      - kerbrute
+      - kerbrute.exe
+      - crackmapexec
+      - cme
+      - netexec
+      - nxc
+      - evil-winrm
+      - wmiexec.py
+      - smbexec.py
+      - psexec.py
+      - atexec.py
+      - dcomexec.py
+      - secretsdump.py
+      - ntlmrelayx.py
+      - responder.py
+      - responder
+      - hashcat
+      - hashcat.exe
+      - john
+      - nc.exe
+      - ncat.exe
+      - netcat.exe
+      - plink.exe
+      - chisel.exe
+      - chisel
+      - ngrok.exe
+      - ngrok
+      - ligolo-agent.exe
+      - ligolo-agent
+      - ligolo-ng
+
+  - name: remote_access_tools
+    match: exact
+    description: Remote administration and support tools by file name. Legitimate in many estates, and the most common initial-access and persistence vector in current ransomware cases — worth a look, not a verdict.
+    values:
+      - anydesk.exe
+      - anydesk
+      - teamviewer.exe
+      - teamviewer_service.exe
+      - tv_w32.exe
+      - tv_x64.exe
+      - screenconnect.clientservice.exe
+      - screenconnect.windowsclient.exe
+      - screenconnect.client.exe
+      - ateraagent.exe
+      - splashtopstreamer.exe
+      - srserver.exe
+      - srmanager.exe
+      - rustdesk.exe
+      - rustdesk
+      - aa_v3.exe
+      - supremo.exe
+      - supremoservice.exe
+      - ultraviewer_desktop.exe
+      - ultraviewer_service.exe
+      - dwagent.exe
+      - dwagsvc.exe
+      - radmin.exe
+      - rserver3.exe
+      - winvnc.exe
+      - tvnserver.exe
+      - vncserver.exe
+      - vncviewer.exe
+      - uvnc_service.exe
+      - logmein.exe
+      - lmiguardiansvc.exe
+      - zaservice.exe
+      - za_connect.exe
+      - meshagent.exe
+      - bomgar-scc.exe
+      - rutserv.exe
+      - rfusclient.exe
+
+  - name: staging_tools
+    match: exact
+    description: Archivers and transfer clients by file name. Compression followed by a sync or transfer client is the exfiltration signature.
+    values:
+      - 7z.exe
+      - 7za.exe
+      - 7zg.exe
+      - 7zfm.exe
+      - rar.exe
+      - winrar.exe
+      - unrar.exe
+      - rclone.exe
+      - rclone
+      - megasync.exe
+      - megacmd
+      - mega-cmd-server.exe
+      - megacmdserver.exe
+      - filezilla.exe
+      - winscp.exe
+      - wget.exe
+
+  # ── analyst lists: accounts ──
+  - name: default_accounts
+    match: exact
+    description: Windows built-in accounts that see no ordinary use. Any activity on them is a question.
+    values:
+      - guest
+      - defaultaccount
+      - wdagutilityaccount
+      - krbtgt
+
+  # ── analyst lists: network ──
+  - name: dynamic_dns
+    match: suffix
+    description: Dynamic-DNS providers and public tunnel services. Command-and-control rarely pays for a domain.
+    values:
+      - .duckdns.org
+      - .no-ip.org
+      - .no-ip.com
+      - .no-ip.biz
+      - .no-ip.info
+      - .ddns.net
+      - .hopto.org
+      - .zapto.org
+      - .sytes.net
+      - .servebeer.com
+      - .serveftp.com
+      - .servehttp.com
+      - .myftp.org
+      - .myftp.biz
+      - .redirectme.net
+      - .3utilities.com
+      - .bounceme.net
+      - .ddnsking.com
+      - .gotdns.ch
+      - .myvnc.com
+      - .onthewifi.com
+      - .webhop.me
+      - .dynu.net
+      - .dynu.com
+      - .dyndns.org
+      - .dyndns.info
+      - .changeip.com
+      - .dnsdojo.com
+      - .ngrok.io
+      - .ngrok.app
+      - .ngrok-free.app
+      - .trycloudflare.com
+      - .loca.lt
+      - .localtunnel.me
+      - .serveo.net
+      - .pagekite.me
+
+  - name: sharing_sites
+    match: suffix
+    description: Paste sites, anonymous file hosts and messenger APIs used for payload hosting and stealer exfiltration.
+    values:
+      - pastebin.com
+      - pastebin.pl
+      - paste.ee
+      - hastebin.com
+      - ghostbin.co
+      - rentry.co
+      - dpaste.com
+      - controlc.com
+      - justpaste.it
+      - privatebin.net
+      - 0x0.st
+      - ix.io
+      - termbin.com
+      - transfer.sh
+      - temp.sh
+      - file.io
+      - gofile.io
+      - anonfiles.com
+      - anonfile.com
+      - bayfiles.com
+      - filebin.net
+      - catbox.moe
+      - ufile.io
+      - uploadfiles.io
+      - sendspace.com
+      - dropmefiles.com
+      - wetransfer.com
+      - we.tl
+      - mega.nz
+      - mega.io
+      - mega.co.nz
+      - cdn.discordapp.com
+      - media.discordapp.net
+      - api.telegram.org
+      - t.me

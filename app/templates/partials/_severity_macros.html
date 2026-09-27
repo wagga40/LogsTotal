@@ -1,0 +1,72 @@
+{#- Shared severity-chip color macros (pill / solid / dot / border / tab backgrounds).
+    Usage: {% from "partials/_severity_macros.html" import sev_pill, sev_solid, sev_dot %}
+           <span class="... {{ sev_pill(finding.severity) }}">{{ finding.severity }}</span>
+
+    Single source of truth for the severity→Tailwind-class maps. Lives in partials/ rather
+    than intel/partials/ because the job pages use it too. Every literal class name is
+    spelled out here so Tailwind's scanner sees it — an
+    interpolated `bg-{{ color }}-…` is invisible to the production CSS build. -#}
+{% set _sev_pill_classes = {
+  'critical': 'bg-red-900/50 text-red-300 border-red-700/40',
+  'high': 'bg-orange-900/50 text-orange-300 border-orange-700/40',
+  'medium': 'bg-yellow-900/50 text-yellow-300 border-yellow-700/40',
+  'low': 'bg-blue-900/50 text-blue-300 border-blue-700/40',
+  'informational': 'bg-gray-800 text-gray-400 border-gray-700/40',
+} %}
+{% set _sev_solid_classes = {
+  'critical': 'bg-red-600 text-white', 'high': 'bg-orange-600 text-white', 'medium': 'bg-yellow-600 text-white',
+  'low': 'bg-blue-600 text-white', 'informational': 'bg-gray-600 text-white',
+} %}
+{% set _sev_dot_classes = {
+  'critical': 'bg-red-500', 'high': 'bg-orange-500', 'medium': 'bg-yellow-500',
+  'low': 'bg-blue-500', 'informational': 'bg-gray-500',
+} %}
+{% macro sev_pill(severity) -%}
+{{ _sev_pill_classes.get(severity, _sev_pill_classes.informational) }}
+{%- endmacro %}
+{% macro sev_solid(severity) -%}
+{{ _sev_solid_classes.get(severity, _sev_solid_classes.informational) }}
+{%- endmacro %}
+{% macro sev_dot(severity) -%}
+{{ _sev_dot_classes.get(severity, _sev_dot_classes.informational) }}
+{%- endmacro %}
+
+{% set _sev_border_classes = {
+  'critical': 'border-l-red-500', 'high': 'border-l-orange-500', 'medium': 'border-l-yellow-500',
+  'low': 'border-l-blue-500', 'informational': 'border-l-gray-500',
+} %}
+{% set _sev_tab_classes = {
+  'critical': 'bg-red-900/60 text-red-200 border-red-700/60',
+  'high': 'bg-orange-900/60 text-orange-200 border-orange-700/60',
+  'medium': 'bg-yellow-900/60 text-yellow-200 border-yellow-700/60',
+  'low': 'bg-blue-900/60 text-blue-200 border-blue-700/60',
+  'informational': 'bg-gray-700/60 text-gray-200 border-gray-600/60',
+} %}
+{% set _sev_text_classes = {
+  'critical': 'text-red-400', 'high': 'text-orange-400', 'medium': 'text-yellow-400',
+  'low': 'text-blue-400', 'informational': 'text-gray-400',
+} %}
+{% macro sev_border(severity) -%}
+{{ _sev_border_classes.get(severity, _sev_border_classes.informational) }}
+{%- endmacro %}
+{% macro sev_tab(severity) -%}
+{{ _sev_tab_classes.get(severity, _sev_tab_classes.informational) }}
+{%- endmacro %}
+{% macro sev_text(severity) -%}
+{{ _sev_text_classes.get(severity, _sev_text_classes.informational) }}
+{%- endmacro %}
+
+{% set _sev_card_border_classes = {
+  'critical': 'border-red-800', 'high': 'border-orange-800', 'medium': 'border-yellow-800',
+  'low': 'border-blue-800', 'informational': 'border-gray-700',
+} %}
+{% set _sev_heading_classes = {
+  'critical': 'text-red-300', 'high': 'text-orange-300', 'medium': 'text-yellow-300',
+  'low': 'text-blue-300', 'informational': 'text-gray-300',
+} %}
+{% macro sev_card_border(severity) -%}
+{{ _sev_card_border_classes.get(severity, _sev_card_border_classes.informational) }}
+{%- endmacro %}
+{% macro sev_heading(severity) -%}
+{{ _sev_heading_classes.get(severity, _sev_heading_classes.informational) }}
+{%- endmacro %}

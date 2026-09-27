@@ -1,0 +1,131 @@
+{% extends "base.html" %}
+{% from "partials/_copy_button.html" import copy_button with context %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}API tokens – Admin – LogsTotal{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto">
+
+  {% set _live = tokens | selectattr('active') | list | length %}
+  {{ page_header("API tokens", "/admin#manage", "Manage",
+                 pills=[('%d active' % _live, 'green' if _live else 'gray')]) }}
+  <p class="text-sm text-gray-500 mb-6">Bearer tokens for log ingestion, job statuses, cases, the IOC feed and TAXII. Select only the scopes the integration needs. Tokens act with their creator's access; the plaintext is shown <strong>once</strong> at creation.</p>
+
+  {% if basic_auth_in_front %}
+  <div id="basic-auth-token-notice" class="bg-amber-900/40 border border-amber-700/50 text-amber-300 px-4 py-3 rounded-lg text-sm mb-4">
+    This instance is behind HTTP basic auth, so API tokens cannot authenticate through it: a request carries one <code class="bg-gray-800 px-1 rounded">Authorization</code> header, and the proxy takes it for its own password. A token works only for a client that reaches the app without going through the proxy.
+  </div>
+  {% endif %}
+
+  {% if request.query_params.get('revoked') %}
+  <div class="bg-amber-900/40 border border-amber-700/50 text-amber-300 px-4 py-2 rounded-lg text-sm mb-4">Token revoked.</div>
+  {% endif %}
+
+  {% if new_token_plaintext %}
+  <div class="bg-emerald-900/30 border-2 border-emerald-700/60 rounded-xl p-5 mb-6">
+    <div class="flex items-center gap-2 mb-3">
+      <svg class="w-5 h-5 text-emerald-400" fill="currentColor" viewBox="0 0 20 20"><path fill-rule="evenodd" d="M5 9V7a5 5 0 0110 0v2a2 2 0 012 2v5a2 2 0 01-2 2H5a2 2 0 01-2-2v-5a2 2 0 012-2zm8-2v2H7V7a3 3 0 016 0z" clip-rule="evenodd"/></svg>
+      <h2 class="text-sm font-semibold text-emerald-300">Save this token now — it won't be shown again.</h2>
+    </div>
+    <p class="text-xs text-gray-400 mb-2">Token name: <span class="text-gray-200">{{ new_token_name }}</span></p>
+    <div class="flex items-center gap-2 bg-gray-950 border border-gray-700 rounded p-2">
+      <code id="new-token-plaintext" class="flex-1 font-mono text-sm text-emerald-300 break-all select-all">{{ new_token_plaintext }}</code>
+      {# `variant='plain'`: this one keeps its own emerald palette — it is the only copy
+         button in the app that is a primary action rather than an affordance on something
+         already on screen. It shows the check mark every other copy button shows. #}
+      {{ copy_button(target='new-token-plaintext', label='Copy', variant='plain',
+                     extra='inline-flex items-center gap-1.5 text-xs px-3 py-1.5 rounded bg-emerald-700 hover:bg-emerald-600 text-white') }}
+    </div>
+    <p class="text-xs text-gray-500 mt-3">Send via <code class="bg-gray-800 px-1 rounded">Authorization: Bearer &lt;token&gt;</code> header.</p>
+  </div>
+  {% endif %}
+
+  <!-- Create form -->
+  <details class="bg-gray-900 border border-gray-800 rounded-xl mb-6" {% if not tokens %}open{% endif %}>
+    <summary class="px-5 py-3 cursor-pointer text-sm text-gray-300 hover:text-white">+ Create new token</summary>
+    {#
+    "At least one" has no native spelling — `required` on a checkbox demands *that*
+    box — so the count is kept in Alpine and the submit waits for it. The initial value
+    comes from the server rather than a DOM read at init, which keeps the `checked`
+    attributes the single source of truth and sidesteps any question of when Alpine
+    first sees them. The route still refuses an empty group: this is a courtesy, not
+    the validation.
+    #}
+    <form method="POST" action="/admin/api-tokens" class="p-5 space-y-3 border-t border-gray-800"
+          x-data="{ chosen: 0 }" @change="chosen = $el.querySelectorAll('input[name=scopes]:checked').length">
+      <label class="block text-xs">
+        <span class="block text-gray-400 mb-1">Name *</span>
+        <input type="text" name="name" required maxlength="120" placeholder="e.g. SIEM ingest 2026-05"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <div class="text-xs">
+        <span class="block text-gray-400 mb-1">Scopes *</span>
+        <div class="space-y-1">
+          {% for s in known_scopes %}
+          <label class="flex items-center gap-2 text-sm text-gray-300">
+            <input type="checkbox" name="scopes" value="{{ s }}" class="lt-check">
+            <code class="text-blue-300">{{ s }}</code>
+          </label>
+          {% endfor %}
+        </div>
+      </div>
+      <label class="block text-xs">
+        <span class="block text-gray-400 mb-1">Expires at (optional, ISO date or datetime)</span>
+        <input type="text" name="expires_at" placeholder="2027-01-01"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <div class="flex justify-end">
+        <button type="submit" class="lt-btn lt-btn--lg lt-btn--primary"
+                :disabled="!chosen" title="Tick at least one scope first">Generate token</button>
+      </div>
+    </form>
+  </details>
+
+  <!-- Existing tokens -->
+  {% if tokens %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <div class="grid grid-cols-12 gap-2 px-5 py-2.5 text-xs text-gray-500 border-b border-gray-800 uppercase tracking-wide">
+      <span class="col-span-3">Name</span>
+      <span class="col-span-2 font-mono">Prefix</span>
+      <span class="col-span-3">Scopes</span>
+      <span class="col-span-2">Last used</span>
+      <span class="col-span-2 text-right">Actions</span>
+    </div>
+    {% for t in tokens %}
+    <div class="grid grid-cols-12 gap-2 px-5 py-3 items-center border-b border-gray-800/50 last:border-b-0 hover:bg-gray-800/50 transition {% if not t.active %}opacity-60{% endif %}">
+      <span class="col-span-3 text-sm text-gray-200 truncate" title="{{ t.name }}">
+        {{ t.name }}
+        {% if t.revoked_at %}<span class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-red-900/40 text-red-300 border border-red-700/40">REVOKED</span>{% endif %}
+        {% if t.expires_at and not t.active and not t.revoked_at %}<span class="ml-1 text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-500 border border-gray-700">EXPIRED</span>{% endif %}
+      </span>
+      <span class="col-span-2 text-xs font-mono text-gray-400">{{ t.prefix }}…</span>
+      <span class="col-span-3 flex flex-wrap gap-1">
+        {% for s in t.scopes %}
+        <code class="text-[10px] px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/40">{{ s }}</code>
+        {% endfor %}
+      </span>
+      <span class="col-span-2 text-xs text-gray-500">
+        {{ t.last_used_at.strftime('%Y-%m-%d %H:%M') if t.last_used_at else 'never' }}
+      </span>
+      <span class="col-span-2 text-right">
+        {% if t.active %}
+        <form method="POST" action="/admin/api-tokens/{{ t.id }}/revoke"
+              data-confirm-title="Revoke token"
+              data-confirm-message="Permanently revoke '{{ t.name }}'? Clients using it will get 401 immediately."
+              data-confirm-accept="Revoke" class="inline">
+          <button type="submit" class="text-xs px-2 py-1 rounded text-red-400 hover:text-red-300 transition">Revoke</button>
+        </form>
+        {% endif %}
+      </span>
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
+    <p class="text-gray-500">No API tokens yet.</p>
+    <p class="text-xs text-gray-600 mt-2">Generate one above for unattended IOC feed / TAXII access.</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

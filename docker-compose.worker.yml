@@ -1,0 +1,45 @@
+# Standalone worker for remote machines.
+#
+# 1. Build or pull the image: docker build -t "logstotal:${LOGSTOTAL_IMAGE_TAG:-latest}" .
+# 2. Copy this file + .env to the remote machine
+# 3. Edit .env — these vars MUST point at the control plane:
+#      REDIS_URL=redis://:password@<control-plane-ip>:6379
+#      DATABASE_URL=postgresql+asyncpg://user:pass@<control-plane-ip>:5432/logstotal
+#      SYNC_DATABASE_URL=postgresql+psycopg2://user:pass@<control-plane-ip>:5432/logstotal
+#      STORAGE_BACKEND=s3
+#      S3_ENDPOINT=http://<control-plane-ip>:3900
+#      S3_BUCKET=logstotal
+#      S3_ACCESS_KEY=...  S3_SECRET_KEY=...
+#      SECRET_KEY=<same as control plane>
+# 4. Start: docker compose -f docker-compose.worker.yml up -d
+#
+# Set WORKER_NAME in .env or shell to identify this machine in the fleet dashboard.
+# Optionally set WORKER_IP to advertise the host/VPN IP shown on /admin/workers.
+#
+# Docker-based tools (Zircolite/Chainsaw/Hayabusa with docker_image in workflow YAML) need:
+#   - Docker Engine on the host (this container talks to it via /var/run/docker.sock)
+#   - data + uploads on the host so sibling tool containers can bind-mount the same paths
+#   - run `docker compose` from the project directory so DOCKER_HOST_WORKDIR matches the bind mounts
+services:
+  worker:
+    image: logstotal:${LOGSTOTAL_IMAGE_TAG:-latest}
+    hostname: ${WORKER_NAME:-remote-worker}
+    restart: unless-stopped
+    env_file: .env
+    environment:
+      # Same as docker-compose.yml worker: map /app/... inside this container to the host tree
+      # so `docker run -v` from the Python SDK resolves to real host paths.
+      - DOCKER_HOST_WORKDIR=${PWD}
+    healthcheck:
+      disable: true
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    volumes:
+      - ./data:/data
+      - ./uploads:/app/uploads
+      - /var/run/docker.sock:/var/run/docker.sock
+    # Default 4 threads on dedicated worker machines (vs 2 on main compose) — override via HUEY_WORKERS in .env
+    command: huey_consumer app.workers.huey_app.huey -w ${HUEY_WORKERS:-4} -k thread

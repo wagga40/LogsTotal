@@ -1,0 +1,225 @@
+{% from "partials/_pager.html" import pager %}
+{% from "intel/partials/_tag_chip.html" import tag_chip %}
+{% from "partials/_help_popover.html" import help_popover %}
+{#
+  The jobs list itself — filter chips, bulk bar, table, pager, empty state.
+
+  Extracted from jobs.html so the tab strip can render it without a second copy: with the
+  markup inline, a `{% if %}`/`{% else %}` around the strip would carry ~80 lines twice,
+  and the second copy would bring a second `<script>function jobsBulkAdd()` with it. This
+  is the split `_severity_macros.html` and `_tab_badge.html` exist to make.
+#}
+{#
+  Search and the active filter. Above the table rather than inside it, so both survive the
+  5s tbody swap — and both render even when nothing matches, which is the one case where
+  "why is this list empty?" needs an answer on screen.
+
+  A plain GET form, not htmx: the query belongs in the URL so it can be bookmarked, shared
+  in a ticket and reached with the back button, which is most of the point of having a
+  grammar rather than a set of dropdowns.
+#}
+<form method="GET" action="/jobs" class="lt-bar mb-3">
+  {#
+    `standalone: true` — the same picker the Intel box uses, in its other mode. There the
+    query is one field of a filter state the parent x-data owns; here it is a plain GET form
+    with no scope around it, so a pick writes the input and the analyst presses Enter.
+
+    `focusout` on the container rather than `blur` on the input, and `relatedTarget` to tell
+    whether focus actually left: clicking a suggestion blurs the input, and closing on that
+    unmounts the row before its handler runs. The same trap `_tag_combobox.html` documents.
+  #}
+  <div class="relative flex-1 min-w-[260px]"
+       x-data="searchSuggest({ url: '/jobs/search-suggest', standalone: true })"
+       @focusout="if (!$event.currentTarget.contains($event.relatedTarget)) close()">
+    {# `.lt-field--clearable`, never a Tailwind `pr-8`: the Play CDN injects its sheet at
+       runtime so the utility wins in dev, but the built stylesheet is linked BEFORE
+       base.html's <style>, so `.lt-field`'s shorthand `padding` wins in prod and silently
+       eats the space the × sits in. #}
+    <input type="text" name="q" value="{{ query }}" placeholder="Search jobs — try  tag:apt29  status:failed  sev:critical  is:mine"
+           x-ref="search" autocomplete="off" spellcheck="false"
+           @input="schedule()"
+           {# Arrow keys and clicks move the caret without changing the value, so `input`
+              alone would leave the list describing the wrong term. #}
+           @keyup.arrow-left="schedule()" @keyup.arrow-right="schedule()" @click="schedule()"
+           @keydown="onKey($event)"
+           class="lt-field lt-field--lg lt-field--clearable w-full">
+    {% if query %}
+    <a href="/jobs{% if active_tags %}?tags={{ active_tags | join(',') | urlencode }}{% endif %}"
+       class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-300" title="Clear the search">&times;</a>
+    {% endif %}
+
+    {# Labels are tag names and workflow names — bound with x-text, never interpolated. #}
+    <div x-show="open" x-cloak data-search-suggest
+         class="lt-menu absolute left-0 right-0 top-full mt-1 lt-scroll lt-scroll--sm">
+      <template x-for="(item, i) in items" :key="item.insert">
+        <button type="button" @mousedown.prevent="pick(item)" @mouseenter="highlight = i"
+                :class="highlight === i ? 'bg-gray-800' : ''"
+                class="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-800 transition">
+          <span class="font-mono text-xs text-gray-200" x-text="item.label"></span>
+          <span class="ml-auto text-[10px] text-gray-500 truncate max-w-[55%]" x-text="item.detail"></span>
+        </button>
+      </template>
+    </div>
+  </div>
+  {# Tags picked by clicking a chip travel as their own parameter, so they survive a search
+     and a search survives them. Hidden rather than folded into `q`, or clearing one would
+     silently clear the other. #}
+  {% if active_tags %}<input type="hidden" name="tags" value="{{ active_tags | join(',') }}">{% endif %}
+  <button type="submit" class="lt-btn lt-btn--lg lt-btn--primary">Search</button>
+
+  {{ help_popover('Search help', rows=jobs_syntax_help, align='right', width='lg',
+                  intro='Terms are AND-ed. Prefix any with - to exclude.') }}
+</form>
+
+{% if query_errors %}
+{# Said out loud rather than silently dropped: a term that matched nothing and a term that
+   was not understood look identical in the results. #}
+<p class="text-xs text-amber-400/80 mb-3">Ignored: {{ query_errors | join('; ') }}</p>
+{% endif %}
+
+{% if active_tags or query_chips %}
+<div class="flex flex-wrap items-center gap-2 mb-4 text-sm">
+  <span class="text-gray-500">Filtered by</span>
+  {% for t in active_tags %}{{ tag_chip(t, active_tag_colors.get(t, 'gray')) }}{% endfor %}
+  {% for chip in query_chips %}
+  <span class="lt-chip bg-gray-800 text-gray-300 border-gray-700 font-mono">{{ chip }}</span>
+  {% endfor %}
+  <a href="/jobs" class="lt-btn lt-btn--xs">Clear all</a>
+</div>
+{% endif %}
+
+{#
+  The list toolbar: where you are and a way to turn the page on the left, so a long list is
+  navigable without scrolling past twenty rows first; page size and row density on the
+  right. Plain links, not buttons with JS: they carry the current search and tag filter, the
+  server remembers the choice in a cookie, and the result is bookmarkable — the same
+  reasoning as the search form right above it.
+#}
+{% if jobs %}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+  {{ pager(page, total_pages, url='/jobs', qs=list_qs, total=total, per_page=per_page, noun='jobs', noun_one='job', compact=True, keys=True) }}
+  <div class="flex items-center gap-3 ml-auto">
+  <span class="inline-flex items-center gap-1" role="group" aria-label="Rows per page">
+    <span class="text-xs text-gray-500 mr-1">Rows</span>
+    {% for choice in per_page_links %}
+    <a href="{{ choice.url }}" class="lt-btn lt-btn--xs tabular-nums {% if choice.active %}lt-btn--active{% endif %}"
+       {% if choice.active %}aria-current="true"{% endif %} title="{{ choice.per }} jobs per page">{{ choice.per }}</a>
+    {% endfor %}
+  </span>
+  <span class="inline-flex gap-1" role="group" aria-label="Row density">
+    {# The filter travels with the switch. Losing the search you just typed because you
+       wanted taller rows is the kind of small betrayal that makes a control feel unsafe. #}
+    <a href="/jobs?view=compact{% if tags_qs %}&amp;{{ tags_qs }}{% endif %}"
+       class="lt-btn lt-btn--xs {% if view != 'roomy' %}lt-btn--active{% endif %}"
+       title="One line per job">Compact</a>
+    <a href="/jobs?view=roomy{% if tags_qs %}&amp;{{ tags_qs }}{% endif %}"
+       class="lt-btn lt-btn--xs {% if view == 'roomy' %}lt-btn--active{% endif %}"
+       title="Three lines per job, with every tag">Roomy</a>
+  </span>
+  </div>
+</div>
+{#
+  `x-data` here is load-bearing, not decorative: Alpine only initializes subtrees rooted
+  at an x-data element, so without it the selection checkboxes in <thead>/<tbody> are
+  never processed and silently do nothing. (They appeared to work only while a job was
+  running, because the 5s table poll made base.html's htmx:afterSwap hook call
+  Alpine.initTree() on the swapped <tbody>.) The scope is empty — the state itself lives
+  in Alpine.store('jobSelection') so it survives those swaps.
+#}
+<div x-data>
+{% if user and (user.is_superuser or user.role == 'member') %}
+{% include "partials/_jobs_bulk_actions.html" %}
+{% endif %}
+{% if view == 'roomy' %}
+{# The card list renders its own container element, because htmx swaps the poll response by
+   outerHTML and the two views are a <div> and a <tbody>. #}
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+  {#
+    The compact view's select-all lives in the table header; the cards have no header, so
+    it gets a strip of its own. **Outside the swapped region**, like the `<thead>` it
+    mirrors — it reads the rendered rows through `$store.jobSelection`, so it stays correct
+    after the 5s poll replaces them.
+  #}
+  {% if user and (user.is_superuser or user.role == 'member') %}
+  <label class="flex items-center gap-3 px-5 py-2.5 border-b border-gray-800 text-xs text-gray-500 cursor-pointer hover:text-gray-300 transition">
+    <input type="checkbox" title="Select all on this page"
+           :checked="$store.jobSelection.allVisibleSelected()"
+           @change="$store.jobSelection.setAllVisible($el.checked)"
+           class="lt-check">
+    <span x-text="$store.jobSelection.allVisibleSelected() ? 'Deselect all on this page' : 'Select all on this page'">Select all on this page</span>
+  </label>
+  {% endif %}
+  {% include "partials/_jobs_cards.html" %}
+</div>
+{% else %}
+{#
+  Two nested wrappers, and both earn their place. The outer one rounds and clips the
+  corners; the inner one **scrolls horizontally** instead of letting the clip eat a column.
+
+  The scroll is the fallback for a narrow window, not the normal case. A cell's text must
+  never set its column's minimum width (see `_jobs_table_body.html`), so the table fits
+  the 1232px card at desktop widths, and the admin Delete column, which is last, stays in
+  view.
+#}
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+  <div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead class="border-b border-gray-800">
+      <tr class="text-gray-400 text-left">
+        {% if user and (user.is_superuser or user.role == 'member') %}
+        {# Select-all reads the rendered rows rather than a server-passed id list, so it
+           stays correct after the 5s table poll swaps the tbody. #}
+        <th class="px-4 py-3 font-medium w-10">
+          <input type="checkbox" title="Select all on this page"
+                 :checked="$store.jobSelection.allVisibleSelected()"
+                 @change="$store.jobSelection.setAllVisible($el.checked)"
+                 class="lt-check">
+          <span class="sr-only">Select all on this page</span>
+        </th>
+        {% endif %}
+        <th class="px-4 py-3 font-medium">#</th>
+        <th class="px-4 py-3 font-medium">File</th>
+        <th class="px-4 py-3 font-medium">Type</th>
+        <th class="px-4 py-3 font-medium">Workflow</th>
+        <th class="px-4 py-3 font-medium">Score</th>
+        <th class="px-4 py-3 font-medium">Status</th>
+        <th class="px-4 py-3 font-medium">Submitted</th>
+        {# One column, two lines — the shape `admin/partials/_activity_table.html` uses for
+           exactly this pair. As two columns they cost ~130px of a table that did not have
+           it to give, and the IP is the second thing you read about a submitter, never the
+           first. #}
+        {% if user and user.is_superuser %}
+        <th class="px-4 py-3 font-medium">Submitter</th>
+        {% endif %}
+        {#
+          There is no similarity column: one centred glyph in a column of its own at the far
+          right of an already-wide table breaks the row's rhythm. `≈` rides beside the
+          filename with the padlock and the watch eye, which is where the other per-file
+          markers live and what the roomy view does.
+        #}
+        {% if user and user.is_superuser %}<th class="px-4 py-3 font-medium"></th>{% endif %}
+      </tr>
+    </thead>
+    {% include "partials/_jobs_table_body.html" %}
+  </table>
+  </div>
+</div>
+{% endif %}
+
+<!-- Pagination -->
+{{ pager(page, total_pages, url='/jobs', qs=list_qs, total=total, per_page=per_page, noun='jobs', noun_one='job', keys=True) }}
+</div>
+
+{% else %}
+<div class="text-center py-20 text-gray-600">
+  {# "No jobs yet" under an active filter is a lie, and the kind that makes someone think
+     their uploads vanished. #}
+  {% if query or active_tags %}
+  <p class="text-lg mb-2">No jobs match that search.</p>
+  <a href="/jobs" class="text-blue-400 hover:text-blue-300 text-sm">Clear the filter →</a>
+  {% else %}
+  <p class="text-lg mb-2">No jobs yet.</p>
+  <a href="/" class="text-blue-400 hover:text-blue-300 text-sm">Submit your first log file →</a>
+  {% endif %}
+</div>
+{% endif %}

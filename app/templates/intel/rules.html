@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+{% block title %}Rules – LogsTotal{% endblock %}
+
+{% block content %}
+{#
+  A top-level destination, not a section of Intel — like Tags. A rule
+  labels and alerts on *entities and jobs alike*, so hanging it off one of the two surfaces
+  it acts on says the wrong thing about which owns it. `page_header` with a Home back-link
+  rather than an `Intel /` breadcrumb, because Intel is not above it.
+
+  The whole page is the fragment. Heading, intro, tab strip and every control live in
+  `_rules_body.html` inside `#rules-region`, so an action that changes a count refreshes
+  the count it changed — a header out here would go stale.
+#}
+<div>
+  {% include "intel/partials/_rules_body.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,282 @@
+{% from "partials/_help_popover.html" import help_popover %}
+{% from "intel/partials/_entity_type_badge.html" import entity_type_checkboxes %}
+{# `with context`: the macro renders colour swatches from `tag_colors`. #}
+{% from "intel/partials/_tag_combobox.html" import tag_combobox with context %}
+{#
+  The rule create/edit form, on its own because edit forms are not rendered with the page.
+
+  Inlined once per rule in `_rules_body.html`, thirty-eight of them came to 1.29 MB and
+  9,227 DOM nodes — 38 `conditionEditor()` and 38 `tagCombobox()` components — rebuilt in
+  full on every action, to show at most one. A row ships an empty container and
+  `GET /intel/rules/{id}/form-partial` fills it the first time Edit is clicked.
+
+  The create form is still rendered with the page, deliberately: `newRuleSeed()` and the
+  "Start a rule from this" button on every shared rule dispatch `seed-new-rule` at fields
+  that have to already exist. It is one form, not thirty-eight.
+
+  Lazy loading is safe here **because** the condition editor sizes itself from a `<pre>` in
+  normal flow instead of measuring `scrollHeight` — that inversion exists precisely so the
+  field works when it is born inside something hidden, which is always.
+#}
+{% macro rule_form(r) %}
+{#
+  One form for create and edit. The server shares `_apply_rule_fields` between the two
+  routes for the same reason: two definitions of "what this field means" would drift.
+#}
+<form method="POST" action="{% if r %}/intel/rules/{{ r.id }}/edit{% else %}/intel/rules{% endif %}"
+      {# htmx submits it; `method`/`action` stay so a submit without JavaScript still lands
+         on the same route. On success the server sends the whole region back. On a
+         validation error it sends only the messages and retargets them at the slot above
+         the buttons, which leaves this form — and everything typed into it — untouched.
+         That is the whole point: a plain 400 would replace the page with an error screen,
+         losing the draft. #}
+      hx-post="{% if r %}/intel/rules/{{ r.id }}/edit{% else %}/intel/rules{% endif %}"
+      hx-target="#rules-region" hx-swap="outerHTML"
+      {# Single-quoted: `| tojson` escapes & < > and ' but NOT ", so a double-quoted
+         attribute would be truncated at the first character of the URL. #}
+      x-data='{ url: {{ ((r.webhook_url if r else "") or "") | tojson }}, showWebhook: {{ "true" if (r and r.webhook_url) else "false" }}, scope: {{ ((r.scope if r else "entity") or "entity") | tojson }} }'
+      class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+  <div>
+    <label class="lt-label">Name</label>
+    <input type="text" name="name" required value="{{ r.name if r else '' }}" class="lt-field lt-field--lg w-full" placeholder="New LOLBins">
+  </div>
+  <div>
+    {#
+      Radios, not a `<select>`. Two options with different consequences below them read
+      better side by side than folded into a control you have to open.
+
+      `x-model` drives the two `x-show`s below AND the radio's own checked state, so the
+      value htmx serialises into the preview is the one the reader can see.
+    #}
+    <label class="lt-label">Applies to</label>
+    <div class="flex items-center gap-2">
+      {% for key in rule_scopes %}
+      <label class="lt-btn flex-1 justify-center cursor-pointer" :class="scope === '{{ key }}' ? 'lt-btn--active' : ''">
+        <input type="radio" name="scope" value="{{ key }}" class="sr-only" x-model="scope">
+        {{ rule_scope_labels[key] }}
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="sm:col-span-2">
+    <label class="lt-label">Description <span class="text-gray-600">(optional)</span></label>
+    <input type="text" name="description" value="{{ r.description if r and r.description else '' }}" class="lt-field lt-field--lg w-full" placeholder="What this catches, in a sentence">
+  </div>
+
+  {#
+    Entity types narrow an entity rule and mean nothing to a job rule. Hidden rather than
+    removed, so switching scope back restores what was ticked; the server stores `[]` for a
+    job rule regardless, so a stale tick cannot survive a save.
+  #}
+  <div class="sm:col-span-2" x-show="scope === 'entity'" x-cloak>
+    <label class="lt-label">Entity types <span class="text-gray-600">(optional &mdash; none means all)</span></label>
+    {{ entity_type_checkboxes(all_entity_types, (r.entity_types | from_json) if r else []) }}
+  </div>
+
+  <div class="sm:col-span-2">
+    {#
+      The help hangs off the field, not off a sentence pointing at another page.
+
+      Both panels are rendered and `x-show`n rather than one panel whose rows swap. The rows
+      come from the parsers themselves (`queries.SYNTAX_HELP` / `jobs_query.SYNTAX_HELP`), so
+      the two grammars cannot be documented as one; and a binding that rewrites a popover's
+      contents races anything that reads it — Alpine applies bindings on its own scheduler.
+    #}
+    <label class="lt-label">Condition
+      <span x-show="scope === 'entity'">{{ help_popover('Condition syntax', rows=entity_syntax_help, width='lg', intro=entity_syntax_intro) }}</span>
+      <span x-show="scope === 'job'" x-cloak>{{ help_popover('Condition syntax', rows=jobs_syntax_help, width='lg', intro='Terms are AND-ed. Prefix any with - to exclude.') }}</span>
+    </label>
+    {#
+      A textarea, not an input: the shipped `public` rule is a 190-character CIDR list and a
+      `re:` reads badly in a single scrolling line.
+
+      It is also **still the field**. `conditionEditor` paints a coloured copy of the value
+      into a `<pre>` behind it and grows it to fit; the textarea keeps `name="query"` and
+      every htmx attribute, so the 400 ms preview and the dry-run's `hx-include="closest
+      form"` serialise exactly what the analyst typed. Nothing is mirrored into a hidden
+      input — that would put a serializer on Alpine's scheduler, the race
+      `caseEntityFilter._refetch` exists to avoid.
+
+      `x-effect="scope; repaint()"` rather than a `$watch`: reading `scope` in the template
+      is what registers the dependency, and `scope` belongs to the enclosing form's scope,
+      not to the editor. Switching Entities ⇄ Jobs repaints against the other grammar.
+
+      `focusout` with `relatedTarget` rather than `blur`, or clicking a suggestion unmounts
+      the row before its own handler runs — the trap `_tag_combobox.html` documents.
+    #}
+    <div x-data="conditionEditor()"
+         x-effect="scope; repaint()"
+         @focusout="if (!$event.currentTarget.contains($event.relatedTarget)) close()">
+      {# The positioning context is the field alone, so the completion list hangs off the
+         box rather than off the box *and* the term count under it — which read as a menu
+         belonging to nothing. #}
+      <div class="relative">
+      <div class="lt-cond">
+        <pre class="lt-cond__hl" aria-hidden="true" x-ref="hl"></pre>
+        <textarea name="query" rows="1" class="lt-cond__input" x-ref="search"
+                  autocomplete="off" spellcheck="false"
+                  :placeholder="scope === 'job' ? 'sev:critical -tag:reviewed' : 'list:lolbas -tag:known-good'"
+                  @input="onInput()"
+                  {# Arrows and clicks move the caret without changing the value, so `input`
+                     alone would leave the completion list describing the wrong term. #}
+                  @keyup.arrow-left="schedule()" @keyup.arrow-right="schedule()" @click="schedule()"
+                  @keydown="onKey($event)"
+                  hx-get="/intel/rules/preview" hx-trigger="keyup changed delay:400ms"
+                  hx-target="#rule-preview-{{ r.id if r else 'new' }}" hx-include="closest form">{{ r.query if r else '' }}</textarea>
+      </div>
+      {# Labels are tag, list and workflow names — bound with x-text, never interpolated. #}
+      <div x-show="open" x-cloak data-search-suggest
+           class="lt-menu absolute left-0 right-0 top-full mt-1 lt-scroll lt-scroll--sm">
+        <template x-for="(item, i) in items" :key="item.insert">
+          <button type="button" @mousedown.prevent="pick(item)" @mouseenter="highlight = i"
+                  :class="highlight === i ? 'bg-gray-800' : ''"
+                  class="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-800 transition">
+            <span class="font-mono text-xs text-gray-200" x-text="item.label"></span>
+            <span class="ml-auto text-[10px] text-gray-500 truncate max-w-[55%]" x-text="item.detail"></span>
+          </button>
+        </template>
+      </div>
+      </div>
+      {# `terms` is the published count, not a call to `termCount()`: the counter reads the
+         textarea's `.value`, a DOM property Alpine cannot observe, so a call here is
+         evaluated once against an empty field and never again.
+
+         The sentence after it is the only place a newline is documented, and it earns the
+         room: both grammars treat one as whitespace, so Enter is a real way to lay out a
+         long condition — and the field looked for a while as though it were inserting a
+         tab, which made people avoid the key. One line, not two: the counter only appears
+         once something is typed and this has to be readable before that. #}
+      <p class="mt-1 text-[11px] text-gray-600">
+        <span x-show="terms" x-cloak><span x-text="terms"></span> <span x-text="terms === 1 ? 'term' : 'terms'"></span><span x-show="terms > 1">, all of which must match</span> &middot; </span>A new line counts as a space, so a long condition can be written one term per line.
+      </p>
+    </div>
+    <p id="rule-preview-{{ r.id if r else 'new' }}" class="mt-1 text-xs text-gray-600">
+      <span x-show="scope === 'entity'">The same syntax as the Intel search box; evaluated against every entity of each job as it finishes.</span>
+      <span x-show="scope === 'job'" x-cloak>The same syntax as the Jobs search box; evaluated against each job as it finishes.</span>
+    </p>
+    {#
+      The preview above answers "how many match right now", which is the cheap keystroke-time
+      question. This answers the one people actually get wrong: would this rule be quiet, or
+      will it bury me? A rule matching six hundred entities across the last twenty-five jobs
+      is one you want silent, and otherwise the only way to find that out is to turn it on.
+
+      `type="button"`, or it submits the form it sits in. `hx-include="closest form"` sends
+      the same fields the save path parses, so the dry run cannot disagree with the rule.
+    #}
+    <div class="mt-2 flex items-center gap-2">
+      <button type="button" class="lt-btn lt-btn--sm"
+              hx-post="/intel/rules/dry-run" hx-include="closest form"
+              hx-target="#rule-dryrun-{{ r.id if r else 'new' }}" hx-swap="innerHTML">Test against recent jobs</button>
+      <span id="rule-dryrun-{{ r.id if r else 'new' }}" class="text-xs text-gray-600"></span>
+    </div>
+  </div>
+
+  {#
+    Then: three independent actions — tags, the bell, a webhook — not one "notify" switch.
+    Each box gates only its own action, and a rule with none of the three still keeps its
+    match history.
+  #}
+  <div class="sm:col-span-2 border-t border-gray-800 pt-4">
+    <p class="lt-label">Then</p>
+  </div>
+  <div>
+    <label class="lt-label">Add tags <span class="text-gray-600">(optional &mdash; several allowed)</span></label>
+    {# Seeded through `opts`, not `x-init`, so the stored value arrives as pills rather than
+       as text in the box: `init()` splits the CSV and pairs each name with its own colour,
+       which is how reopening a rule shows what it actually applies. #}
+    <div x-data='tagCombobox({
+           max: {{ tag_write_max }},
+           value: {{ ((r.action_tag if r else "") or "") | tojson }},
+           colors: {{ ((r.action_tag_color if r else "gray") or "gray").split(",") | tojson }},
+           color: {{ (((r.action_tag_color if r else "gray") or "gray").split(",")[0]) | tojson }}
+         })'>
+      {{ tag_combobox(name='action_tag', color_name='action_tag_color', size='lt-field--lg', width='w-full') }}
+    </div>
+  </div>
+  <div>
+    <label class="lt-label">Alert</label>
+    <label class="lt-btn w-full justify-start cursor-pointer">
+      <input type="checkbox" name="action_notify" value="1" class="lt-check" {% if (not r) or r.action_notify %}checked{% endif %}>
+      Alert me in my bell
+    </label>
+    <p class="mt-1 text-[11px] text-gray-600">Off, the rule still adds its tags and sends its webhook &mdash; it just stays out of your bell.</p>
+  </div>
+
+  <div class="sm:col-span-2">
+    <button type="button" @click="showWebhook = !showWebhook" class="lt-btn lt-btn--sm">
+      <span x-text="showWebhook ? 'Hide webhook' : 'Send a webhook…'"></span>
+    </button>
+  </div>
+
+  <template x-if="showWebhook">
+    <div class="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-4">
+      <div>
+        <label class="lt-label">Webhook URL</label>
+        <input type="url" name="webhook_url" x-model="url" value="{{ r.webhook_url if r and r.webhook_url else '' }}"
+               class="lt-field lt-field--lg w-full" placeholder="https://hooks.example.com/…">
+        <p class="mt-1 text-[11px] text-gray-600">
+          {% if require_public_host %}Only publicly-routable hosts are accepted (<code>WEBHOOK_REQUIRE_PUBLIC_HOST</code> is on).
+          {% else %}Internal hosts are accepted.{% endif %}
+        </p>
+      </div>
+      <div>
+        <label class="lt-label">Method</label>
+        <select name="webhook_method" class="lt-field lt-field--lg w-full">
+          {% for m in webhook_methods %}<option value="{{ m }}" {% if r and r.webhook_method == m %}selected{% endif %}>{{ m }}</option>{% endfor %}
+        </select>
+      </div>
+      <div>
+        <label class="lt-label">Signing secret <span class="text-gray-600">{% if r and r.webhook_secret_encrypted %}(set — leave blank to keep){% else %}(recommended){% endif %}</span></label>
+        <input type="password" name="webhook_secret" autocomplete="new-password" class="lt-field lt-field--lg w-full"
+               placeholder="{% if r and r.webhook_secret_encrypted %}unchanged{% else %}shared secret{% endif %}">
+        <p class="mt-1 text-[11px] text-gray-600">Sent as <code>X-LogsTotal-Signature: sha256=…</code> over <code>timestamp.body</code>.</p>
+        {% if r and r.webhook_secret_encrypted %}
+        <label class="mt-1 inline-flex items-center gap-2 text-[11px] text-gray-500">
+          <input type="checkbox" name="clear_secret" value="1" class="lt-check"> remove the secret (deliveries stop being signed)
+        </label>
+        {% endif %}
+      </div>
+      <div>
+        <label class="lt-label">Extra headers <span class="text-gray-600">(JSON object, optional)</span></label>
+        <textarea name="webhook_headers" rows="2" class="lt-field lt-field--lg w-full font-mono"
+                  placeholder='{"X-Auth-Token": "…"}'>{{ r.webhook_headers_json if r and r.webhook_headers_json else '' }}</textarea>
+        <p class="mt-1 text-[11px] text-gray-600">Put secrets in the signing secret, not here — these are stored in plaintext.</p>
+      </div>
+      <div class="sm:col-span-2">
+        <label class="lt-btn cursor-pointer">
+          <input type="checkbox" name="webhook_enabled" value="1" class="lt-check" {% if (not r) or r.webhook_enabled %}checked{% endif %}>
+          Send deliveries for this rule
+        </label>
+      </div>
+      {# Job watches have no webhook configuration of their own — they borrow one rule's,
+         at most one per person, so there is a single URL and secret to look after. #}
+      <div class="sm:col-span-2">
+        <label class="lt-btn cursor-pointer">
+          <input type="checkbox" name="notify_job_watch" value="1" class="lt-check" {% if r and r.notify_job_watch %}checked{% endif %}>
+          Also send my job-watch events here
+        </label>
+        <p class="mt-1 text-xs text-gray-600">Comments, tags and finished AI analyses on jobs you watch, delivered as <code class="bg-gray-800 px-1 rounded">job.watch</code>. Only one of your rules can carry these.</p>
+      </div>
+    </div>
+  </template>
+
+  {#
+    Where a failed save lands. Empty until then, and it has to exist before the first
+    submit: `HX-Retarget` names a selector, and htmx drops the response if nothing matches.
+  #}
+  <div class="sm:col-span-2" id="rule-form-errors-{{ r.id if r else 'new' }}"></div>
+
+  {#
+    Cancel, because the only way out of an open form was the Edit toggle that opened it —
+    by then scrolled off the top of a 563 px form. It discards nothing server-side; it just
+    closes. `editing` belongs to the row's x-data, which is an ancestor of this form even
+    when the form arrived by htmx, so Alpine's scope chain resolves it outward.
+  #}
+  <div class="sm:col-span-2 flex items-center gap-2">
+    <button type="submit" class="lt-btn lt-btn--lg lt-btn--primary">{% if r %}Save changes{% else %}Create rule{% endif %}</button>
+    <button type="button" class="lt-btn lt-btn--lg"
+            @click="{% if r %}editing = false{% else %}const d = $el.closest('details'); if (d) d.open = false{% endif %}">Cancel</button>
+  </div>
+</form>
+{% endmacro %}

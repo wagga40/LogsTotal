@@ -1,0 +1,48 @@
+{% from "partials/_markdown_help.html" import markdown_help, editor_placeholder %}
+{% from "partials/_rich_text.html" import rich_text %}
+{#
+  Case investigation narrative — mirrors intel/partials/_entity_notes.html but is
+  self-contained (display + owner-only edit form in one partial): this whole region —
+  rendered on the Overview tab, beside the summary it continues — is the HTMX swap target
+  for POST /{case_id}/notes.
+#}
+<div id="case-notes-region" x-data="{ editing: false }">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-sm font-medium text-gray-400 flex items-center gap-1.5">Notes {{ markdown_help(site_settings) }}</h2>
+    {% if is_owner %}
+    <button type="button" x-show="!editing" @click="editing = true"
+            class="lt-btn">
+      Edit
+    </button>
+    {% endif %}
+  </div>
+  <div x-show="!editing" class="text-sm text-gray-300">
+    {% if case.notes %}
+    {{ rich_text(case.notes, site_settings) }}
+    {% else %}
+    <div class="text-gray-500 italic">No investigation notes yet.</div>
+    {% endif %}
+  </div>
+  {% if is_owner %}
+  <form x-show="editing" x-cloak
+        hx-post="/intel/cases/{{ case.id }}/notes"
+        hx-target="#case-notes-region"
+        hx-swap="outerHTML"
+        class="space-y-3">
+    <textarea name="body" rows="6" maxlength="8000"
+              class="lt-field lt-field--lg w-full font-mono"
+              placeholder="{{ editor_placeholder(site_settings, 'Running investigation narrative.', 8000) }}">{{ case.notes or '' }}</textarea>
+    <div class="flex gap-2">
+      <button type="submit" class="lt-btn lt-btn--primary">Save</button>
+      <button type="button" @click="editing = false"
+              class="lt-btn">Cancel</button>
+      <button type="button"
+              hx-post="/intel/cases/{{ case.id }}/notes"
+              hx-vals='{"body":""}'
+              hx-target="#case-notes-region"
+              hx-swap="outerHTML"
+              class="ml-auto px-3 py-1.5 rounded text-xs text-red-400 hover:text-red-300">Clear</button>
+    </div>
+  </form>
+  {% endif %}
+</div>

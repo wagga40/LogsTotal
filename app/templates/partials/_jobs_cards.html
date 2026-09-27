@@ -1,0 +1,107 @@
+{% from "intel/partials/_tag_chip.html" import tag_chip %}
+{% from "partials/_icons.html" import icon with context %}
+{% set _is_member = user and (user.is_superuser or user.role == 'member') %}
+{#
+  The roomy jobs list: one card per job, with every tag under a rule.
+
+  It exists because the compact table's tag cap is a real compromise. Three chips ride
+  inline there and the rest fold into a "+N" popover — as a column they made the row tall
+  and pushed Score and Status off to the right, and as a `colspan` sub-row they doubled the
+  length of the list. Both of those observations are true, which is an argument for two
+  views rather than one unhappy middle. Here the row is already three lines, so the tags
+  cost nothing extra and none of them are hidden.
+
+  **Not a `<table>`, deliberately.** A card is the shape `intel/cases_list.html` already
+  uses for exactly this — a title, a meta line, and detail underneath — and a two-line
+  `colspan` row would have to fight the column widths of a header it no longer fits. It also
+  keeps the compact table's guarantee intact: no `Tags` column and no `colspan` anywhere in
+  the tbody, which is what `tests/test_job_tags.py` pins.
+
+  **The id stays `jobs-table-body`.** It is the poll target, the `jobsRefresh` listener and
+  what the bulk bar triggers after a write; renaming it would mean touching all three for a
+  cosmetic gain. Same reason `data-job-select` stays on the checkbox — `jobSelection`
+  derives its select-all set from the DOM, so both views work with no JS change.
+#}
+<div id="jobs-table-body" class="divide-y divide-gray-800/70"
+  hx-get="/jobs/table-partial?page={{ page }}{% if list_qs %}&amp;{{ list_qs }}{% endif %}"
+  hx-trigger="jobsRefresh from:body{% if has_running %}, every 5s{% endif %}"
+  hx-swap="outerHTML"
+>
+  {% for job in jobs %}
+  <div class="px-5 py-4 hover:bg-gray-800/40 transition focus-within:bg-gray-800/40 cursor-pointer"
+       tabindex="0" role="link" aria-label="Job #{{ job.id }} — {{ job.filename }}"
+       onclick="window.location='/jobs/{{ job.id }}'" onkeydown="if(event.key==='Enter'&&event.target===event.currentTarget)window.location='/jobs/{{ job.id }}'">
+
+    {# Line 1: what it is, and how it went. #}
+    <div class="flex items-center gap-3">
+      {% if _is_member %}
+      <span onclick="event.stopPropagation()" class="flex items-center">
+        <input type="checkbox" aria-label="Select job {{ job.id }}" data-job-select="{{ job.id }}"
+               :checked="$store.jobSelection.has({{ job.id }})"
+               @change="$store.jobSelection.toggle({{ job.id }})"
+               class="lt-check">
+      </span>
+      {% endif %}
+      <span class="text-gray-600 font-mono text-xs shrink-0">#{{ job.id }}</span>
+      <span class="font-mono text-blue-300 text-sm truncate min-w-0" title="{{ job.filename }}">
+        {% if job.is_private %}<span class="text-gray-500 mr-1" title="Private submission">&#128274;</span>{% endif %}{% if job.id in watched_ids %}<span class="text-gray-500 mr-1" title="You are watching this job">{{ icon('eye', 'w-3 h-3 inline-block align-[-1px]') }}</span>{% endif %}{{ job.filename }}
+      </span>
+      <span class="ml-auto flex items-center gap-3 shrink-0">
+        {% if job.score_ratio %}
+        <span class="font-mono font-bold text-sm {% if job.total_findings and job.total_findings > 0 %}text-red-400{% elif (job.status.value if job.status.value is defined else job.status) in ('failed', 'partial') %}text-amber-400{% else %}text-green-400{% endif %}">{{ job.score_ratio }}</span>
+        {% endif %}
+        {% include "partials/_status_badge.html" %}
+      </span>
+    </div>
+
+    {# Line 2: the columns the table gives their own headers, said in words. The similarity
+       marker is spelled out here rather than left as a lone glyph — in the table it has a
+       column heading to lean on, and here it would have nothing. #}
+    <div class="mt-1 flex items-center gap-2 flex-wrap text-xs text-gray-500 {% if _is_member %}pl-7{% endif %}">
+      <span>{{ job.effective_log_type.value }}</span>
+      <span class="text-gray-700">·</span>
+      <span>{{ job.workflow.name }}</span>
+      <span class="text-gray-700">·</span>
+      <span title="{{ job.created_at }}">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% if user and user.is_superuser %}
+      <span class="text-gray-700">·</span>
+      <span class="truncate max-w-[16rem]" title="{{ job.submitter.email if job.submitter else 'Anonymous' }}">{{ job.submitter.display_name or job.submitter.email if job.submitter else 'Anonymous' }}</span>
+      {% if job.submitter_ip %}<span class="text-gray-700">·</span><span class="font-mono">{{ job.submitter_ip }}</span>{% endif %}
+      {% endif %}
+      {% if job.log_file.tlsh_hash %}
+      <span class="text-gray-700">·</span>
+      <span class="text-purple-400" title="TLSH: {{ job.log_file.tlsh_hash }}">&asymp; similar</span>
+      {% endif %}
+      {% if user and user.is_superuser %}
+      {# At the end of the meta line rather than on a line of its own: alone it left a band
+         of empty card under every row, which read as a missing tag strip. Far from the
+         filename, and not on the title line, so it is hard to hit by accident. #}
+      <span class="ml-auto" onclick="event.stopPropagation()">
+        <form method="POST" action="/jobs/{{ job.id }}/delete"
+              data-confirm-title="Delete job"
+              data-confirm-message="Delete job #{{ job.id }}?"
+              data-confirm-accept="Delete">
+          <button type="submit" class="text-xs text-red-500 hover:text-red-400 hover:bg-red-950 px-2 py-0.5 rounded transition">Delete</button>
+        </form>
+      </span>
+      {% endif %}
+    </div>
+
+    {# Line 3: every tag.
+
+       **Separated by space, not by a rule.** A hairline here competes with the divider
+       between rows — two lines of similar weight a few pixels apart, and the eye cannot
+       tell which one ends the job. A faint one disappears and a visible one fights the row
+       divider, which is the tell that the device is wrong
+       rather than the colour. The gap plus the shared left indent groups the chips with
+       the row above them, and the coloured pills are self-evidently not more meta text. #}
+    {% if _is_member and job.tags %}
+    <div class="mt-2.5 flex items-center gap-1 flex-wrap {% if _is_member %}pl-7{% endif %}"
+         onclick="event.stopPropagation()">
+      {% for t in job.tags | sort(attribute='tag') %}{{ tag_chip(t.tag, t.color, href='/jobs?tags=' ~ (t.tag | urlencode), size='[10px]') }}{% endfor %}
+    </div>
+    {% endif %}
+
+  </div>
+  {% endfor %}
+</div>

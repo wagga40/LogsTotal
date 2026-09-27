@@ -1,0 +1,61 @@
+---
+title: Advanced Port Scanner
+group: MFT
+description: Advanced Port Scanner artifacts
+authors:
+  - Reece394
+
+
+kind: mft
+level: medium
+status: stable
+timestamp: StandardInfoCreated
+
+
+fields:
+  - name: FileNamePath
+    to: FullPath
+  - name: StandardInfoLastModified0x10
+    to: StandardInfoLastModified
+  - name: StandardInfoLastAccess0x10
+    to: StandardInfoLastAccess
+  - name: FileNameCreated0x30
+    to: FileNameCreated
+  - name: FileNameLastModified0x30
+    to: FileNameLastModified
+  - name: FileNameLastAccess0x30
+    to: FileNameLastAccess
+  - name: FileSize
+    to: FileSize
+  - name: IsADirectory
+    to: IsADirectory
+  - name: IsDeleted
+    to: IsDeleted
+  - name: HasAlternateDataStreams
+    to: HasAlternateDataStreams
+  - name: DataStreams
+    to: DataStreams
+
+filter:
+  condition: aps and (aps_1 or aps_2 or aps_3 or aps_4)
+
+  aps:
+    FullPath:
+      - 'i*advanced_port_scanner*'
+      - 'i*advanced port scanner*'
+
+  aps_1:
+    FullPath:
+      - 'i*.exe*'
+
+  aps_2:
+    FullPath:
+      - 'i*.bin*'
+
+  aps_3:
+    FullPath:
+      - 'i*mac_interval_tree.txt*'
+
+  aps_4:
+    FullPath:
+      - 'i*.lnk*'

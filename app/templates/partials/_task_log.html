@@ -1,0 +1,6 @@
+{% if tr.log_output %}
+<pre class="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words bg-gray-950 rounded p-3 max-h-96 overflow-y-auto" data-log-task-id="{{ tr.id }}">{{ tr.log_output | e }}</pre>
+{% else %}
+{% set ts = tr.status.value if tr.status.value is defined else tr.status %}
+<p class="text-xs text-gray-500 font-mono">No log output. {% if ts == 'running' %}Logs will appear when the tool finishes.{% else %}This tool produced no stdout/stderr.{% endif %}</p>
+{% endif %}

@@ -1,0 +1,313 @@
+{% from "partials/_help_popover.html" import help_popover %}
+{% from "partials/_severity_macros.html" import sev_pill, sev_dot, sev_border, sev_tab %}
+{% from "partials/_timeline_chart.html" import timeline_chart %}
+{#- Entity-chip palettes, written out in full.
+
+    Never assembled — `bg-{{ color_prefix }}-900/40 text-{{ color_prefix }}-300 …` cannot
+    work in a production CSS build: `./logstotal css:build` scans these files for *complete* class
+    names, and an interpolated one is never there to find. The dev Play CDN generates from the
+    live DOM, so development looks perfect.
+
+    In production the failure is partial — any shade that happens to be written out literally
+    elsewhere in the templates still works — so it presents as "some of them are broken",
+    which reads like a data problem.
+
+    Same rule as `_entity_type_badge.html::type_badge_classes` and `_tag_chip.html::
+    tag_classes`. The shades are deliberately not the badge's — this chip is `/40` on the
+    fill and `/50` on the border, the badge is the other way round — so they stay separate
+    maps rather than one that is subtly wrong for both. -#}
+{% set _chip_classes = {
+  'blue':   'bg-blue-900/40 text-blue-300 border-blue-700/50',
+  'purple': 'bg-purple-900/40 text-purple-300 border-purple-700/50',
+  'green':  'bg-green-900/40 text-green-300 border-green-700/50',
+  'cyan':   'bg-cyan-900/40 text-cyan-300 border-cyan-700/50',
+  'yellow': 'bg-yellow-900/40 text-yellow-300 border-yellow-700/50',
+  'orange': 'bg-orange-900/40 text-orange-300 border-orange-700/50',
+  'rose':   'bg-rose-900/40 text-rose-300 border-rose-700/50',
+  'teal':   'bg-teal-900/40 text-teal-300 border-teal-700/50',
+  'indigo': 'bg-indigo-900/40 text-indigo-300 border-indigo-700/50',
+} %}
+{% if analytics_pending %}
+<!-- Analytics still being computed by the background worker — keep polling -->
+<div id="analytics-region"
+  hx-get="/jobs/{{ job.id }}/analytics"
+  hx-trigger="every 3s"
+  hx-swap="outerHTML">
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    <div class="flex items-center gap-3">
+      <svg class="animate-spin h-5 w-5 text-blue-400 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+        <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+        <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+      </svg>
+      <div>
+        <p class="text-sm text-gray-300">Computing analytics&hellip;</p>
+        <p class="text-xs text-gray-500 mt-0.5">Analyzing all matched events for entities, threat indicators, and timeline</p>
+      </div>
+    </div>
+  </div>
+</div>
+{% elif analytics_skipped %}
+<div id="analytics-region">
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    <p class="text-sm text-gray-300">
+      {% if analytics_skipped_reason == 'failed' %}Analytics could not be computed for this job — the post-processing step failed.
+      {% else %}Analytics were skipped because this job was cancelled.{% endif %}
+    </p>
+    {% if user and user.is_superuser %}
+    <p class="text-xs text-gray-500 mt-1">Use <strong>Recalculate</strong> above (or the analytics backfill on the admin dashboard) to compute MITRE, timeline, and entity analytics from the findings that were kept.</p>
+    {% else %}
+    <p class="text-xs text-gray-500 mt-1">The findings above are complete for the tools that finished; an operator can compute analytics for them retroactively.</p>
+    {% endif %}
+  </div>
+</div>
+{% else %}
+<div id="analytics-region">
+
+  <!-- Card 1: MITRE ATT&CK Heatmap -->
+  {% if not site_settings or site_settings.show_mitre_heatmap %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    <h3 class="text-sm font-medium text-gray-400 mb-4 flex items-center">MITRE ATT&amp;CK Coverage
+      {% call help_popover('How to read this heatmap', cls='ml-1.5') %}
+          <strong class="text-white">MITRE ATT&amp;CK</strong> maps detections to the adversary tactics used during an attack.
+          Each cell shows the total number of matching events for that tactic.
+          Darker/brighter = more activity. Cell colour is per-tactic to distinguish phases at a glance.
+          Only shown for Windows log types (EVTX / Winlogbeat).
+      {% endcall %}
+    </h3>
+    <div class="grid grid-cols-7 gap-2">
+      {% for tactic in analytics.mitre_tactics %}
+      {% set cnt = tactic.count %}
+      {% if cnt == 0 %}{% set hstate = 'empty' %}{% elif cnt < 10 %}{% set hstate = 'low' %}{% elif cnt < 50 %}{% set hstate = 'mid' %}{% else %}{% set hstate = 'high' %}{% endif %}
+      <div class="border rounded-lg p-2 text-center min-w-0 heatmap-cell-{{ hstate }}"
+        style="--cell-rgb-list: {{ tactic.rgb }}; --cell-color: {{ tactic.color }};"
+        title="{{ tactic.name | replace('_', ' ') | title }}: {{ cnt }} hit{% if cnt != 1 %}s{% endif %}">
+        <div class="text-lg font-bold font-mono">{% if cnt > 0 %}{{ cnt }}{% else %}—{% endif %}</div>
+        <div class="text-xs leading-tight mt-1 overflow-hidden text-ellipsis">{{ tactic.name | replace('_', ' ') | title }}</div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Card 2: Event Timeline -->
+  {% if analytics.timeline and (not site_settings or site_settings.show_event_timeline) %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    {{ timeline_chart(analytics.timeline, analytics.timeline_tactics) }}
+  </div>
+  {% endif %}
+
+  <!-- Card 2b: zoomable events timeline (individual alerts), under the hourly histogram -->
+  {# Its own switch. The histogram above answers "when was there activity, and of what
+     tactic"; this answers "what exactly happened, in what order" and normalises to UTC
+     where the histogram keeps each tool's offset. One flag for both meant you could not
+     keep the cheap glance and drop the detailed view. #}
+  {% if not site_settings or site_settings.show_alert_timeline %}
+  {% with tl_url = '/jobs/' ~ job.id ~ '/events-timeline',
+          tl_state_key = 'job:' ~ job.id %}
+    {% include 'partials/_events_timeline.html' %}
+  {% endwith %}
+  {% endif %}
+
+  <!-- Card 3: Entities -->
+  {% if not site_settings or site_settings.show_entities %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    <h3 class="text-sm font-medium text-gray-400 mb-4 flex items-center flex-wrap gap-1">
+      Entities
+      {% call help_popover('Where these entities come from', cls='ml-1.5') %}
+          Users, computers, IPs, domains, hashes, executables, services, and scheduled tasks extracted from event log details.
+          Sources include Image, CommandLine, IpAddress, QueryName, Hashes, ServiceName, TaskName, and related fields.
+          Machine accounts (ending in $) and well-known system accounts are filtered out.
+          <br><br>Computed from all matched events.
+      {% endcall %}
+      <span class="text-gray-600 font-normal">
+        · {{ analytics.users | length }} user{% if analytics.users | length != 1 %}s{% endif %}
+        · {{ analytics.computers | length }} computer{% if analytics.computers | length != 1 %}s{% endif %}
+        · {{ analytics.ip_addresses | length }} IP{% if analytics.ip_addresses | length != 1 %}s{% endif %}
+        · {{ analytics.hashes | length }} hash{% if analytics.hashes | length != 1 %}es{% endif %}
+      </span>
+    </h3>
+    <div x-data="{ tab: 'users' }">
+      <div class="flex gap-1 flex-wrap overflow-x-auto pb-3 mb-4 border-b border-gray-800 scrollbar-thin" role="tablist">
+        <button @click="tab = 'users'" role="tab" :aria-selected="tab === 'users'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'users' ? 'bg-blue-900/60 text-blue-200 border-blue-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          Users{% if analytics.users %} <span class="font-bold">{{ analytics.users | length }}</span>{% endif %}</button>
+        <button @click="tab = 'computers'" role="tab" :aria-selected="tab === 'computers'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'computers' ? 'bg-purple-900/60 text-purple-200 border-purple-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          Computers{% if analytics.computers %} <span class="font-bold">{{ analytics.computers | length }}</span>{% endif %}</button>
+        <button @click="tab = 'ip_addresses'" role="tab" :aria-selected="tab === 'ip_addresses'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'ip_addresses' ? 'bg-green-900/60 text-green-200 border-green-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          IPs{% if analytics.ip_addresses %} <span class="font-bold">{{ analytics.ip_addresses | length }}</span>{% endif %}</button>
+        <button @click="tab = 'domains'" role="tab" :aria-selected="tab === 'domains'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'domains' ? 'bg-cyan-900/60 text-cyan-200 border-cyan-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          Domains{% if analytics.domains %} <span class="font-bold">{{ analytics.domains | length }}</span>{% endif %}</button>
+        <button @click="tab = 'hashes'" role="tab" :aria-selected="tab === 'hashes'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'hashes' ? 'bg-yellow-900/60 text-yellow-200 border-yellow-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          Hashes{% if analytics.hashes %} <span class="font-bold">{{ analytics.hashes | length }}</span>{% endif %}</button>
+        <button @click="tab = 'executables'" role="tab" :aria-selected="tab === 'executables'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'executables' ? 'bg-orange-900/60 text-orange-200 border-orange-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          Executables{% if analytics.executables %} <span class="font-bold">{{ analytics.executables | length }}</span>{% endif %}</button>
+        {% if analytics.cmdline_files %}
+        <button @click="tab = 'cmdline_files'" role="tab" :aria-selected="tab === 'cmdline_files'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'cmdline_files' ? 'bg-rose-900/60 text-rose-200 border-rose-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          CLI Files <span class="font-bold">{{ analytics.cmdline_files | length }}</span></button>
+        {% endif %}
+        {% if analytics.services %}
+        <button @click="tab = 'services'" role="tab" :aria-selected="tab === 'services'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'services' ? 'bg-teal-900/60 text-teal-200 border-teal-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          Services <span class="font-bold">{{ analytics.services | length }}</span></button>
+        {% endif %}
+        {% if analytics.tasks %}
+        <button @click="tab = 'tasks'" role="tab" :aria-selected="tab === 'tasks'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5 whitespace-nowrap"
+          :class="tab === 'tasks' ? 'bg-indigo-900/60 text-indigo-200 border-indigo-700/60' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          Tasks <span class="font-bold">{{ analytics.tasks | length }}</span></button>
+        {% endif %}
+      </div>
+      {% macro entity_list(items, color_prefix, label) %}
+      {% set truncate_at = 50 %}
+      {% if items %}
+      <div x-data="{ showAll: false }" class="flex flex-wrap gap-2">
+        {% for val in items %}
+        <span {% if loop.index > truncate_at %}x-show="showAll" x-cloak {% endif %}class="text-xs px-2 py-1 rounded border max-w-full break-words {{ _chip_classes.get(color_prefix, 'bg-gray-800 text-gray-300 border-gray-700') }}{% if label in ('hashes', 'executables', 'cmdline_files', 'domains') %} font-mono{% endif %}">{{ val }}</span>
+        {% endfor %}
+        {% if items | length > truncate_at %}
+        <button x-show="!showAll" @click="showAll = true"
+          class="text-xs px-2 py-1 rounded border border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 transition">
+          Show all {{ items | length }}
+        </button>
+        {% endif %}
+      </div>
+      {% else %}
+      <p class="text-xs text-gray-600 italic">None identified</p>
+      {% endif %}
+      {% endmacro %}
+      <div x-show="tab === 'users'" role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.users, 'blue', 'users') }}</div>
+      <div x-show="tab === 'computers'" x-cloak role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.computers, 'purple', 'computers') }}</div>
+      <div x-show="tab === 'ip_addresses'" x-cloak role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.ip_addresses, 'green', 'ips') }}</div>
+      <div x-show="tab === 'domains'" x-cloak role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.domains, 'cyan', 'domains') }}</div>
+      <div x-show="tab === 'hashes'" x-cloak role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.hashes, 'yellow', 'hashes') }}</div>
+      <div x-show="tab === 'executables'" x-cloak role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.executables, 'orange', 'executables') }}</div>
+      {% if analytics.cmdline_files %}
+      <div x-show="tab === 'cmdline_files'" x-cloak role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.cmdline_files, 'rose', 'cmdline_files') }}</div>
+      {% endif %}
+      {% if analytics.services %}
+      <div x-show="tab === 'services'" x-cloak role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.services, 'teal', 'services') }}</div>
+      {% endif %}
+      {% if analytics.tasks %}
+      <div x-show="tab === 'tasks'" x-cloak role="tabpanel" class="overflow-hidden">{{ entity_list(analytics.tasks, 'indigo', 'tasks') }}</div>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Card 4: Threat Detection -->
+  {% if analytics.threat_detection and analytics.threat_detection.total_indicators > 0 and (not site_settings or site_settings.show_threat_detection) %}
+  {% set td = analytics.threat_detection %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    <h3 class="text-sm font-medium text-gray-400 mb-4 flex items-center flex-wrap gap-1">
+      Threat Detection
+      {% call help_popover('What threat detection looks for', cls='ml-1.5') %}
+          <strong class="text-white">Threat Detection</strong> scans event details for behavioral heuristics —
+          LOLBin usage, command-line obfuscation, credential theft, suspicious network activity,
+          process masquerading, persistence mechanisms, defense evasion, and data staging.
+          These are indicators, not definitive detections.
+          <br><br>Computed from all matched events.
+      {% endcall %}
+      <span class="text-gray-600 font-normal">
+        · {{ td.total_indicators }} indicator{{ 's' if td.total_indicators != 1 else '' }} across {{ td.total_categories }} area{{ 's' if td.total_categories != 1 else '' }}
+      </span>
+    </h3>
+
+
+    <div x-data="{ view: 'all', sevFilter: '' }">
+      <div class="flex gap-1 flex-wrap overflow-x-auto border-b border-gray-800 pb-3 mb-4 scrollbar-thin">
+        <button @click="view = 'all'; sevFilter = ''" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5"
+          :class="view === 'all' && sevFilter === '' ? 'bg-gray-700 text-white border-gray-500' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          All <span class="font-bold">{{ td.total_indicators }}</span></button>
+        {% for sev in ['critical', 'high', 'medium', 'low'] %}
+        {% set sev_total = td.sorted_categories | selectattr('indicators') | map(attribute='indicators') | sum(start=[]) | selectattr('severity', 'equalto', sev) | map(attribute='count') | sum %}
+        {% if sev_total > 0 %}
+        <button @click="sevFilter = sevFilter === '{{ sev }}' ? '' : '{{ sev }}'; view = 'all'" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5"
+          :class="sevFilter === '{{ sev }}' ? '{{ sev_tab(sev) }}' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          <span class="w-1.5 h-1.5 rounded-full {{ sev_dot(sev) }}"></span>{{ sev | capitalize }} <span class="font-bold">{{ sev_total }}</span></button>
+        {% endif %}
+        {% endfor %}
+        <span class="border-l border-gray-700 mx-1"></span>
+        {% for cat in td.sorted_categories %}
+        <button @click="view = '{{ cat.key }}'; sevFilter = ''" class="text-xs px-2.5 py-1 rounded border transition flex items-center gap-1.5"
+          :class="view === '{{ cat.key }}' ? '{{ sev_tab(cat.severity) }}' : 'bg-gray-800 text-gray-400 border-gray-700 hover:bg-gray-700'">
+          {{ cat.label }} <span class="font-bold">{{ cat.total }}</span></button>
+        {% endfor %}
+        <button type="button" x-show="sevFilter !== ''" x-cloak
+          @click="sevFilter = ''"
+          class="ml-auto text-xs px-2.5 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500 transition">
+          Clear filters
+        </button>
+      </div>
+
+      <!-- Category sections -->
+      <div class="flex justify-end gap-2 mb-2">
+        <button type="button"
+          @click="$dispatch('toggle-all-threats', { open: true })"
+          class="text-xs px-2.5 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500 transition">
+          Show all</button>
+        <button type="button"
+          @click="$dispatch('toggle-all-threats', { open: false })"
+          class="text-xs px-2.5 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500 transition">
+          Hide all</button>
+      </div>
+      <div class="space-y-3">
+        {% for cat in td.sorted_categories %}
+        {% set sev = cat.severity %}
+        <div x-data="{ open: false }"
+          @toggle-all-threats.window="open = $event.detail.open"
+          x-show="(view === 'all' || view === '{{ cat.key }}') && (sevFilter === '' || sevFilter === '{{ sev }}')"
+          class="border-l-4 {{ sev_border(sev) }} bg-gray-950/40 rounded-r-lg overflow-hidden">
+          <div class="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-800/50 transition">
+            <div class="flex items-center gap-2.5 min-w-0">
+              <span class="w-2 h-2 rounded-full flex-shrink-0 {{ sev_dot(sev) }}"></span>
+              <span class="font-medium text-sm text-gray-200">{{ cat.label }}</span>
+              <span class="text-xs text-gray-500">{{ cat.total }} indicator{{ 's' if cat.total != 1 else '' }}</span>
+            </div>
+            <button type="button" @click="open = !open" :aria-expanded="open"
+              class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition flex items-center gap-1.5"
+              :class="open ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
+              <span x-text="open ? 'Hide' : 'Show'"></span>
+              <svg class="w-3 h-3 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+            </button>
+          </div>
+          <div x-show="open" x-cloak class="px-4 pb-3">
+            <p class="text-xs text-gray-500 mb-2">{{ cat.description }}</p>
+            <div class="space-y-1.5">
+              {% for ind in cat.indicators %}
+              {% set isev = ind.severity %}
+              <div class="flex items-start gap-2 text-xs" x-show="sevFilter === '' || sevFilter === '{{ isev }}'">
+                <span class="flex-shrink-0 px-2 py-1 rounded border font-medium whitespace-nowrap {{ sev_pill(isev) }}">
+                  {{ ind.tag }}{% if ind.count > 1 %} <span class="font-bold">&times;{{ ind.count }}</span>{% endif %}
+                </span>
+                {% if ind.value %}
+                {% set threat_val = ind.value %}
+                <div class="py-1 text-gray-400 font-mono text-xs">
+                  {% if threat_val | length > 220 %}
+                  <span class="break-all overflow-x-hidden">&#8594; {{ threat_val[:220] }}...</span>
+                  <details class="mt-1">
+                    <summary class="cursor-pointer text-xs text-blue-300 hover:text-blue-200">View full value</summary>
+                    <div class="mt-2 whitespace-pre-wrap break-all overflow-x-hidden text-[11px] text-gray-300 bg-gray-950/50 border border-gray-800 rounded p-2 max-h-64 overflow-y-auto">{{ threat_val }}</div>
+                  </details>
+                  {% else %}
+                  <span class="break-all overflow-x-hidden" title="{{ threat_val | e }}">&#8594; {{ threat_val | e }}</span>
+                  {% endif %}
+                </div>
+                {% endif %}
+              </div>
+              {% endfor %}
+            </div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>
+{% endif %}

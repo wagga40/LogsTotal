@@ -1,0 +1,33 @@
+{# Top hubs by PageRank or degree. Its own partial so it can share the one exclusive panel
+   slot with the Legend and Help — a permanent panel in that corner would cover the
+   Legend's own close button.
+
+   Expects: activePanel, pivots, pivotMode, setPivotMode(m), selectNode(i), renderer.
+#}
+<div x-show="activePanel === 'pivots'" x-cloak
+     class="w-[17rem] lt-scroll--md flex flex-col bg-gray-900/95 backdrop-blur-sm border border-gray-800 rounded-lg text-xs shadow-2xl">
+  <div class="flex items-center gap-2 px-3 py-1.5 border-b border-gray-800">
+    <span class="font-medium text-gray-200">Pivots</span>
+    <div class="ml-auto flex gap-1">
+      <button type="button" @click="setPivotMode('pagerank')" class="lt-btn lt-btn--xs" :class="pivotMode === 'pagerank' ? 'lt-btn--active' : ''">rank</button>
+      <button type="button" @click="setPivotMode('degree')" class="lt-btn lt-btn--xs" :class="pivotMode === 'degree' ? 'lt-btn--active' : ''">degree</button>
+    </div>
+    <button type="button" @click="activePanel = ''" class="text-gray-500 hover:text-white" title="Close">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M6 18L18 6"/></svg>
+    </button>
+  </div>
+  {# The height cap is on the flex parent, the scrolling is here — the two halves of
+     .lt-scroll are deliberately orthogonal so a flex column can split them. #}
+  <div class="py-1 lt-scroll">
+    <template x-for="p in pivots" :key="p.index">
+      <button type="button" @click="selectNode(p.index); renderer.centerOn(p.index, 0.5)"
+              class="w-full text-left px-3 py-1 hover:bg-gray-800 flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full shrink-0" :style="`background:${schema.colors.type[p.type]}`"></span>
+        <span class="text-gray-300 truncate" x-text="p.label"></span>
+      </button>
+    </template>
+  </div>
+  <p class="px-3 pb-2 pt-1 text-[10px] text-gray-600 border-t border-gray-800">
+    Ranked by PageRank, not raw degree: degree here is dominated by how big a log file happened to be.
+  </p>
+</div>

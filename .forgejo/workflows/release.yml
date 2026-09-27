@@ -1,0 +1,158 @@
+# Forgejo release — the pre-flight twin of .github/workflows/release.yml.
+#
+# Same shape, same gates, different plumbing, for the reasons ci.yml's header sets out:
+# `self-hosted` is the host executor (the only label with a Docker daemon and a persistent
+# $HOME), there is no sudo so no apt, and two of the actions GitHub uses do not resolve on
+# data.forgejo.org.
+#
+# The one that matters here is `softprops/action-gh-release`, which is absent there. Forgejo
+# publishes its own `actions/forgejo-release` instead, which speaks the Forgejo release API
+# directly — a straight port of the GitHub publish step would fail at the last step of a
+# green run, which is the worst place to discover it.
+#
+# Why this exists at all: `task upgrade:*` resolves releases from whichever server the
+# deployment was installed from, and falls back to downloading `logstotal-<version>.7z` when
+# the install has no .git. Tag resolution works against any git server, but that *download*
+# needs a published asset — so without this workflow, pointing RELEASE_REPO_URL at Forgejo
+# gives you a version number and nothing to fetch.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  # Re-runnable by hand against an existing tag, for when a release needs rebuilding.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+jobs:
+  # The full suite, reused rather than reimplemented — the same reasoning as the GitHub
+  # workflow. ci.yml does not fire on tag pushes, so this is the only thing that runs it
+  # for a release, and it runs once.
+  ci:
+    uses: ./.forgejo/workflows/ci.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+
+  release:
+    needs: ci
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # `test_the_declared_version_has_a_git_tag` skips only when `.git` is absent, and
+          # a shallow checkout leaves `.git` present with zero tags — so it does not skip,
+          # it fails. Same reason as ci.yml.
+          fetch-depth: 0
+
+      # A tag whose name disagrees with the version in the code produces an archive that
+      # reports a different version than the release it is attached to. Caught here rather
+      # than by whoever downloads it.
+      - name: The tag matches the declared version
+        # The tag reaches the shell through `env:`, never `${{ }}` interpolation inside
+        # `run:`. A ref name is attacker-influencable, and interpolation splices it into the
+        # script text before bash ever sees it.
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          declared=$(sed -n 's/.*app_version: str = "\([^"]*\)".*/\1/p' app/config.py | head -1)
+          pyproject=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' pyproject.toml | head -1)
+          manifest=$(sed -n 's/^version: *//p' VERSION | head -1)
+          echo "tag=$TAG  app/config.py=$declared  pyproject.toml=$pyproject  VERSION=$manifest"
+          # All three, not just config.py. `task release:prepare` writes them together, so a
+          # disagreement here means the tool was bypassed or half-applied — and pyproject is
+          # what `pip install .` and the wheel metadata report.
+          for src in "app/config.py=$declared" "pyproject.toml=$pyproject" "VERSION=$manifest"; do
+            [ "$TAG" = "v${src#*=}" ] || {
+              echo "::error::tag $TAG does not match ${src%%=*} version ${src#*=}"
+              exit 1
+            }
+          done
+
+      - name: Provision
+        # One step, one script, shared with ci.yml: `7z` for package.sh (which gates on
+        # `command -v 7z`), `tailwind` so the published archive ships the compiled
+        # stylesheet rather than the Play-CDN dev bundle, and `jq` because
+        # `actions/forgejo-release` is a composite action whose script shells out to it.
+        # Each is cached in ~/.local/bin, which persists on this host executor.
+        run: bash scripts/ci-provision.sh 7z tailwind jq
+
+      - name: Build the release archive
+        # RELEASE_REPO_URL stamps .release-origin into the archive, so a host installed
+        # from it resolves its upgrades against THIS server — the whole reason this
+        # workflow exists (see the header).
+        env:
+          RELEASE_REPO_URL: ${{ github.server_url }}/${{ github.repository }}
+        run: bash scripts/package.sh
+
+      - name: Verify the archive
+        run: bash scripts/verify-artifacts.sh archive
+
+      # Just this version's section — publishing the whole file would restate the entire
+      # project history in every release's notes.
+      - name: Extract the release notes
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { inside = 1; next }
+            inside && /^## \[/     { exit }
+            inside                 { print }
+          ' CHANGELOG.md > release-notes.md
+          # A silently-empty body is how a release ends up looking unremarkable. The
+          # changelog guard in the test suite makes this unreachable, which is exactly why a
+          # failure here means something upstream broke rather than someone forgot.
+          [ -s release-notes.md ] || {
+            echo "::error::no '## [$version]' section in CHANGELOG.md"
+            exit 1
+          }
+          echo "release notes: $(wc -l <release-notes.md) lines"
+
+      - name: Stage the assets
+        # forgejo-release uploads the whole of release-dir, so the archive is moved into an
+        # otherwise-empty directory rather than pointed at — anything else in the worktree
+        # would be published alongside it.
+        #
+        # TAG has to be declared HERE. A workflow `env:` is per step, not inherited from the
+        # one above, and without it `${TAG#v}` expands to nothing and this step moves
+        # `logstotal-.7z`.
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          mkdir -p dist/release
+          # The checksum travels with the archive. `task upgrade` fetches <asset>.sha256 and
+          # checks the download against it; a release publishing none is reported as
+          # unchecked rather than refused, so older pins keep working.
+          # NAMED, not globbed. The staging directory exists so nothing else in the worktree
+          # is published alongside the archive, and a glob walks straight past that: a stale
+          # `.sha256` for another version left in the runner's workspace would be uploaded,
+          # where it reads as a checksum for the file being downloaded.
+          version="${TAG#v}"
+          mv "logstotal-${version}.7z" "logstotal-${version}.7z.sha256" dist/release/
+          ls -l dist/release
+
+      - name: Publish
+        # The Forgejo counterpart of softprops/action-gh-release, which does not exist on
+        # data.forgejo.org. `override: true` makes a workflow_dispatch rebuild of an existing
+        # tag replace its assets instead of failing — that re-runnability is the entire point
+        # of the dispatch trigger.
+        uses: actions/forgejo-release@v2
+        with:
+          direction: upload
+          url: ${{ github.server_url }}
+          repo: ${{ github.repository }}
+          tag: ${{ inputs.tag || github.ref_name }}
+          token: ${{ secrets.FORGEJO_TOKEN }}
+          release-dir: dist/release
+          release-notes-file: release-notes.md
+          override: true
+          verbose: true
+
+      - name: Clean up
+        if: always()
+        run: rm -rf dist release-notes.md logstotal-*.7z

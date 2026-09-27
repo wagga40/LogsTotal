@@ -1,0 +1,86 @@
+{# Entity Graph tab shell.
+
+   The whole options blob — including `schema` — is built server-side and emitted as ONE
+   `| tojson` inside a **single-quoted** attribute. `| tojson` emits double quotes, so
+   interpolating it into a double-quoted `x-data` truncates the expression and leaves a
+   component that renders fine and does nothing;
+   `test_htmx_partials_have_intact_alpine_expressions` pins that.
+
+   The schema is inlined rather than fetched because the renderer needs the palette and the
+   enum orders at construction time — a palette that arrives with the payload is
+   `undefined` when the first frame draws.
+
+   `graph_opts` is None until a job is chosen, and the empty branch below carries NO Alpine
+   bindings at all. That is the point of gating here rather than inside the component: no
+   WebGL context is created for a view that shows nothing, there is no `graphmlUrl()` in
+   scope to export a picture nobody can see, and there is no binding to be left
+   uninitialised for `test_alpine_bindings_initialize.py` to catch. #}
+{% if not graph_opts %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
+  <svg class="w-10 h-10 mx-auto mb-4 text-gray-700" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M12 3v2m0 14v2m9-9h-2M5 12H3m13.5-6.5l-1.4 1.4M8 16l-1.4 1.4m11 0L16 16M7.9 6.9L6.5 5.5M15 12a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+  <p class="text-sm text-gray-300 mb-1">Pick a job to draw the graph.</p>
+  <p class="text-xs text-gray-500 max-w-md mx-auto">
+    This entity's whole observed neighbourhood spans every job it ever appeared in, which on
+    a mature database is a hairball that answers nothing. Choose a job in the
+    <span class="text-gray-400">Job scope</span> selector above and the graph will show what
+    that job alone saw.
+  </p>
+</div>
+{% else %}
+<div x-data='graphComponent({{ graph_opts | tojson }})'
+     @keydown.escape.window="onEscape()"
+     :class="tall ? 'fixed inset-0 z-50 bg-gray-950 overflow-y-auto p-4' : ''">
+
+  <!-- Controls -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-3 space-y-3">
+    <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+      {# No Hops control under a job scope. Co-occurrence inside one job is close to a
+         clique, so hop 2 only reaches whatever hop 1's per-source `limit` cut off — a knob
+         that appears to do almost nothing is worse than no knob. Raise Neighbours instead. #}
+      <div class="lt-ctl">
+        <span class="lt-ctl__label">Scope</span>
+        <span class="lt-chip lt-chip--square bg-blue-900/40 text-blue-300 border-blue-700/40">job #{{ job }}</span>
+      </div>
+      <div class="lt-ctl">
+        <span class="lt-ctl__label">Neighbours / hop</span>
+        <select x-model.number="limit" @change="reload()" class="lt-field lt-field--sm w-20">
+          <option value="15">15</option>
+          <option value="30">30</option>
+          <option value="60">60</option>
+          <option value="120">120</option>
+          <option value="250">250</option>
+          <option value="500">500</option>
+        </select>
+      </div>
+      <label class="lt-ctl cursor-pointer">
+        <input type="checkbox" x-model="includeAllowlisted" @change="reload()" class="lt-check">
+        <span class="text-xs text-gray-300">Include allowlisted</span>
+      </label>
+      <div class="ml-auto flex items-center gap-2">
+        <span x-show="exporting" x-cloak class="text-xs text-amber-300">Rendering…</span>
+        <button type="button" @click="exportPng(1)" :disabled="!ready || exporting || !webgl" class="lt-btn lt-btn--sm">PNG ×1</button>
+        <button type="button" @click="exportPng(2)" :disabled="!ready || exporting || !webgl" class="lt-btn lt-btn--sm">PNG ×2</button>
+        <a x-bind:href="graphmlUrl()" target="_blank" class="lt-btn lt-btn--sm">GraphML</a>
+      </div>
+    </div>
+    {% include "intel/partials/_graph_toolbar.html" %}
+  </div>
+
+  {% include "intel/partials/_graph_stats.html" %}
+
+  {# Height. A fixed box measured 838 px down the entity page, so on a 900 px screen no
+     canvas height puts the graph on screen — the *page above it* is the constraint. Hence
+     two modes: a comfortable default, and an Expand that takes the whole viewport and
+     brings the toolbar with it, so filtering still works at full size. #}
+  <div class="relative" x-show="webgl">
+    <div x-ref="graph"
+         class="w-full bg-gray-950 border border-gray-800 rounded-xl"
+         :class="tall ? 'h-[calc(100vh-20rem)] min-h-[38rem]' : 'h-[38rem]'"></div>
+    {% include "intel/partials/_graph_overlay.html" %}
+  </div>
+  <div x-show="!webgl" x-cloak>
+    {% include "intel/partials/_graph_fallback.html" %}
+  </div>
+
+</div>
+{% endif %}

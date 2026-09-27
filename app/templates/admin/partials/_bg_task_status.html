@@ -1,0 +1,53 @@
+<!-- Background task status chip — self-polls while pending/running, stops on terminal states -->
+{#
+  Three things can come back from a Run click, and all three land here so the button has one
+  answer shape: the new task, the one already in flight (`already`), and "the database was
+  too busy to write the row" (`busy`, no task at all). The busy branch does not poll —
+  there is nothing to poll for; the click simply did not take.
+#}
+{% if busy %}
+<span class="inline-flex items-center gap-1.5 text-xs text-yellow-400">
+  <span class="font-mono">!</span>
+  <span>Database busy &mdash; try again</span>
+</span>
+{% else %}
+{% set st = task.status.value %}
+{% if st in ('pending', 'running') %}
+<span class="inline-flex items-center gap-1.5 text-xs {{ 'text-yellow-400' if st == 'pending' else 'text-blue-400' }}"
+      hx-get="/admin/background-tasks/{{ task.id }}/status-partial"
+      hx-trigger="every 3s"
+      hx-swap="outerHTML">
+  <svg class="animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+  {% if already %}Already {{ 'queued' if st == 'pending' else 'running' }}…{% else %}{{ 'Queued…' if st == 'pending' else 'Running…' }}{% endif %}
+</span>
+{% elif st == 'completed' %}
+<span class="inline-flex items-center gap-1.5 text-xs text-green-400">
+  <span class="font-mono">&#10003;</span>
+  <span>Completed</span>
+  {% if task.started_at and task.finished_at %}
+  {% set secs = ((task.finished_at - task.started_at).total_seconds()) | int %}
+  <span class="text-gray-500">&middot; {{ '%dm %02ds' % (secs // 60, secs % 60) if secs >= 60 else secs ~ 's' }}</span>
+  {% endif %}
+  {% if task.detail %}
+  <span class="text-gray-500 truncate max-w-[16rem]" title="{{ task.detail }}">&mdash; {{ task.detail }}</span>
+  {% endif %}
+</span>
+{% elif st == 'cancelled' %}
+{# Stopped on purpose, so neutral — not the red "Failed" everything else falls into. #}
+<span class="inline-flex items-center gap-1.5 text-xs text-gray-400">
+  <span class="font-mono">&#8856;</span>
+  <span>Cancelled</span>
+  {% if task.detail %}
+  <span class="text-gray-500 truncate max-w-[16rem]" title="{{ task.detail }}">&mdash; {{ task.detail }}</span>
+  {% endif %}
+</span>
+{% else %}
+<span class="inline-flex items-center gap-1.5 text-xs text-red-400">
+  <span class="font-mono">&#10007;</span>
+  <span>Failed</span>
+  {% if task.error_message or task.detail %}
+  <span class="text-red-300/70 truncate max-w-[16rem]" title="{{ task.error_message or task.detail }}">&mdash; {{ task.error_message or task.detail }}</span>
+  {% endif %}
+</span>
+{% endif %}
+{% endif %}

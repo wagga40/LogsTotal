@@ -1,0 +1,219 @@
+{# Relationship-graph side panel + hover tooltip + context menu + pivots.
+
+   Pivots moved to `_graph_pivots.html` — it shares the one exclusive panel slot with the
+   Legend and Help, because a permanently-docked card in the same corner covered the
+   Legend's close button.
+
+   Expects the parent Alpine root (graphComponent in /static/graph.js) to expose:
+     hover / selected / menu / trail / path
+     selectNode(i) / closePanel() / expandSelected(rel) / setPathEnd(which) / findPaths()
+     showPath(i) / clearPath() / pathLabel(p) / nodeChips(node) / menuRels() / isolateEgo()
+     copyValue() / undoExpansion() / resetToFocal()
+#}
+
+<!-- Hover tooltip -->
+<div x-show="hover.visible" x-cloak
+     class="lt-menu lt-menu--flush absolute pointer-events-none text-gray-200 text-xs px-2 py-1 max-w-xs"
+     :style="`top: ${hover.y + 14}px; left: ${hover.x + 14}px`">
+  <div class="font-medium text-white break-all" x-text="hover.node?.label"></div>
+  <div class="text-gray-400">
+    <span x-text="schema.labels.types[hover.node?.type] || hover.node?.type"></span> ·
+    <span x-text="hover.node?.jobCount"></span> jobs
+    <template x-if="hover.node?.severity"><span> · <span x-text="hover.node.severity"></span></span></template>
+  </div>
+  <div class="text-gray-500 text-[10px]" x-show="hover.node?.tags?.length" x-cloak x-text="(hover.node?.tags || []).join(', ')"></div>
+</div>
+
+<!-- Context menu. A real DOM menu rather than a canvas-drawn one: keyboard-reachable,
+     themeable, and it needs no inline handler the CSP would have to allow. -->
+<div x-show="menu.visible" x-cloak @click.outside="menu.visible = false"
+     class="lt-menu absolute min-w-[13rem] text-xs"
+     :style="`top:${menu.y}px; left:${menu.x}px`">
+  <template x-if="scope === 'entity'">
+    <div>
+      <button type="button" @click="expandSelected(null)" class="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-gray-800">Expand neighbours</button>
+      <template x-if="menuRels().length">
+        <div class="border-t border-gray-800 my-1 pt-1">
+          <div class="px-3 py-0.5 text-[10px] uppercase tracking-wide text-gray-600">Expand by relationship</div>
+          <template x-for="r in menuRels()" :key="r.key">
+            <button type="button" @click="expandSelected(r.key)" class="w-full text-left px-3 py-1 text-gray-300 hover:bg-gray-800" x-text="r.label"></button>
+          </template>
+        </div>
+      </template>
+    </div>
+  </template>
+  <div class="border-t border-gray-800 my-1"></div>
+  <button type="button" @click="setPathEnd('from'); menu.visible = false" class="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-gray-800">Path: start here</button>
+  <button type="button" @click="setPathEnd('to'); menu.visible = false" class="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-gray-800">Path: end here</button>
+  <button type="button" @click="isolateEgo()" class="w-full text-left px-3 py-1.5 text-gray-200 hover:bg-gray-800">Isolate this neighbourhood</button>
+  <div class="border-t border-gray-800 my-1"></div>
+  <button type="button" @click="copyValue()" class="w-full text-left px-3 py-1.5 text-gray-300 hover:bg-gray-800">Copy value</button>
+  <a :href="'/intel/entities/' + (selected.node?.entityId || '')" class="block px-3 py-1.5 text-gray-300 hover:bg-gray-800">Open entity page</a>
+</div>
+
+<!-- Expansion trail -->
+<div class="absolute bottom-2 right-2 z-20 pointer-events-auto" x-show="trail.length > 1" x-cloak>
+  <div class="bg-gray-900/90 backdrop-blur-sm border border-gray-800 rounded-lg text-xs shadow-lg px-3 py-2 max-w-[18rem]">
+    <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1">How this graph grew</div>
+    <template x-for="(step, i) in trail" :key="i">
+      <div class="text-gray-400 truncate" x-text="step.label"></div>
+    </template>
+    <div class="flex gap-1.5 mt-1.5">
+      <button type="button" @click="undoExpansion()" class="lt-btn lt-btn--xs">Undo last</button>
+      <button type="button" @click="resetToFocal()" class="lt-btn lt-btn--xs">Reset</button>
+    </div>
+  </div>
+</div>
+
+<!-- Side info panel -->
+<div x-show="selected.visible" x-cloak
+     class="absolute right-0 top-0 z-30 h-full w-80 bg-gray-900/95 border-l border-gray-800 backdrop-blur-sm shadow-2xl pointer-events-auto overflow-y-auto"
+     x-transition:enter="transition transform ease-out duration-200"
+     x-transition:enter-start="translate-x-full"
+     x-transition:enter-end="translate-x-0"
+     x-transition:leave="transition transform ease-in duration-150"
+     x-transition:leave-start="translate-x-0"
+     x-transition:leave-end="translate-x-full">
+  <div class="p-4 h-full flex flex-col">
+
+    <!-- Node -->
+    <template x-if="selected.node">
+      <div class="flex flex-col h-full">
+        <div class="flex items-start justify-between gap-2 mb-3">
+          <div class="min-w-0">
+            <div class="text-xs uppercase tracking-wide text-gray-500" x-text="schema.labels.types[selected.node.type] || selected.node.type"></div>
+            <div class="text-sm font-medium text-gray-100 break-all" x-text="selected.node.label"></div>
+          </div>
+          <button type="button" @click="closePanel()" class="text-gray-500 hover:text-white" title="Close">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M6 18L18 6"/></svg>
+          </button>
+        </div>
+
+        <div class="flex flex-wrap gap-1 mb-3" x-show="nodeChips(selected.node).length" x-cloak>
+          <template x-for="chip in nodeChips(selected.node)" :key="chip.label + chip.tone">
+            <span class="text-[10px] px-1.5 py-0.5 rounded border"
+                  :class="chip.tone === 'tag' ? 'bg-gray-800 text-gray-300 border-gray-700' : 'bg-gray-800/60 text-gray-400 border-gray-700/60'"
+                  x-text="chip.label"></span>
+          </template>
+        </div>
+
+        <div class="space-y-2 text-xs">
+          <div class="flex justify-between text-gray-400"><span>Jobs</span><span class="text-gray-200" x-text="selected.node.jobCount"></span></div>
+          <div class="flex justify-between text-gray-400" x-show="selected.node.severity" x-cloak>
+            <span>Worst finding</span><span :style="`color:${schema.colors.severity[selected.node.severity]}`" x-text="selected.node.severity"></span>
+          </div>
+          <div class="flex justify-between text-gray-400" x-show="selected.node.tactic" x-cloak>
+            <span>Dominant tactic</span><span class="text-gray-200" x-text="schema.labels.tactics[selected.node.tactic]"></span>
+          </div>
+          <div class="flex justify-between text-gray-400" x-show="selected.node.verdict !== 'none'" x-cloak>
+            <span>Enrichment</span><span class="text-gray-200" x-text="schema.labels.verdicts[selected.node.verdict] || selected.node.verdict"></span>
+          </div>
+          <div class="flex justify-between text-gray-400">
+            <span>Watchlist</span>
+            <span :class="(selected.node.flags & schema.flags.watchlist) ? 'text-amber-300' : 'text-gray-500'"
+                  x-text="(selected.node.flags & schema.flags.watchlist) ? 'yes' : 'no'"></span>
+          </div>
+          <div class="flex justify-between text-gray-400">
+            <span>Allowlisted</span>
+            <span class="text-gray-500" x-text="(selected.node.flags & schema.flags.allowlisted) ? 'yes' : 'no'"></span>
+          </div>
+          <div class="flex justify-between text-gray-400" x-show="selected.node.flags & schema.flags.in_case" x-cloak>
+            <span>Also in a case</span><span class="text-gray-200">yes</span>
+          </div>
+          <div class="text-gray-600 text-[10px]" x-show="selected.node.addedBy" x-cloak>
+            Added by: <span x-text="selected.node.addedBy"></span>
+          </div>
+        </div>
+
+        <!-- Path picker -->
+        <div class="mt-3 pt-3 border-t border-gray-800 text-xs space-y-1.5">
+          <div class="text-gray-500 uppercase tracking-wide text-[10px]">Connection</div>
+          <div class="flex gap-1.5">
+            <button type="button" @click="setPathEnd('from')" class="lt-btn lt-btn--xs flex-1">Start here</button>
+            <button type="button" @click="setPathEnd('to')" class="lt-btn lt-btn--xs flex-1">End here</button>
+          </div>
+          <label class="flex items-center gap-1.5 text-gray-400">
+            <input type="checkbox" x-model="path.includeFindings" @change="findPaths()" class="lt-check">
+            Allow “same Sigma finding” hops
+          </label>
+          <p class="text-gray-600 text-[10px]">
+            Paths never traverse a job edge — “named in the same log file” is not a connection.
+          </p>
+          <div x-show="path.message" x-cloak class="text-amber-300" x-text="path.message"></div>
+          <template x-for="(p, i) in path.results" :key="i">
+            <button type="button" @click="showPath(i)" class="w-full text-left px-2 py-1 rounded hover:bg-gray-800 text-gray-300 break-all" x-text="pathLabel(p)"></button>
+          </template>
+          <button type="button" x-show="path.searched" x-cloak @click="clearPath()" class="lt-btn lt-btn--xs">Clear path</button>
+        </div>
+
+        <div class="mt-auto pt-3 border-t border-gray-800 space-y-2">
+          <a :href="'/intel/entities/' + selected.node.entityId" class="lt-btn lt-btn--block">Open entity page</a>
+          <template x-if="scope === 'entity'">
+            <button type="button" @click="expandSelected(null)" class="lt-btn lt-btn--block lt-btn--active">Expand neighbours</button>
+          </template>
+        </div>
+      </div>
+    </template>
+
+    <!-- Edge -->
+    <template x-if="selected.edge">
+      <div>
+        <div class="flex items-start justify-between gap-2 mb-3">
+          <div class="min-w-0">
+            <div class="text-xs uppercase tracking-wide text-gray-500">Edge</div>
+            <div class="text-sm font-medium text-gray-100" x-text="selected.edge.relLabel"></div>
+          </div>
+          <button type="button" @click="closePanel()" class="text-gray-500 hover:text-white" title="Close">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M6 18L18 6"/></svg>
+          </button>
+        </div>
+        <div class="space-y-2 text-xs">
+          <div class="text-gray-400">
+            <div class="break-all text-gray-200" x-text="selected.edge.source.label"></div>
+            <div class="text-gray-500 my-0.5" x-text="selected.edge.rel ? '↓ ' + selected.edge.relLabel : '↕ ' + selected.edge.relLabel"></div>
+            <div class="break-all text-gray-200" x-text="selected.edge.target.label"></div>
+          </div>
+          <div class="flex justify-between text-gray-400">
+            <span x-text="selected.edge.rel ? 'Occurrences' : 'Shared'"></span>
+            <span class="text-gray-200" x-text="selected.edge.weight"></span>
+          </div>
+          <p class="text-gray-600 text-[10px]" x-show="!selected.edge.rel" x-cloak>
+            A co-occurrence count, not evidence of a relationship: these two were named in the
+            same <span x-text="selected.edge.kind === 'job' ? 'log file' : 'Sigma finding'"></span>.
+          </p>
+          <div x-show="selected.edge.rel" x-cloak class="pt-1 space-y-1.5">
+            {# Two labels, never merged. `first_seen_at`/`last_seen_at` are
+               server_default=func.now() — ingest wall-clock, i.e. when the worker happened
+               to run — so calling them "observed" would be a lie the analyst cannot detect. #}
+            <template x-if="timespan && timespan.time_source === 'event'">
+              <div>
+                <div class="flex justify-between text-gray-400">
+                  <span>Observed in events</span><span class="text-gray-200" x-text="formatTimespan()"></span>
+                </div>
+                <p class="text-gray-600 text-[10px] mt-0.5">
+                  From sample events, capped at <span x-text="timespan.sample_cap"></span> per job across
+                  <span x-text="timespan.jobs"></span> job(s) you can see — a sample of the range, not its bounds.
+                </p>
+              </div>
+            </template>
+            <template x-if="timespan && timespan.time_source === 'ingest'">
+              <div>
+                <div class="flex justify-between text-gray-400">
+                  <span>Recorded</span><span class="text-gray-200" x-text="formatTimespan()"></span>
+                </div>
+                <p class="text-gray-600 text-[10px] mt-0.5">
+                  Ingest time — when analysis ran, not when the events happened. No parseable
+                  event timestamp was captured for this edge.
+                </p>
+              </div>
+            </template>
+
+            <a :href="'/intel/entities/' + selected.edge.source.entityId + '#relationships'" class="lt-btn lt-btn--block lt-btn--sm">
+              See evidence on the Relationships tab
+            </a>
+          </div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>

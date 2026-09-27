@@ -1,0 +1,57 @@
+{#
+  The settings form's controls, defined once.
+
+  The switch markup is eight lines of peer-styled span and it was pasted twelve times —
+  which is how the AI card came to use `mt-0.5` where the others used `mt-0.5 flex-shrink-0`,
+  and how a thirteenth setting would have arrived slightly different again. Same argument as
+  `_severity_macros.html`: the control lives in one place.
+
+  The row puts the label and its explanation on the LEFT and the switch hard RIGHT. At full
+  page width a left-hand switch leaves the whole right half empty and the eye has to travel
+  back across the line to find what it toggled; this is the layout every settings screen
+  converges on for that reason.
+#}
+{% from "partials/_icons.html" import icon with context %}
+
+{% macro toggle(name, label, checked, help=None) -%}
+<label class="flex items-start justify-between gap-6 cursor-pointer group py-3">
+  <span class="min-w-0">
+    <span class="block font-medium text-sm text-gray-200">{{ label }}</span>
+    {% if help %}<span class="block text-xs text-gray-500 mt-1 leading-relaxed max-w-3xl">{{ help }}</span>{% endif %}
+  </span>
+  <span class="relative flex-shrink-0 mt-0.5">
+    <input type="checkbox" name="{{ name }}" value="true" {% if checked %}checked{% endif %} class="sr-only peer">
+    <span class="block w-10 h-6 bg-gray-700 rounded-full peer-checked:bg-blue-600 transition-colors
+                 peer-focus-visible:ring-2 peer-focus-visible:ring-blue-500 peer-focus-visible:ring-offset-2 peer-focus-visible:ring-offset-gray-900"></span>
+    <span class="absolute top-0.5 left-0.5 w-5 h-5 bg-white rounded-full shadow transition-transform
+                 peer-checked:translate-x-4 pointer-events-none"></span>
+  </span>
+</label>
+{%- endmacro %}
+
+{% macro checkbox(name, value, label, checked, help=None) -%}
+<label class="flex items-start gap-2.5 cursor-pointer py-1.5">
+  <input type="checkbox" name="{{ name }}" value="{{ value }}" {% if checked %}checked{% endif %} class="lt-check mt-0.5 flex-shrink-0">
+  <span class="min-w-0">
+    <span class="block text-sm text-gray-200">{{ label }}</span>
+    {% if help %}<span class="block text-xs text-gray-500 mt-0.5">{{ help }}</span>{% endif %}
+  </span>
+</label>
+{%- endmacro %}
+
+{#
+  A settings section. The glyph comes from the shared dictionary, so a section and the page
+  it configures are marked the same way.
+#}
+{% macro card(glyph, title, blurb=None) -%}
+<section class="bg-gray-900 border border-gray-800 rounded-xl px-5 py-4">
+  <div class="flex items-center gap-2.5">
+    <span class="text-gray-500">{{ icon(glyph, "w-[18px] h-[18px]") }}</span>
+    <h2 class="font-semibold text-sm text-gray-200">{{ title }}</h2>
+  </div>
+  {% if blurb %}<p class="text-xs text-gray-500 mt-1 leading-relaxed max-w-3xl">{{ blurb }}</p>{% endif %}
+  <div class="mt-1 divide-y divide-gray-800/70">
+    {{ caller() }}
+  </div>
+</section>
+{%- endmacro %}

@@ -1,0 +1,137 @@
+{% from "intel/partials/_tag_chip.html" import tag_chip %}
+{% from "partials/_icons.html" import icon with context %}
+{% set _is_member = user and (user.is_superuser or user.role == 'member') %}
+{# How many tag chips ride inline before the rest fold into "+N". Three is a set that
+   usually fits beside the filename; when it does not, the chips wrap under it. #}
+{% set _TAG_PREVIEW = 3 %}
+{#
+  hx-get/hx-swap are unconditional and only the 5s poll is gated, so the bar can refresh the
+  table after a bulk write — `jobsRefresh` is that hook. With them inside the `{% if %}`
+  there was simply nothing to trigger, which is why a bulk tag left the rows stale.
+#}
+<tbody id="jobs-table-body" class="divide-y divide-gray-800"
+  hx-get="/jobs/table-partial?page={{ page }}{% if list_qs %}&amp;{{ list_qs }}{% endif %}"
+  hx-trigger="jobsRefresh from:body{% if has_running %}, every 5s{% endif %}"
+  hx-swap="outerHTML"
+>
+  {% for job in jobs %}
+  <tr class="hover:bg-gray-800/50 transition cursor-pointer focus-within:bg-gray-800/50" tabindex="0" role="link" aria-label="Job #{{ job.id }} — {{ job.filename }}" onclick="window.location='/jobs/{{ job.id }}'" onkeydown="if(event.key==='Enter'&&event.target===event.currentTarget)window.location='/jobs/{{ job.id }}'">
+    {% if user and (user.is_superuser or user.role == 'member') %}
+    {# Selection lives in Alpine.store('jobSelection'), not the DOM: this tbody is
+       swapped wholesale every 5s while a job runs, which would otherwise clear the
+       boxes. base.html's htmx:afterSwap -> Alpine.initTree re-binds :checked. #}
+    <td class="px-4 py-3" onclick="event.stopPropagation()">
+      <input type="checkbox" aria-label="Select job {{ job.id }}" data-job-select="{{ job.id }}"
+             :checked="$store.jobSelection.has({{ job.id }})"
+             @change="$store.jobSelection.toggle({{ job.id }})"
+             class="lt-check">
+    </td>
+    {% endif %}
+    <td class="px-4 py-3 text-gray-500">{{ job.id }}</td>
+    {#
+      File name, then its tags inline — the GitHub-issue-label shape. As a column they made
+      the whole row tall and pushed Score and Status right; as a sub-row they doubled the
+      list's length. Here they read as a property of the thing they sit beside, and the row
+      stays one line unless the column is too narrow for the name's floor plus the chips.
+    #}
+    {#
+      Two limits on this column, one per direction. `max-w-[420px]` caps how wide it may
+      grow (measured at 674px with three tag chips). `min-w-[6rem]` sets how narrow it may
+      shrink. The one-track grid around the filename, `minmax(0, max-content)`, keeps the
+      name's own width out of that minimum: `truncate` alone counts the whole unwrapped
+      name, which props the table open past the card. The floor sits on the row rather
+      than in the track so a short name keeps its short box, with its tags right beside it.
+      `tests/test_jobs_view_modes.py::TestNoCellHoldsTheTableOpen` has the numbers.
+
+      `basis-24 grow max-w-max`: the flex line is laid out as if the name took at most
+      6rem, so a chip wraps under it only when it will not fit beside that; then the name
+      grows back to its full width.
+    #}
+    <td class="px-4 py-3 max-w-[420px]">
+      <span class="flex flex-wrap items-center gap-x-2 gap-y-1 min-w-[6rem]">
+        <span class="grid grid-cols-[minmax(0,max-content)] basis-24 grow max-w-max">
+        <span class="font-mono text-blue-300 text-xs truncate" title="{{ job.filename }}">
+          {% if job.is_private %}<span class="text-gray-500 mr-1" title="Private submission">&#128274;</span>{% endif %}{% if job.id in watched_ids %}<span class="text-gray-500 mr-1" title="You are watching this job">{{ icon('eye', 'w-3 h-3 inline-block align-[-1px]') }}</span>{% endif %}{% if job.log_file.tlsh_hash %}<span class="text-purple-400 mr-1" title="A fuzzy hash exists for this upload, so similar files can be found — TLSH: {{ job.log_file.tlsh_hash }}">&asymp;</span>{% endif %}{{ job.filename }}
+        </span>
+        </span>
+        {% if _is_member and job.tags %}
+        {% set _sorted = job.tags | sort(attribute='tag') %}
+        {% set _shown = _sorted[:_TAG_PREVIEW] %}
+        {% set _rest = _sorted[_TAG_PREVIEW:] %}
+        <span class="flex items-center gap-1 flex-wrap" onclick="event.stopPropagation()">
+          {% for t in _shown %}{{ tag_chip(t.tag, t.color, href='/jobs?tags=' ~ (t.tag | urlencode), size='[10px]') }}{% endfor %}
+          {% if _rest %}
+          {#
+            "+N" reveals the rest **inline**, in the cell, rather than in a floating panel.
+
+            Not a `position: fixed` panel placed from the button's viewport rect (the table's
+            `rounded-xl overflow-hidden` card clips an absolutely-positioned child): any
+            ancestor with `backdrop-filter` becomes the containing block for `fixed`
+            descendants too, so the coordinates stop being viewport coordinates and the
+            panel opens hundreds of pixels from where it should.
+
+            Inline has no containing block to be wrong about, nothing to clip it, and no
+            stacking context to escape. The row grows while it is open, which is a fair price
+            for a deliberate click — and the roomy view shows every tag without asking.
+          #}
+          <span x-data="{ open: false }" class="contents">
+            <button type="button" x-show="!open" @click="open = true"
+                    class="lt-chip lt-chip--btn border-gray-700 text-gray-400 hover:text-gray-200"
+                    :aria-expanded="open"
+                    title="{{ _rest | length }} more tag{{ '' if _rest | length == 1 else 's' }} — click to show">+{{ _rest | length }}</button>
+            <template x-if="open">
+              <span class="contents">
+                {% for t in _rest %}{{ tag_chip(t.tag, t.color, href='/jobs?tags=' ~ (t.tag | urlencode), size='[10px]') }}{% endfor %}
+                <button type="button" @click="open = false"
+                        class="lt-chip lt-chip--btn border-gray-700 text-gray-500 hover:text-gray-300"
+                        title="Show fewer tags">&minus;</button>
+              </span>
+            </template>
+          </span>
+          {% endif %}
+        </span>
+        {% endif %}
+      </span>
+    </td>
+    <td class="px-4 py-3 text-gray-400 text-xs">{{ job.effective_log_type.value }}</td>
+    {# One line, floored like the filename: a workflow name is admin-chosen text with no
+       length limit, and one long unbroken word held this column at 325px. #}
+    <td class="px-4 py-3 text-gray-400 text-xs">
+      <span class="grid grid-cols-[minmax(0,max-content)] min-w-[6rem]"><span class="truncate" title="{{ job.workflow.name }}">{{ job.workflow.name }}</span></span>
+    </td>
+    <td class="px-4 py-3">
+      {% if job.score_ratio %}
+      <span class="font-mono font-bold
+        {% if job.total_findings and job.total_findings > 0 %}text-red-400{% elif (job.status.value if job.status.value is defined else job.status) in ('failed', 'partial') %}text-amber-400{% else %}text-green-400{% endif %}">
+        {{ job.score_ratio }}
+      </span>
+      {% else %}—{% endif %}
+    </td>
+    <td class="px-4 py-3">
+      {% include "partials/_status_badge.html" %}
+    </td>
+    <td class="px-4 py-3 text-gray-500 text-xs">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+    {% if user and user.is_superuser %}
+    <td class="px-4 py-3 text-xs max-w-[150px]">
+      {% if job.submitter %}<span class="text-gray-400 truncate block" title="{{ job.submitter.email }}">{{ job.submitter.display_name or job.submitter.email }}</span>{% else %}<span class="text-gray-600 block">Anonymous</span>{% endif %}
+      {# `truncate` because the cap above only limits the cell: an IPv6 address is 280px
+         of unbreakable monospace and painted 148px into the Delete column. #}
+      {% if job.submitter_ip %}<span class="text-gray-600 font-mono truncate block" title="{{ job.submitter_ip }}">{{ job.submitter_ip }}</span>{% endif %}
+    </td>
+    {% endif %}
+    {% if user and user.is_superuser %}
+    <td class="px-4 py-3 text-right" onclick="event.stopPropagation()">
+      <form method="POST" action="/jobs/{{ job.id }}/delete"
+            data-confirm-title="Delete job"
+            data-confirm-message="Delete job #{{ job.id }}?"
+            data-confirm-accept="Delete">
+        <button type="submit"
+          class="text-xs text-red-500 hover:text-red-400 hover:bg-red-950 px-2 py-1 rounded transition">
+          Delete
+        </button>
+      </form>
+    </td>
+    {% endif %}
+  </tr>
+  {% endfor %}
+</tbody>

@@ -1,0 +1,108 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}Settings – LogsTotal{% endblock %}
+
+{% block content %}
+{% from "admin/partials/_setting_controls.html" import toggle, checkbox, card with context %}
+
+{{ page_header("Settings", "/admin#manage", "Manage") }}
+<p class="text-sm text-gray-500 mb-6">
+  Instance-wide behaviour. Every value here takes effect on the next request &mdash; no restart.
+</p>
+
+{% if saved %}
+<div class="mb-4 px-4 py-2.5 rounded-lg bg-green-950/40 border border-green-800 text-green-300 text-sm">Settings saved.</div>
+{% endif %}
+
+{#- One column, full width. It was `max-w-xl` (a third of the screen), then briefly two
+    columns — which paired unrelated settings side by side and left ragged gaps wherever one
+    card was taller than its neighbour. A single full-width column reads top to bottom in the
+    order the settings matter, and each row uses the width for its explanation rather than
+    wrapping it into four words per line. -#}
+<form method="post" action="/admin/settings" class="space-y-4">
+
+  {% call card("upload", "Submissions", "File submission and selection limits for this instance.") %}
+    {{ toggle("demo_mode", "Demo mode", site_settings.demo_mode,
+              "Refuses uploads and shows a read-only notice on the submission page. Existing jobs, admin actions and destructive operations are unaffected — this is for public demo instances.") }}
+    <div class="flex items-start justify-between gap-6 py-3">
+      <span class="min-w-0">
+        <label for="max_upload_files" class="block font-medium text-sm text-gray-200">Maximum files per submission</label>
+        <span id="max-upload-files-help" class="block text-xs text-gray-500 mt-1 max-w-3xl">How many files users can select together on the upload page (1–500). Applies after reloading that page. Each file creates its own job; upload concurrency and rate limits still apply.</span>
+      </span>
+      <input type="number" id="max_upload_files" name="max_upload_files" min="1" max="500" step="1" required
+             value="{{ site_settings.max_upload_files }}" aria-describedby="max-upload-files-help" class="lt-field lt-field--sm w-24 flex-shrink-0">
+    </div>
+  {% endcall %}
+
+  {% call card("cpu", "Analysis execution", "How the detection tools in a workflow are run.") %}
+    {{ toggle("parallel_execution", "Run tools in parallel", site_settings.parallel_execution,
+              "Runs a workflow's tools concurrently, bounded by TOOL_MAX_WORKERS. Faster on a machine with headroom; leave off on shared infrastructure to keep memory predictable.") }}
+    {% if parallel_risk %}
+    <div class="py-3">
+      <div class="rounded-lg border border-amber-800 bg-amber-950/30 px-3 py-2 text-xs text-amber-200">
+        {% for line in parallel_risk %}<p>{{ line }}</p>{% endfor %}
+      </div>
+    </div>
+    {% endif %}
+    <div class="flex items-start justify-between gap-6 py-3">
+      <span class="min-w-0">
+        <label for="max_finding_details" class="block font-medium text-sm text-gray-200">Matched events shown per finding</label>
+        <span class="block text-xs text-gray-500 mt-1 max-w-3xl">Higher is more useful, and makes the job page slower to render and larger to send.</span>
+      </span>
+      <input type="number" id="max_finding_details" name="max_finding_details" min="1" max="500"
+             value="{{ site_settings.max_finding_details }}" class="lt-field lt-field--sm w-24 flex-shrink-0">
+    </div>
+  {% endcall %}
+
+  {% call card("eye", "Job detail panels", "What appears on a job page. Turning one off hides it from every viewer, which is also how you keep raw event metadata away from non-admins.") %}
+    {{ toggle("show_mitre_heatmap", "MITRE ATT&CK heatmap", site_settings.show_mitre_heatmap,
+              "The technique coverage grid above the findings.") }}
+    {{ toggle("show_event_timeline", "Activity histogram", site_settings.show_event_timeline,
+              "Hourly bars stacked by tactic. Each tool's own timezone offset is preserved, so on a multi-tool job the same event can land in two hours.") }}
+    {{ toggle("show_alert_timeline", "Events timeline", site_settings.show_alert_timeline,
+              "The zoomable per-alert view below the histogram. Normalised to UTC and stored in the database, so it survives raw-output cleanup — unlike the histogram and the process tree.") }}
+    {{ toggle("show_entities", "Entities", site_settings.show_entities,
+              "The Intel pages and the entities panel on job detail. Off hides PII-bearing observables.") }}
+    {{ toggle("show_threat_detection", "Threat detection", site_settings.show_threat_detection,
+              "The heuristic panel — LOLBINs, encoding, privilege escalation.") }}
+    {{ toggle("show_process_tree", "Process tree", site_settings.show_process_tree,
+              "Parent-to-child lineage rebuilt from matched process-creation events. Needs the job's raw output still on disk.") }}
+    {{ toggle("builtin_rules_enabled", "Shared rules", site_settings.builtin_rules_enabled,
+              "Evaluates the shared rules — lolbin, privileged, rfc1918 and the rest listed on the Rules page — which tag matching entities as each job finishes. This gates the work, not the display: tagging is the only thing here that writes a row per entity per job. Off leaves existing tags in place. Individual rules switch on and off on the Rules page.") }}
+  {% endcall %}
+
+  {% call card("text", "Analyst prose", "How case notes, entity notes and comment threads are rendered.") %}
+    {{ toggle("render_markdown", "Render Markdown", site_settings.render_markdown,
+              "Headings, lists, links and code. Raw HTML is always escaped and javascript:/data: links are never emitted, so this is a formatting choice rather than a trust decision. The stored text is untouched either way — turning it back off loses nothing.") }}
+  {% endcall %}
+
+  {% call card("sparkles", "AI analysis", "Sending job or case evidence to a language model configured on /admin/ai.") %}
+    {{ toggle("show_ai_analysis", "Show the AI Analysis tab", site_settings.show_ai_analysis,
+              "Off by default: it does nothing without a provider, and a hosted provider means evidence leaves this instance.") }}
+    {{ toggle("show_ai_prompt", "Keep the prompt each run sends", site_settings.show_ai_prompt,
+              "Stores the exact brief — findings, entities, sample event fields — and shows it to administrators beside the run log. This is how \"what actually left this instance?\" is answerable rather than inferred. Off stops it being stored at all and hides prompts already kept.") }}
+  {% endcall %}
+
+  {% call card("clock", "Activity log", "Recording who did what, when, and from where. Read it on /admin/activity.") %}
+    {{ toggle("activity_log_enabled", "Record activity", site_settings.activity_log_enabled,
+              "Off by default: rows carry the actor's email and client IP, which is a data-handling decision rather than something to inherit. Turning it off stops new rows but keeps what was already recorded — use Prune on the Activity page to remove those.") }}
+    <div class="py-3">
+      <p class="font-medium text-sm text-gray-200">Capture these categories</p>
+      <p class="text-xs text-gray-500 mt-1 mb-1 max-w-3xl">
+        Unticking one stops those events being written at all, not merely hidden. None ticked means all of them.
+      </p>
+      <div class="grid gap-x-8 sm:grid-cols-2 lg:grid-cols-3">
+        {% for cat in activity_categories %}
+        {{ checkbox("activity_categories", cat, cat | capitalize, cat in activity_selected,
+                    activity_labels.get(cat, []) | join(' · ')) }}
+        {% endfor %}
+      </div>
+    </div>
+  {% endcall %}
+
+  <div class="flex items-center gap-3 pt-1">
+    <button type="submit" class="lt-btn lt-btn--lg lt-btn--primary">Save settings</button>
+    <span class="text-xs text-gray-500">Applies to the next request; nothing needs restarting.</span>
+  </div>
+</form>
+{% endblock %}

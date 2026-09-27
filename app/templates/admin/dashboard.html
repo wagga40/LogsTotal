@@ -1,0 +1,444 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% from "partials/_count_pill.html" import count_pill, count_pills %}
+{% block title %}Admin – LogsTotal{% endblock %}
+
+{% block content %}
+{% from "partials/_icons.html" import icon with context %}
+{{ page_header("Admin", "/", "Home") }}
+
+{% if default_admin_password %}
+<!-- Default admin password warning -->
+<div class="bg-red-950/60 border border-red-800 rounded-xl p-4 mb-6 flex items-start gap-3">
+  <span class="text-red-400 text-lg leading-none mt-0.5">&#9888;</span>
+  <div class="text-sm">
+    <div class="font-semibold text-red-300">Default admin password in use</div>
+    <p class="text-red-200/80 mt-1">
+      An admin account still uses the shipped default password (<code class="font-mono">changeme123</code>).
+      Change it now in <a href="/admin/users" class="underline hover:text-red-100">User Management</a>
+      — this warning clears once no admin uses the default.
+    </p>
+  </div>
+</div>
+{% endif %}
+
+{% if production_warnings %}
+<!-- Production safety warnings (same list the startup log prints — now visible) -->
+<div class="bg-amber-950/50 border border-amber-800 rounded-xl p-4 mb-6 flex items-start gap-3">
+  <span class="text-amber-400 text-lg leading-none mt-0.5">&#9888;</span>
+  <div class="text-sm min-w-0">
+    <div class="font-semibold text-amber-300">Production safety warning{{ 's' if production_warnings|length != 1 else '' }}</div>
+    <ul class="text-amber-200/80 mt-1 list-disc list-inside space-y-0.5">
+      {% for warning in production_warnings %}
+      <li>{{ warning }}</li>
+      {% endfor %}
+    </ul>
+  </div>
+</div>
+{% endif %}
+
+<!-- System Health — always visible, above the tabs -->
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6 flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+  <span class="text-gray-400 font-semibold">System</span>
+  {% for name in ['database', 'redis', 'storage'] %}
+  <span class="flex items-center gap-1.5">
+    {% if health[name].startswith('ok') %}
+    <span class="w-2 h-2 rounded-full bg-green-500"></span>
+    {% else %}
+    <span class="w-2 h-2 rounded-full bg-red-500"></span>
+    {% endif %}
+    <span class="text-gray-300 capitalize">{{ name }}</span>
+    {% if not health[name].startswith('ok') %}
+    <span class="text-red-400 text-xs">(down)</span>
+    {% endif %}
+  </span>
+  {% endfor %}
+  <span class="flex items-center gap-1.5 ml-auto">
+    <span class="w-2 h-2 rounded-full {% if health.workers > 0 %}bg-green-500{% else %}bg-yellow-500{% endif %}"></span>
+    <span class="text-gray-300">{{ health.workers }} worker{{ 's' if health.workers != 1 else '' }}</span>
+  </span>
+  {% if health.workers == 0 %}
+  <div class="basis-full text-xs text-yellow-300/90">
+    No workers connected — new analyses will queue but never run.
+    <span class="text-gray-500">Fix:</span> <code class="font-mono text-gray-300">{{ worker_start_fix }}</code>
+  </div>
+  {% endif %}
+</div>
+
+{#- Same {key, label, badge, lazy_event} shape the entity/case/job pages use, so this
+    reuses resourceTabs() from /static/app.js rather than a fourth hand-rolled copy.
+    Declared inline (not server-built) because the admin tabs carry no per-request badge. -#}
+{% set admin_tabs = [
+  {'key': 'overview', 'label': 'Overview', 'badge': None, 'lazy_event': None},
+  {'key': 'manage', 'label': 'Manage', 'badge': None, 'lazy_event': None},
+  {'key': 'system', 'label': 'System', 'badge': None, 'lazy_event': 'loadSystemChecks'},
+  {'key': 'maintenance', 'label': 'Maintenance', 'badge': None, 'lazy_event': None},
+] %}
+<div x-data='resourceTabs({{ admin_tabs | tojson }})'>
+
+  <!-- Tab strip -->
+  <div class="flex flex-wrap border-b border-gray-800 mb-6 gap-1">
+    {% for t in admin_tabs %}
+    {% set key, label = t.key, t.label %}
+    <button @click="select('{{ key }}')"
+            :class="tab === '{{ key }}' ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'"
+            class="px-4 py-2 -mb-px border-b-2 text-sm font-medium transition">
+      {{ label }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <!-- Overview tab -->
+  <div x-show="tab === 'overview'" x-cloak>
+
+    <!-- Deployment readiness — the same cached suite (run_all_cached) as the System tab,
+         and the same summarize() verdict as ./logstotal doctor, which enumerates its own checks -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6">
+      <div class="flex items-center justify-between mb-1">
+        <h2 class="font-semibold text-sm text-gray-200">Deployment readiness</h2>
+        {#- `select('system')`, never `tab = 'system'`. Assigning the property moves the pane
+            into view but skips everything `select` does: it does not update the hash, and it
+            does not dispatch the tab's `lazy_event` — so the System card sat on "Running
+            checks…" until you clicked the tab in the strip, which fired it properly. A
+            shortcut into a lazy tab has to go through the same door the tab does. -#}
+        <button type="button" class="text-xs text-gray-500 hover:text-gray-200 underline" @click="select('system')">All checks &rarr;</button>
+      </div>
+      <div hx-get="/admin/readiness-partial" hx-trigger="load" hx-swap="innerHTML">
+        <div class="text-sm text-gray-500">Checking&hellip;</div>
+      </div>
+    </div>
+
+    <!-- Getting-started checklist — server-rendered states; Alpine only collapses it -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl mb-6"
+         x-data="gettingStarted({{ 'true' if getting_started.all_done else 'false' }})">
+      <button type="button" @click="toggle()"
+              class="w-full flex items-center gap-3 p-4 text-left">
+        {% if getting_started.all_done %}
+        <span class="text-green-400">&#10003;</span>
+        <span class="font-semibold text-sm text-gray-200">Setup complete</span>
+        {% else %}
+        <span class="text-blue-400">&#9650;</span>
+        <span class="font-semibold text-sm text-gray-200">Getting started</span>
+        {% endif %}
+        <span class="text-xs {% if getting_started.all_done %}text-green-400{% else %}text-gray-400{% endif %}">
+          {{ getting_started.auto_done }}/{{ getting_started.auto_total }} done
+        </span>
+        <span class="ml-auto text-gray-500 text-xs" x-text="collapsed ? '▸ expand' : '▾ collapse'"></span>
+      </button>
+      <div x-show="!collapsed" x-cloak class="px-4 pb-4 border-t border-gray-800">
+        <ul class="mt-3 space-y-2.5">
+          {% for step in getting_started.steps %}
+          <li class="flex items-start gap-2.5 text-sm">
+            {% if step.manual %}
+            <span class="mt-0.5 w-4 text-center text-gray-500 shrink-0" title="manual step">&#9711;</span>
+            {% elif step.done %}
+            <span class="mt-0.5 w-4 text-center text-green-400 shrink-0">&#10003;</span>
+            {% else %}
+            <span class="mt-0.5 w-4 text-center text-gray-600 shrink-0">&#9744;</span>
+            {% endif %}
+            <div class="min-w-0">
+              <span class="{% if step.done %}text-gray-500 line-through{% else %}text-gray-200{% endif %}">{{ step.title }}</span>
+              {% if step.link %}
+              <a href="{{ step.link }}" class="ml-1 text-blue-400 hover:text-blue-300 text-xs">{{ step.link_label }}</a>
+              {% endif %}
+              {% if step.remedy %}
+              <div class="text-xs text-gray-500 mt-0.5"><span class="text-gray-600">fix:</span> <code class="font-mono text-gray-400">{{ step.remedy }}</code></div>
+              {% endif %}
+            </div>
+          </li>
+          {% endfor %}
+        </ul>
+      </div>
+    </div>
+
+    {#- Counters an admin acts on, not a scoreboard. Every tile links to the page that
+        explains it, and the three "in flight" ones sit together because they answer one
+        question: is anything happening, and is anything stuck behind it. -#}
+    <h2 class="text-sm font-semibold text-gray-300 mb-2">Right now</h2>
+    <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+      <a href="/admin/tasks" class="block bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition">
+        <div class="text-3xl font-bold font-mono {% if stats.running_jobs %}text-yellow-400{% else %}text-gray-600{% endif %}">{{ stats.running_jobs }}</div>
+        <div class="text-sm text-gray-400 mt-1">Jobs running</div>
+      </a>
+      <a href="/admin/tasks" class="block bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition">
+        <div class="text-3xl font-bold font-mono {% if stats.pending_jobs %}text-orange-400{% else %}text-gray-600{% endif %}">{{ stats.pending_jobs }}</div>
+        <div class="text-sm text-gray-400 mt-1">Jobs queued</div>
+      </a>
+      <a href="/admin/tasks#activity" class="block bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition">
+        <div class="text-3xl font-bold font-mono {% if active_bg %}text-blue-400{% else %}text-gray-600{% endif %}">{{ active_bg }}</div>
+        <div class="text-sm text-gray-400 mt-1">Background tasks</div>
+      </a>
+      <a href="/admin/tasks#activity" class="block bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition">
+        <div class="text-3xl font-bold font-mono {% if active_ai_runs %}text-blue-400{% else %}text-gray-600{% endif %}">{{ active_ai_runs }}</div>
+        <div class="text-sm text-gray-400 mt-1">AI analyses</div>
+      </a>
+    </div>
+
+    <div class="grid gap-4 lg:grid-cols-3 items-start">
+      <div class="lg:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <div class="flex items-baseline justify-between mb-3">
+          <h2 class="text-sm font-semibold text-gray-300">Latest activity</h2>
+          <a href="/admin/activity" class="text-xs text-gray-500 hover:text-gray-300 underline">All activity &rarr;</a>
+        </div>
+        {% if recent_activity %}
+        <ul class="divide-y divide-gray-800 -my-1.5">
+          {% for e in recent_activity %}
+          <li class="flex items-baseline gap-3 py-1.5 text-sm">
+            <span class="w-1.5 h-1.5 rounded-full shrink-0 {% if e.outcome == 'success' %}bg-green-500{% elif e.outcome == 'denied' %}bg-gray-500{% else %}bg-red-500{% endif %}"></span>
+            <span class="text-gray-300 truncate">{{ e.label }}</span>
+            <span class="text-xs text-gray-500 truncate min-w-0">{{ e.actor_label }}</span>
+            <span class="ml-auto text-xs text-gray-600 whitespace-nowrap">{{ e.created_at | time_ago }}</span>
+          </li>
+          {% endfor %}
+        </ul>
+        {% elif site_settings and site_settings.activity_log_enabled %}
+        <p class="text-sm text-gray-500">Nothing recorded yet.</p>
+        {% else %}
+        {#- "Nothing has happened" and "nothing is being recorded" are different statements,
+            and only one of them means the operator should do something. -#}
+        <p class="text-sm text-gray-500">
+          Activity recording is off, so nothing is being captured.
+          <a href="/admin/settings" class="text-blue-400 hover:underline">Turn it on</a> to see who did what.
+        </p>
+        {% endif %}
+      </div>
+
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-5">
+        <h2 class="text-sm font-semibold text-gray-300 mb-3">Totals</h2>
+        <dl class="space-y-2 text-sm">
+          <div class="flex items-baseline justify-between">
+            <dt class="text-gray-400">Jobs analysed</dt>
+            <dd><a href="/jobs" class="font-mono text-gray-200 hover:underline">{{ stats.total_jobs }}</a></dd>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <dt class="text-gray-400">Completed</dt>
+            <dd class="font-mono text-gray-200">{{ stats.completed_jobs }}</dd>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <dt class="text-gray-400">Users</dt>
+            <dd><a href="/admin/users" class="font-mono text-gray-200 hover:underline">{{ stats.total_users }}</a></dd>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <dt class="text-gray-400">Files stored</dt>
+            <dd><a href="/admin/storage" class="font-mono text-gray-200 hover:underline">{{ storage_info.file_count }}</a></dd>
+          </div>
+          <div class="flex items-baseline justify-between">
+            <dt class="text-gray-400">Uploads on disk</dt>
+            <dd><a href="/admin/storage" class="font-mono text-gray-200 hover:underline">{{ storage_info.total_stored_bytes | humanbytes }}</a></dd>
+          </div>
+        </dl>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Manage tab — every destination, which is what a dashboard is actually for. It was
+       the bulk of Overview, competing for attention with the health verdict. Icons come
+       from the shared dictionary in `partials/_icons.html`, the same one the tab strips
+       draw from, so a card and a tab meaning the same thing look the same. -->
+  <div x-show="tab === 'manage'" x-cloak>
+    <p class="text-sm text-gray-500 mb-4">Everything this instance is configured by.</p>
+
+    {% macro manage_card(href, glyph, title, blurb, pills=None) %}
+    <a href="{{ href }}" class="group bg-gray-900 border border-gray-800 rounded-xl p-5 hover:border-gray-600 transition">
+      {#- `flex-wrap` so a card with two pills wraps rather than squeezing the heading —
+          without it, cards with pills could not be calls to this macro. -#}
+      <div class="flex items-center gap-2.5 mb-1.5 flex-wrap">
+        <span class="text-gray-500 group-hover:text-gray-300 transition-colors">{{ icon(glyph, "w-[18px] h-[18px]") }}</span>
+        <h2 class="font-semibold">{{ title }}</h2>
+        {{ count_pills(pills) }}
+        {{ caller() if caller is defined }}
+      </div>
+      <p class="text-sm text-gray-400">{{ blurb }}</p>
+    </a>
+    {% endmacro %}
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+      {{ manage_card("/admin/users", "users", "User management", "Create, disable, or delete user accounts and change roles.",
+                     pills=[('%d user' % stats.total_users if stats.total_users == 1 else '%d users' % stats.total_users,),
+                            ('%d admin' % stats.total_admins if stats.total_admins == 1 else '%d admins' % stats.total_admins, 'blue')]) }}
+      {{ manage_card("/workflows", "flow", "Workflows", "Which detection tools run for each log type, and with what settings.",
+                     pills=[('%d workflow' % stats.total_workflows if stats.total_workflows == 1 else '%d workflows' % stats.total_workflows,)]) }}
+
+      {%- set task_pills = [] %}
+      {%- if stats.running_jobs %}{% set _ = task_pills.append(('%d running' % stats.running_jobs, 'blue')) %}{% endif %}
+      {%- if stats.pending_jobs %}{% set _ = task_pills.append(('%d queued' % stats.pending_jobs, 'yellow')) %}{% endif %}
+      {%- if not task_pills %}{% set _ = task_pills.append(('idle',)) %}{% endif %}
+      {{ manage_card("/admin/tasks", "queue", "Tasks", "Everything the workers are doing, waiting to do, or are scheduled to do.", pills=task_pills) }}
+
+      {{ manage_card("/admin/workers", "cpu", "Worker fleet", "Worker processes, per-host concurrency caps, and stuck-job recovery.",
+                     pills=[('%d live' % health.workers, 'green' if health.workers else 'yellow')]) }}
+
+      {{ manage_card("/admin/settings", "cog", "Settings", "Instance-wide behaviour: which panels show, how tools run, what gets recorded.") }}
+      {{ manage_card("/admin/storage", "database", "Storage", "Usage by kind, the biggest consumers, data nothing owns, and how long each is kept.",
+                     pills=[('%s uploaded' % (storage_info.total_stored_bytes | humanbytes),)]) }}
+
+      {#- The card is always reachable, but says so when it is empty by configuration: an
+          audit page that looks broken is worse than one that explains itself. With capture
+          on, the last hour is the number an admin is actually scanning for. -#}
+      {{ manage_card("/admin/activity", "clock", "Activity", "Who signed in, what changed, and every export that moved data off this instance.",
+                     pills=[('off',)] if not site_settings or not site_settings.activity_log_enabled
+                           else [('%d in the last hour' % stats.activity_last_hour, 'blue' if stats.activity_last_hour else 'gray')]) }}
+
+      {{ manage_card("/admin/ai", "sparkles", "AI providers", "The language-model endpoints behind the AI Analysis tab on job pages.",
+                     pills=[('%d of %d enabled' % (stats.ai_enabled, stats.ai_total), 'green' if stats.ai_enabled else 'gray')] if stats.ai_total else [('none',)]) }}
+      {{ manage_card("/admin/enrichment", "link", "Enrichment services", "External lookups offered on entity pages — VirusTotal, AbuseIPDB, Shodan.",
+                     pills=[('Beta/Experimental', 'red')] + ([('%d of %d enabled' % (stats.enrich_enabled, stats.enrich_total), 'green' if stats.enrich_enabled else 'gray')] if stats.enrich_total else [('none',)])) }}
+      {{ manage_card("/admin/api-tokens", "key", "API tokens", "Bearer tokens for unattended IOC feed, TAXII and case-API access.",
+                     pills=[('Beta/Experimental', 'red'), ('%d active' % stats.active_tokens, 'green' if stats.active_tokens else 'gray')]) }}
+    </div>
+  </div>
+
+  <!-- System tab -->
+  <div x-show="tab === 'system'" x-cloak>
+    <!-- Storage Info -->
+    {#- A pointer to /admin/storage, not a usage figure: SUM(LogFile.size_bytes) alone
+        excludes every byte of tool output, and one number in two places, disagreeing, is
+        worse than one place. -#}
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+      <div class="flex items-baseline justify-between mb-3">
+        <h2 class="font-semibold text-sm text-gray-300">Storage</h2>
+        <a href="/admin/storage" class="text-xs text-gray-500 hover:text-gray-300 underline">Manage storage &rarr;</a>
+      </div>
+      <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 text-sm">
+        <div>
+          <div class="text-gray-500 text-xs mb-0.5">Backend</div>
+          <div class="text-gray-300">{{ storage_info.backend }}</div>
+        </div>
+        {% if storage_info.backend == 's3' %}
+        <div>
+          <div class="text-gray-500 text-xs mb-0.5">Endpoint</div>
+          <div class="text-gray-300 font-mono text-xs truncate" title="{{ storage_info.s3_endpoint }}">{{ storage_info.s3_endpoint }}</div>
+        </div>
+        <div>
+          <div class="text-gray-500 text-xs mb-0.5">Bucket</div>
+          <div class="text-gray-300 font-mono text-xs">{{ storage_info.s3_bucket }}</div>
+        </div>
+        {% else %}
+        <div class="lg:col-span-2">
+          <div class="text-gray-500 text-xs mb-0.5">Directory</div>
+          <div class="text-gray-300 font-mono text-xs truncate" title="{{ storage_info.upload_dir }}">{{ storage_info.upload_dir }}</div>
+        </div>
+        {% endif %}
+        <div>
+          <div class="text-gray-500 text-xs mb-0.5">Free space</div>
+          <div class="text-gray-300">
+            {% if storage_info.disk_free is defined %}{{ storage_info.disk_free | humanbytes }}{% else %}&mdash;{% endif %}
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+      <h2 class="font-semibold text-sm text-gray-300 mb-3">System checks</h2>
+      <div class="system-checks-body" hx-get="/admin/system-checks-partial" hx-trigger="loadSystemChecks from:body once" hx-swap="innerHTML">
+        <div class="text-sm text-gray-500">Running checks…</div>
+      </div>
+    </div>
+
+    <!-- Effective concurrency (peak-CPU model, fetched when this tab is first opened) -->
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-5 mb-6">
+      <h2 class="font-semibold text-sm text-gray-300 mb-3">Effective concurrency</h2>
+      <div hx-get="/admin/concurrency-partial" hx-trigger="loadSystemChecks from:body once" hx-swap="innerHTML">
+        <div class="text-sm text-gray-500">Loading capacity…</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Maintenance tab -->
+  <div x-show="tab === 'maintenance'" x-cloak>
+    <p class="text-sm text-gray-500 mb-4">
+      Every one of these is queued as a background task: watch it, cancel it, or re-run it on
+      <a href="/admin/tasks" class="text-blue-400 hover:underline">Tasks</a>.
+    </p>
+
+    {#- The recovery and storage actions are listed here beside the backfills, so "the thing
+        I click when something is wrong" is on one screen, each linking to its own page for
+        the context — this tab is the index of operational actions, not a second home. -#}
+    <div class="grid gap-4 sm:grid-cols-3 mb-6">
+      <a href="/admin/workers" class="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-600 transition">
+        <h2 class="font-semibold text-sm mb-1">Recover stuck jobs</h2>
+        <p class="text-xs text-gray-500">Close out jobs whose worker stopped reporting. On the Worker Fleet page, with the fleet state that explains them.</p>
+      </a>
+      <a href="/admin/storage" class="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-600 transition">
+        <h2 class="font-semibold text-sm mb-1">Reclaim storage</h2>
+        <p class="text-xs text-gray-500">Purge data nothing owns, run the retention sweep early, or change how long output is kept.</p>
+      </a>
+      <a href="/admin/activity" class="bg-gray-900 border border-gray-800 rounded-xl p-4 hover:border-gray-600 transition">
+        <h2 class="font-semibold text-sm mb-1">Prune activity</h2>
+        <p class="text-xs text-gray-500">Remove recorded activity older than a window you choose, rather than waiting for the daily sweep.</p>
+      </a>
+    </div>
+
+    <h2 class="text-sm font-semibold text-gray-300 mb-2">Backfills and cleanup</h2>
+    <p class="text-xs text-gray-500 mb-3">
+      Rebuild data derived from jobs you already have. Safe to run on a live instance; each
+      one reports what it did and can be stopped part-way.
+    </p>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl divide-y divide-gray-800">
+      {% for action in maintenance_actions %}
+      <div class="p-4"{% if action.details %} x-data="{ showDetails: false }"{% endif %}>
+        <div class="flex flex-wrap items-start gap-3">
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center gap-2">
+              <h2 class="font-semibold text-sm">{{ action.title }}</h2>
+              {% if action.details %}
+              <button type="button" @click="showDetails = !showDetails"
+                      class="text-xs text-gray-500 hover:text-gray-300 underline"
+                      x-text="showDetails ? 'less' : 'details'">details</button>
+              {% endif %}
+            </div>
+            <p class="text-sm text-gray-400 mt-0.5">{{ action.description }}</p>
+            {% if action.details %}
+            <p class="text-xs text-gray-500 mt-1" x-show="showDetails" x-cloak>{{ action.details }}</p>
+            {% endif %}
+          </div>
+          <div id="task-status-{{ action.key }}" class="pt-1.5">
+            {#- The no-JS fallback for the three outcomes the htmx branch renders as a chip. -#}
+            {% set outcome = request.query_params.get(action.param) %}
+            {% if outcome == 'started' %}
+            <span class="text-xs text-green-400">Task queued &#10003;</span>
+            {% elif outcome == 'running' %}
+            <span class="text-xs text-blue-400">Already running</span>
+            {% elif outcome == 'busy' %}
+            <span class="text-xs text-yellow-400">Database busy &mdash; try again</span>
+            {% elif outcome == 'unreachable' %}
+            <span class="text-xs text-red-400">Task queue unreachable &mdash; try again</span>
+            {% endif %}
+          </div>
+          <form method="POST" action="{{ action.url }}"
+                hx-post="{{ action.url }}"
+                hx-target="#task-status-{{ action.key }}"
+                hx-swap="innerHTML"
+                data-confirm-title="{{ action.confirm_title }}"
+                data-confirm-message="{{ action.confirm_message }}"
+                data-confirm-accept="Queue task">
+            <button type="submit" class="lt-btn lt-btn--sm">Run</button>
+          </form>
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function gettingStarted(allDone) {
+    // Server renders the step states; Alpine only remembers the collapse preference.
+    const KEY = 'logstotal_gs_collapsed';
+    return {
+      collapsed: false,
+      init() {
+        const saved = localStorage.getItem(KEY);
+        // No stored preference: auto-collapse only once every auto-check passes.
+        this.collapsed = saved === null ? allDone : saved === '1';
+      },
+      toggle() {
+        this.collapsed = !this.collapsed;
+        localStorage.setItem(KEY, this.collapsed ? '1' : '0');
+      }
+    };
+  }
+</script>
+{% endblock %}

@@ -1,0 +1,234 @@
+{% extends "base.html" %}
+{% from "partials/_icons.html" import icon with context %}
+{% from "partials/_count_pill.html" import pill_tone %}
+{% block title %}LogsTotal – Log Analysis{% endblock %}
+{% block content %}
+{#
+  The upload queue. Colour means status and nothing else: every row carries one
+  `tone()` from upload.js (idle | busy | ok | warn | bad), and the classes below read it
+  from `data-tone`. The Tailwind build scans templates only, never upload.js, so a colour
+  chosen in JavaScript has to arrive as an attribute, not as a class name.
+
+  Rows stay quiet while they are fine: only busy, warn and bad rows get a rail, and only
+  warn and bad rows a tint. A rail on every healthy row is the "every row looks the same"
+  problem again, in green. The tones reuse the job-status tokens behind `.badge-*`, so
+  this page and /jobs share one palette.
+#}
+<style>
+  .lt-upq                     { --lt-upq-tone: var(--badge-pending-dot); }
+  .lt-upq [data-tone="busy"]  { --lt-upq-tone: var(--badge-running-dot); }
+  .lt-upq [data-tone="ok"]    { --lt-upq-tone: var(--badge-completed-dot); }
+  .lt-upq [data-tone="warn"]  { --lt-upq-tone: var(--badge-partial-dot); }
+  .lt-upq [data-tone="bad"]   { --lt-upq-tone: var(--badge-failed-dot); }
+  .lt-upq-row { transition: background-color .15s, box-shadow .15s; }
+  .lt-upq-row:is([data-tone="busy"], [data-tone="warn"], [data-tone="bad"]) { box-shadow: inset 3px 0 0 var(--lt-upq-tone); }
+  .lt-upq-row:is([data-tone="warn"], [data-tone="bad"]) { background-color: color-mix(in oklab, var(--lt-upq-tone) 6%, transparent); }
+  .lt-upq-glyph {
+    width: 2rem; height: 2rem; border-radius: .5rem; display: grid; place-items: center; flex-shrink: 0;
+    color: var(--lt-upq-tone); background-color: rgb(var(--ui-gray-800));
+    background-color: color-mix(in oklab, var(--lt-upq-tone) 16%, transparent);
+  }
+  .lt-upq-glyph[data-tone="idle"] { color: rgb(var(--ui-gray-400)); background-color: rgb(var(--ui-gray-800)); }
+  .lt-upq-dot  { width: .5rem; height: .5rem; border-radius: 9999px; flex-shrink: 0; background-color: var(--lt-upq-tone); }
+  .lt-upq-seg  { background-color: var(--lt-upq-tone); transition: width .3s ease; }
+  .lt-upq-note { color: rgb(var(--ui-gray-400)); }
+  .lt-upq-note:is([data-tone="warn"], [data-tone="bad"]) { color: var(--lt-upq-tone); }
+  /* The log-type control is a button styled as the select beside it; locked, it reads as text. */
+  button.lt-field.lt-upq-type          { cursor: pointer; text-align: left; }
+  button.lt-field.lt-upq-type:disabled { cursor: default; border-color: transparent; background-color: transparent; padding-left: 0; }
+  .lt-field.lt-upq-attn { border-color: var(--badge-partial-border); background-color: var(--badge-partial-bg); color: var(--badge-partial-text); }
+  @media (prefers-reduced-motion: reduce) { .lt-upq-row, .lt-upq-seg { transition: none; } }
+</style>
+{# One glyph tile. `glyph` is an Alpine expression naming an icon; one `x-if` per candidate
+   keeps a single <svg> in the DOM per row. #}
+{% macro glyph_tile(tone, glyph) -%}
+<span class="lt-upq-glyph" :data-tone="{{ tone }}" aria-hidden="true">
+  <template x-if="{{ glyph }} === 'file'">{{ icon("file") }}</template>
+  <template x-if="{{ glyph }} === 'clock'">{{ icon("clock") }}</template>
+  <template x-if="{{ glyph }} === 'spinner'">{{ icon("spinner", "w-4 h-4 motion-safe:animate-spin") }}</template>
+  <template x-if="{{ glyph }} === 'check'">{{ icon("check") }}</template>
+  <template x-if="{{ glyph }} === 'alert'">{{ icon("alert") }}</template>
+  <template x-if="{{ glyph }} === 'fail'">{{ icon("fail") }}</template>
+</span>
+{%- endmacro %}
+<div class="max-w-4xl mx-auto">
+  <div class="text-center mb-8">
+    <h1 class="text-4xl font-bold text-blue-400 mb-2">LogsTotal</h1>
+    <p class="text-gray-400">Drop your log files. Get threat detections. No login required.</p>
+  </div>
+  <div class="lt-upq bg-gray-900 border border-gray-800 rounded-xl p-4 sm:p-6" x-data="uploader()"
+       data-demo-mode="{{ 'true' if site_settings.demo_mode else 'false' }}"
+       data-signed-in="{{ 'true' if user else 'false' }}" data-max-bytes="{{ max_upload_size_mb * 1024 * 1024 }}" data-upload-slots="{{ upload_slots }}" data-max-files="{{ site_settings.max_upload_files }}">
+    {% if site_settings.demo_mode %}
+    <p class="mb-4 rounded-lg border border-amber-700 bg-amber-900/40 px-4 py-3 text-sm text-amber-200">Demo mode — file submission is disabled. You can browse existing jobs and results.</p>
+    {% endif %}
+    <noscript><p class="mb-4 text-amber-300">JavaScript is required to select and submit log files. Enable it and reload.</p></noscript>
+    <form method="POST" action="/upload" enctype="multipart/form-data" @submit.prevent="submitUpload($event)">
+      <!-- Large while empty; one slim line once files are listed. Children ignore the pointer so a drag over the text does not flicker the zone. -->
+      <div x-show="!hasSubmitted" class="border-2 border-dashed rounded-lg transition focus:outline-none focus-visible:border-blue-500"
+           :class="[rows.length ? 'flex items-center gap-3 px-3 py-2.5 text-left' : 'px-6 py-10 text-center', demoMode || selectionLocked ? 'border-gray-700 cursor-not-allowed opacity-60' : (dragging ? 'border-blue-500 bg-blue-900/20 cursor-pointer' : 'border-gray-700 hover:border-gray-500 cursor-pointer')]"
+           role="button" :tabindex="demoMode || selectionLocked ? -1 : 0" :aria-disabled="demoMode || selectionLocked" aria-label="Choose log files"
+           @dragover.prevent="!demoMode && !selectionLocked && (dragging = true)" @dragleave.prevent="dragging = false"
+           @drop.prevent="onDrop($event)" @click="!demoMode && !selectionLocked && $refs.fileInput.click()"
+           @keydown.enter.prevent="!demoMode && !selectionLocked && $refs.fileInput.click()"
+           @keydown.space.prevent="!demoMode && !selectionLocked && $refs.fileInput.click()">
+        <span class="pointer-events-none grid shrink-0 place-items-center rounded-full text-blue-400 transition" :class="[rows.length ? 'h-8 w-8' : 'mx-auto mb-4 h-14 w-14', dragging ? 'bg-blue-500/25' : 'bg-blue-500/10']" aria-hidden="true">
+          <span x-show="rows.length">{{ icon("plus") }}</span>
+          <span x-show="!rows.length">{{ icon("upload", "w-7 h-7") }}</span>
+        </span>
+        <div class="pointer-events-none min-w-0">
+          <p class="font-medium text-gray-100" :class="rows.length ? 'text-sm' : 'text-base'" x-text="dragging ? 'Release to add files' : (rows.length ? 'Add more files' : 'Drop log files here')">Drop log files here</p>
+          <p x-show="!rows.length" class="text-sm text-gray-400 mt-1">or <span class="text-blue-400">browse your computer</span></p>
+          <p x-show="!rows.length" class="text-xs text-gray-500 mt-4">EVTX, XML, JSON, auditd, syslog and journald. Up to {{ site_settings.max_upload_files }} {{ 'file' if site_settings.max_upload_files == 1 else 'files' }}, {{ max_upload_size_mb }} MB each.</p>
+          <p x-show="rows.length" x-cloak class="text-xs text-gray-500 sm:truncate" x-text="maxFiles > rows.length ? 'Drop here or browse. ' + (maxFiles - rows.length) + ' more allowed, {{ max_upload_size_mb }} MB each.' : 'The selection is full. Remove a file to add another.'"></p>
+        </div>
+        <input type="file" name="file" multiple :multiple="maxFiles > 1" x-ref="fileInput" class="hidden" @change="onFileChange($event)" :disabled="demoMode || selectionLocked">
+      </div>
+
+      <!-- Submission has its own summary; 100% success always means confirmed receipt. -->
+      <div x-show="hasSubmitted" x-cloak class="rounded-lg border p-4" :class="allSubmitted ? 'border-emerald-800 bg-emerald-900/20' : 'border-gray-700 bg-gray-950/40'" aria-live="polite">
+        <div class="flex items-start gap-3">
+          {{ glyph_tile("panelTone", "({ ok: 'check', busy: 'spinner', warn: 'alert', idle: 'file' })[panelTone]") }}
+          <div class="min-w-0 flex-1">
+            <div class="flex items-center justify-between gap-4">
+              <h2 class="font-semibold" :class="allSubmitted ? 'text-emerald-300' : 'text-gray-100'" x-text="submissionTitle"></h2>
+              <button type="button" x-show="submitting && !allSubmitted" @click="cancelUpload()" class="text-xs text-red-400 hover:text-red-300 shrink-0">Stop uploads</button>
+            </div>
+            <p class="text-sm text-gray-400 mt-0.5" x-text="submissionHint"></p>
+          </div>
+        </div>
+        <div x-show="!allSubmitted" class="mt-4">
+          <div class="flex h-2 gap-px rounded-full bg-gray-800 overflow-hidden" role="progressbar" aria-label="Files confirmed by server" :aria-valuenow="acceptedCount" :aria-valuemax="rows.length" aria-valuemin="0" :aria-valuetext="acceptedCount + ' of ' + rows.length + ' files submitted'">
+            <span class="lt-upq-seg" data-tone="ok" :style="segment('ok')"></span>
+            <span class="lt-upq-seg" data-tone="busy" :style="segment('busy')"></span>
+            <span class="lt-upq-seg" data-tone="warn" :style="segment('warn')"></span>
+            <span class="lt-upq-seg" data-tone="bad" :style="segment('bad')"></span>
+          </div>
+          <div class="mt-2.5 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-400">
+            <template x-for="part in summaryParts" :key="part.text">
+              <span class="inline-flex items-center gap-1.5"><span class="lt-upq-dot" :data-tone="part.tone"></span><span x-text="part.text"></span></span>
+            </template>
+            <span x-show="transferringCount || queuedCount" class="ml-auto tabular-nums text-gray-500" x-text="formatBytes(uploadedBytes) + ' of ' + formatBytes(totalBytes)"></span>
+          </div>
+        </div>
+      </div>
+
+      <!-- The header sits outside the scroll box so it spans the full width; the matching
+           scrollbar gutter keeps its columns over the rows'. -->
+      <div x-show="rows.length" x-cloak class="mt-5">
+        <div class="flex flex-wrap items-center justify-between gap-2 mb-2">
+          <p class="text-sm font-medium text-gray-200"><span x-text="rows.length + (rows.length === 1 ? ' file' : ' files')"></span> <span class="text-gray-500 font-normal" x-text="formatBytes(totalBytes)"></span></p>
+          <div class="flex items-center gap-2">
+            <button type="button" x-show="attentionCount || issuesOnly" @click="issuesOnly = !issuesOnly" :aria-pressed="issuesOnly" class="lt-chip lt-chip--btn {{ pill_tone('yellow') }}">
+              {{ icon("alert", "w-3 h-3") }}<span x-text="issuesOnly ? 'Show all files' : attentionCount + (attentionCount === 1 ? ' needs attention' : ' need attention')"></span>
+            </button>
+            <button type="button" x-show="!hasSubmitted" :disabled="selectionLocked" @click="startOver()" class="lt-btn lt-btn--sm lt-btn--ghost">Clear all</button>
+          </div>
+        </div>
+        <div class="rounded-lg border border-gray-800 overflow-hidden">
+          <div class="hidden sm:grid grid-cols-[2rem_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1.3fr)_2rem] gap-x-4 bg-gray-950 border-b border-gray-800 px-4 py-2 text-xs font-medium text-gray-400" style="overflow: hidden; scrollbar-gutter: stable">
+            <span></span><span>File</span><span>Log type</span><span>Detection workflow</span><span class="sr-only">Actions</span>
+          </div>
+          <div class="lt-scroll lt-scroll--md" style="scrollbar-gutter: stable" role="region" aria-label="Selected files" tabindex="0">
+            <template x-for="row in visibleRows" :key="row.id">
+              <div class="lt-upq-row relative grid grid-cols-[2rem_minmax(0,1fr)_2rem] sm:grid-cols-[2rem_minmax(0,1.5fr)_minmax(0,1fr)_minmax(0,1.3fr)_2rem] items-center gap-x-3 sm:gap-x-4 gap-y-2 border-t border-gray-800 first-of-type:border-t-0 px-4 py-3" :data-tone="tone(row)">
+                {{ glyph_tile("tone(row)", "glyph(row)") }}
+                <div class="min-w-0">
+                  <p class="text-sm font-medium text-gray-100 truncate" x-text="row.name" :title="row.name"></p>
+                  <div class="mt-1 flex items-center gap-2 min-w-0">
+                    <span x-show="row.state !== 'ready' || row.jobId" class="badge-base shrink-0" :class="badge(row)"><span class="badge-dot" :class="{ 'motion-safe:animate-pulse': tone(row) === 'busy' }"></span><span x-text="label(row)"></span></span>
+                    <span class="text-xs text-gray-500 tabular-nums truncate" x-text="formatBytes(row.file.size)"></span>
+                  </div>
+                </div>
+                <div class="col-span-3 sm:col-span-1 min-w-0 flex items-center gap-2">
+                  <span class="sm:hidden w-[4.75rem] shrink-0 text-xs text-gray-500">Log type</span>
+                  <button type="button" x-show="!row.typeEditing" @click="row.typeEditing = true; $nextTick(() => document.getElementById('type-' + row.id).focus())" :disabled="!editable(row)" :aria-label="'Change log type for ' + row.name"
+                          :title="typeLabel(row) + (row.override === 'auto' && knownType(row) ? ' (detected automatically)' : '')"
+                          class="lt-field lt-upq-type min-w-0 flex-1" :class="{ 'lt-upq-attn': editable(row) && row.state !== 'preview' && !knownType(row) }">
+                    <span class="flex items-center gap-1.5 min-w-0">
+                      <span class="truncate" x-text="row.state === 'preview' ? 'Detecting…' : (knownType(row) ? typeLabel(row) : (editable(row) ? 'Choose a log type' : 'Unknown type'))"></span>
+                      <span x-show="editable(row)" class="ml-auto shrink-0 opacity-60">{{ icon("chevron", "w-3.5 h-3.5") }}</span>
+                    </span>
+                  </button>
+                  <select x-show="row.typeEditing" :id="'type-' + row.id" x-model="row.override" @change="syncWorkflow(row); row.typeEditing = false" @blur="row.typeEditing = false" :disabled="!editable(row)" class="lt-field min-w-0 flex-1" :aria-label="'Log type for ' + row.name">
+                    <option value="auto">Auto-detect</option>
+                    {% for value, label in log_types.items() %}{% if value.value != 'unknown' %}<option value="{{ value.value }}">{{ label }}</option>{% endif %}{% endfor %}
+                  </select>
+                </div>
+                <div class="col-span-3 sm:col-span-1 min-w-0 flex items-center gap-2">
+                  <span class="sm:hidden w-[4.75rem] shrink-0 text-xs text-gray-500">Workflow</span>
+                  <div x-show="editable(row)" class="flex min-w-0 flex-1 items-center gap-1">
+                    <select :id="'workflow-' + row.id" x-model="row.workflowId" x-init="$nextTick(() => $el.value = row.workflowId)" :disabled="!editable(row)" class="lt-field w-full min-w-0" :class="{ 'lt-upq-attn': !row.workflowId }" :aria-label="'Workflow for ' + row.name" :title="workflowLabel(row)">
+                      <template x-if="!compatible(row).length"><option value="">No compatible workflow</option></template>
+                      <template x-for="wf in compatible(row)" :key="wf.id"><option :value="String(wf.id)" x-text="wf.name"></option></template>
+                    </select>
+                    <button type="button" x-show="rows.length > 1 && !hasSubmitted" :disabled="!editable(row) || !row.workflowId" @click="applyWorkflow(row)" class="h-[1.875rem] w-7 shrink-0 grid place-items-center rounded-md text-gray-500 hover:text-blue-300 hover:bg-gray-800 disabled:opacity-30" title="Use this workflow for every compatible file" :aria-label="'Apply workflow from ' + row.name + ' to compatible files'">{{ icon("copy") }}</button>
+                  </div>
+                  <p x-show="!editable(row)" class="min-w-0 flex-1 text-xs text-gray-300 truncate" x-text="workflowLabel(row) || '—'" :title="workflowLabel(row)"></p>
+                </div>
+                <div class="col-start-3 row-start-1 sm:col-start-auto sm:row-start-auto flex justify-center">
+                  <button type="button" x-show="!row.jobId && !hasSubmitted" :disabled="selectionLocked" @click="remove(row)" class="h-8 w-8 grid place-items-center rounded-md text-gray-500 hover:text-red-300 hover:bg-gray-800 disabled:opacity-30" :aria-label="'Remove ' + row.name" title="Remove file">{{ icon("close") }}</button>
+                  <a x-show="row.jobId" :href="'/jobs/' + row.jobId" target="_blank" rel="noopener" class="h-8 w-8 grid place-items-center rounded-md text-blue-400 hover:text-blue-300 hover:bg-gray-800" :aria-label="'Open job for ' + row.name" title="Open job">{{ icon("external") }}</a>
+                  <button type="button" x-show="['error','stopped','uncertain'].includes(row.state) && row.workflowId && row.snapshot" :disabled="selectionLocked || demoMode" @click="retry(row)" class="h-8 w-8 grid place-items-center rounded-md text-blue-400 hover:text-blue-300 hover:bg-gray-800 disabled:opacity-30" :aria-label="'Retry ' + row.name" :title="row.state === 'uncertain' && row.key ? 'Check receipt and retry' : 'Retry upload'">{{ icon("retry") }}</button>
+                </div>
+                <p x-show="note(row)" x-text="note(row)" class="lt-upq-note col-span-3 sm:col-start-2 sm:col-span-4 -mt-1 text-xs break-words" :data-tone="tone(row)"></p>
+                <div x-show="row.state === 'uploading'" class="absolute inset-x-0 bottom-0 h-0.5 bg-gray-800" role="progressbar" :aria-valuenow="row.file.size ? Math.round(row.loaded / row.file.size * 100) : 0" aria-valuemin="0" aria-valuemax="100" :aria-label="'Upload progress for ' + row.name">
+                  <div class="h-full bg-blue-500 transition-[width] duration-150" :style="'width:' + (row.file.size ? row.loaded / row.file.size * 100 : 0) + '%'"></div>
+                </div>
+              </div>
+            </template>
+            <p x-show="issuesOnly && !attentionCount" class="p-4 text-sm text-emerald-400">No files need attention.</p>
+          </div>
+        </div>
+      </div>
+
+      <div x-show="!hasSubmitted">
+        {% if can_group_cases %}
+        <fieldset class="mt-5" :disabled="selectionLocked || caseLocked">
+          <label class="block text-sm text-gray-400 mb-2" for="upload-case-mode">Group into a case <span class="text-gray-500">(optional)</span></label>
+          <div class="grid gap-3">
+            <select id="upload-case-mode" x-model="caseMode" @change="caseMode === 'existing' && loadCases()" class="lt-field lt-field--lg w-full">
+              <option value="none">No case</option><option value="existing">Existing case</option><option value="new">New case</option>
+            </select>
+            <div>
+              <select x-show="caseMode === 'existing'" x-cloak x-model="caseId" class="lt-field lt-field--lg w-full" aria-label="Existing case">
+                <option value="">Choose a case…</option><template x-for="item in cases" :key="item.id"><option :value="String(item.id)" x-text="item.name"></option></template>
+              </select>
+              <input x-show="caseMode === 'new'" x-cloak x-model="caseName" maxlength="200" class="lt-field lt-field--lg w-full" placeholder="Case name" aria-label="New case name">
+              <p x-show="caseMode === 'none'" class="text-xs text-gray-500">Each file gets its own analysis job.</p>
+            </div>
+          </div>
+          <p x-show="casesError && caseMode === 'existing'" x-cloak class="text-amber-300 text-xs mt-2"><span x-text="casesError"></span> <button type="button" @click="loadCases()" class="underline">Retry</button></p>
+        </fieldset>
+        {% endif %}
+        {% if user %}
+        <label class="flex gap-2 items-center text-sm text-gray-300 mt-4"><input type="checkbox" x-model="isPrivate" :disabled="selectionLocked" class="accent-blue-500"> Submit privately <span class="text-gray-500 text-xs">Case sharing does not change job visibility.</span></label>
+        {% endif %}
+        {% if not workflows %}<p class="text-amber-300 text-sm mt-4">No workflows configured yet. Ask an admin to add one.</p>{% endif %}
+        <button type="submit" :disabled="!canSubmit" class="lt-btn lt-btn--lg lt-btn--primary lt-btn--block mt-6" x-text="submitLabel">Analyze</button>
+        <p x-show="attentionCount && !previewsPending" x-cloak class="mt-2 text-center text-xs text-yellow-300">
+          <span x-text="attentionCount === 1 ? 'One file needs attention before you can submit.' : attentionCount + ' files need attention before you can submit.'"></span>
+          <button type="button" x-show="!issuesOnly" @click="issuesOnly = true" class="underline underline-offset-2 hover:text-yellow-200">Show</button>
+        </p>
+      </div>
+
+      <div x-show="hasSubmitted" x-cloak class="mt-5">
+        <a x-show="allSubmitted" :href="activeCaseId ? '/intel/cases/' + activeCaseId : '/jobs'" class="lt-btn lt-btn--lg lt-btn--primary lt-btn--block" x-text="activeCaseId ? 'Open case' : 'View analyses'"></a>
+        <button type="button" x-show="!allSubmitted && retryCount && !selectionLocked" @click="retryFailed()" :disabled="demoMode" class="lt-btn lt-btn--lg lt-btn--primary lt-btn--block" x-text="'Retry ' + retryCount + (retryCount === 1 ? ' remaining file' : ' remaining files')"></button>
+        <div class="flex justify-center gap-5 mt-3 text-sm">
+          <a x-show="acceptedCount && !allSubmitted" :href="activeCaseId ? '/intel/cases/' + activeCaseId : '/jobs'" target="_blank" rel="noopener" class="text-blue-400 hover:text-blue-300">View submitted jobs ↗</a>
+          <button type="button" x-show="!selectionLocked" @click="startOver()" class="text-gray-400 hover:text-gray-200" x-text="allSubmitted ? 'Analyze more files' : 'Start a new selection'"></button>
+        </div>
+      </div>
+      <p x-show="error" x-cloak x-text="error" role="alert" class="text-sm text-red-300 mt-4"></p>
+    </form>
+  </div>
+  <div class="mt-8">
+    <div class="flex justify-between mb-4"><h2 class="text-lg font-semibold text-gray-300">Recent analyses</h2><a href="/jobs" class="text-sm text-blue-400">View all →</a></div>
+    <div hx-get="/jobs/recent-partial" hx-trigger="load" hx-swap="innerHTML" class="text-gray-500 text-sm">Loading recent analyses…</div>
+  </div>
+</div>
+<script type="application/json" id="workflows-data">{{ workflows_data | tojson }}</script>
+<script type="application/json" id="log-types-data">{{ log_types | tojson }}</script>
+<script src="/static/upload.js?v={{ asset_version('app/static/upload.js') }}"></script>
+{% endblock %}

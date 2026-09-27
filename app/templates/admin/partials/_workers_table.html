@@ -1,0 +1,302 @@
+<div class="bg-gray-900 border border-gray-800 rounded-xl px-5 py-4 mb-6">
+  <div class="flex items-center gap-6 flex-wrap">
+    <div class="flex items-center gap-2">
+      <span class="font-mono text-xl font-bold text-green-400">{{ active_workers | length }}</span>
+      <span class="text-sm text-gray-400">Workers Online</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="font-mono text-xl font-bold text-yellow-400">{{ pending_count }}</span>
+      <span class="text-sm text-gray-400">Pending Jobs</span>
+    </div>
+    <div class="flex items-center gap-2">
+      <span class="font-mono text-xl font-bold {% if stuck_jobs %}text-red-400{% else %}text-gray-500{% endif %}">{{ stuck_jobs | length }}</span>
+      <span class="text-sm text-gray-400">Stuck</span>
+    </div>
+    <span class="text-gray-700">|</span>
+    <div class="flex items-center gap-2">
+      <span class="font-mono text-xl font-bold text-blue-400">{{ huey_queue_size }}</span>
+      <span class="text-sm text-gray-400">Huey Queue</span>
+    </div>
+    {% if active_workers %}
+    <div class="flex items-center gap-3 ml-auto">
+      <div class="flex items-center gap-2">
+        <span class="text-xs text-gray-400">Fleet</span>
+        <span class="font-mono text-sm text-gray-200">{{ fleet_total_active }}<span class="text-gray-500">/</span>{{ fleet_total_capacity }}{% if fleet_has_unlimited %}+{% endif %}</span>
+      </div>
+      <div class="w-24 bg-gray-800 rounded-full h-2 overflow-hidden">
+        {% if fleet_total_capacity > 0 %}
+        <div class="h-full rounded-full transition-all {% if fleet_total_active >= fleet_total_capacity %}bg-red-500{% elif fleet_total_active > fleet_total_capacity * 0.7 %}bg-yellow-500{% else %}bg-blue-500{% endif %}"
+          style="width: {{ [((fleet_total_active / fleet_total_capacity) * 100) | int, 100] | min }}%"></div>
+        {% else %}
+        <div class="h-full rounded-full bg-gray-600" style="width: 0%"></div>
+        {% endif %}
+      </div>
+      <span class="font-mono text-xs {% if fleet_total_available > 0 %}text-green-400{% else %}text-red-400{% endif %}">{{ fleet_total_available }}{% if fleet_has_unlimited %}+{% endif %} free</span>
+    </div>
+    {% endif %}
+  </div>
+</div>
+
+{% if active_workers %}
+<form method="POST" action="/admin/workers/priority" onsubmit="window.ltWorkersCapacity.reset();">
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+  <div class="px-5 py-3 border-b border-gray-800 flex items-center justify-between">
+    <h2 class="font-semibold text-sm text-gray-300">Worker Fleet</h2>
+    <button type="submit"
+      class="bg-indigo-700 hover:bg-indigo-600 rounded px-3 py-1.5 text-xs font-semibold transition">
+      Save Capacity
+    </button>
+  </div>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-gray-800 text-gray-500 text-xs">
+        <th class="text-left px-5 py-2">Worker</th>
+        <th class="text-left px-5 py-2">Host</th>
+        <th class="text-left px-5 py-2">Status</th>
+        <th class="text-left px-5 py-2">Capacity</th>
+        <th class="text-left px-5 py-2">Free</th>
+        <th class="text-left px-5 py-2">Usage</th>
+        <th class="text-left px-5 py-2">Current Jobs</th>
+        <th class="text-left px-5 py-2">Heartbeat TTL</th>
+        <th class="text-left px-5 py-2">Jobs Completed</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for w in active_workers %}
+      <tr class="border-b border-gray-800/50 hover:bg-gray-800/50 transition">
+        <td class="px-5 py-2">
+          <div class="text-gray-200">{{ w.worker_name }}</div>
+          <div class="font-mono text-xs text-gray-500">{{ w.worker_id }}</div>
+        </td>
+        <td class="px-5 py-2">
+          <div class="font-mono text-xs text-gray-300">{{ w.ip_address }}</div>
+          {% if w.os or w.arch %}
+          <div class="text-xs text-gray-500">{{ w.os }} {{ w.arch }}{% if w.python_version %} &middot; Python {{ w.python_version }}{% endif %}</div>
+          {% endif %}
+          {% if w.cpu_count or w.memory_gb or w.huey_workers %}
+          <div class="text-xs text-gray-600">{% if w.cpu_count %}{{ w.cpu_count }} CPU{% endif %}{% if w.cpu_count and w.memory_gb %} &middot; {% endif %}{% if w.memory_gb %}{{ w.memory_gb }} GB RAM{% endif %}{% if w.huey_workers %} &middot; {{ w.huey_workers }}T{% endif %}</div>
+          {% endif %}
+        </td>
+        <td class="px-5 py-2">
+          {% if w.max_concurrent_jobs == -1 %}
+          <span class="inline-block px-2 py-0.5 rounded text-xs font-medium bg-red-900/50 text-red-300">paused</span>
+          {% elif w.status == 'busy' %}
+          <span class="inline-block px-2 py-0.5 rounded text-xs font-medium bg-blue-900/50 text-blue-300">busy</span>
+          {% else %}
+          <span class="inline-block px-2 py-0.5 rounded text-xs font-medium bg-green-900/50 text-green-300">idle</span>
+          {% endif %}
+        </td>
+        <td class="px-5 py-2">
+          {# `sync` takes the candidate value rather than reading `val`: the number box
+             reports what was just typed via $event, because an Alpine binding applied on
+             its own scheduler is not guaranteed to be current inside a handler for the
+             same event that drives it. #}
+          <div class="flex items-center gap-2" x-data="{
+                 val: {{ w.max_concurrent_jobs }},
+                 paused: {{ 'true' if w.max_concurrent_jobs == -1 else 'false' }},
+                 saved: {{ w.max_concurrent_jobs }},
+                 sync(next) { window.ltWorkersCapacity.mark('{{ w.hostname }}', next !== this.saved); }
+               }">
+            <label class="flex items-center gap-1 text-xs text-gray-400 cursor-pointer" title="Pause this worker">
+              <input type="checkbox" x-model="paused" @change="if (paused) { val = -1 } else { val = 0 }; sync(paused ? -1 : val)"
+                class="accent-red-500 w-3 h-3">
+              <span class="select-none" :class="paused ? 'text-red-400' : ''">Pause</span>
+            </label>
+            <template x-if="!paused">
+              <input type="number" :name="'slots_' + '{{ w.hostname }}'" min="0" step="1"
+                x-model.number="val"
+                @input="sync($event.target.value === '' ? 0 : Number($event.target.value))"
+                class="lt-field lt-field--sm w-16 font-mono text-center"
+                placeholder="0">
+            </template>
+            <template x-if="paused">
+              <input type="hidden" :name="'slots_' + '{{ w.hostname }}'" :value="-1">
+            </template>
+            <template x-if="!paused">
+              <span class="text-xs" :class="val == 0 ? 'text-gray-500' : 'text-gray-400'" x-text="val == 0 ? 'unlimited' : 'max ' + val"></span>
+            </template>
+          </div>
+          {% if w.max_concurrent_jobs != -1 %}
+          <div class="text-[11px] text-gray-600 mt-1">
+            effective {{ w.effective_capacity }}
+          </div>
+          {% endif %}
+        </td>
+        <td class="px-5 py-2">
+          {% if w.max_concurrent_jobs == -1 %}
+          <span class="text-xs text-red-400">paused</span>
+          {% else %}
+          <div class="font-mono text-sm {% if w.available_slots > 0 %}text-green-400{% elif w.active_slots > 0 %}text-red-400{% else %}text-gray-400{% endif %}">
+            {{ w.available_slots }}
+          </div>
+          <div class="text-[11px] text-gray-600">
+            {{ w.effective_capacity }} - {{ w.active_slots }}
+          </div>
+          {% endif %}
+        </td>
+        <td class="px-5 py-2">
+          {% if w.max_concurrent_jobs == -1 %}
+          <span class="text-xs text-red-400">paused</span>
+          {% else %}
+          <div class="flex items-center gap-2">
+            {% if w.effective_capacity > 0 %}
+            <div class="w-20 bg-gray-800 rounded-full h-1.5 overflow-hidden">
+              <div class="h-full rounded-full transition-all {% if w.active_slots >= w.effective_capacity %}bg-red-500{% elif w.active_slots > 0 %}bg-blue-500{% else %}bg-gray-600{% endif %}"
+                style="width: {{ [((w.active_slots / w.effective_capacity) * 100) | int, 100] | min }}%"></div>
+            </div>
+            {% endif %}
+            <span class="font-mono text-xs {% if w.effective_capacity > 0 and w.active_slots >= w.effective_capacity %}text-red-400{% else %}text-gray-300{% endif %}">
+              {{ w.active_slots }} / {{ w.effective_capacity }}
+            </span>
+          </div>
+          {% endif %}
+        </td>
+        <td class="px-5 py-2">
+          {% if w.current_job_ids %}
+          <div class="flex flex-wrap items-center gap-1">
+            {% for jid in w.current_job_ids[:3] %}
+            <a href="/jobs/{{ jid }}" class="text-blue-400 hover:text-blue-300 font-mono text-xs">#{{ jid }}</a>
+            {% endfor %}
+            {% if w.current_job_ids | length > 3 %}
+            <span class="text-gray-500 text-xs">+{{ w.current_job_ids | length - 3 }} more</span>
+            {% endif %}
+            <span class="text-gray-600 text-xs">({{ w.current_job_ids | length }})</span>
+          </div>
+          {% else %}
+          <span class="text-gray-600">—</span>
+          {% endif %}
+        </td>
+        <td class="px-5 py-2">
+          <span class="text-xs {% if w.heartbeat_ttl > 30 %}text-green-400{% elif w.heartbeat_ttl > 10 %}text-yellow-400{% else %}text-red-400{% endif %}">
+            {{ w.heartbeat_ttl }}s
+          </span>
+        </td>
+        <td class="px-5 py-2 text-gray-400">{{ w.jobs_completed }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+</form>
+{% elif running_count > 0 %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6 text-center text-gray-500 text-sm">
+  <p>{{ running_count }} job(s) running but no heartbeat data available yet.</p>
+</div>
+{% endif %}
+
+{% if running_jobs %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+  <div class="px-5 py-3 border-b border-gray-800">
+    <h2 class="font-semibold text-sm text-gray-300">Running Jobs</h2>
+  </div>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-gray-800 text-gray-500 text-xs">
+        <th class="text-left px-5 py-2">Job ID</th>
+        <th class="text-left px-5 py-2">File</th>
+        <th class="text-left px-5 py-2">Workflow</th>
+        <th class="text-left px-5 py-2">Worker</th>
+        <th class="text-left px-5 py-2">Started</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in running_jobs %}
+      <tr class="border-b border-gray-800/50 hover:bg-gray-800/50 transition">
+        <td class="px-5 py-2">
+          <a href="/jobs/{{ job.id }}" class="text-blue-400 hover:text-blue-300 font-mono">#{{ job.id }}</a>
+        </td>
+        <td class="px-5 py-2 text-gray-300 truncate max-w-[200px]" title="{{ job.filename }}">
+          {{ job.filename }}
+        </td>
+        <td class="px-5 py-2 text-gray-400">{{ job.workflow.name }}</td>
+        <td class="px-5 py-2 text-gray-400 text-xs">
+          {{ heartbeat_map.get(job.id | string, '—') }}
+        </td>
+        <td class="px-5 py-2 text-gray-500 text-xs">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if pending_jobs %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+  <div class="px-5 py-3 border-b border-gray-800">
+    <h2 class="font-semibold text-sm text-gray-300">Pending Jobs</h2>
+  </div>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-gray-800 text-gray-500 text-xs">
+        <th class="text-left px-5 py-2">Job ID</th>
+        <th class="text-left px-5 py-2">File</th>
+        <th class="text-left px-5 py-2">Workflow</th>
+        <th class="text-left px-5 py-2">Submitted</th>
+        <th class="text-left px-5 py-2">Submitter</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in pending_jobs %}
+      <tr class="border-b border-gray-800/50 hover:bg-gray-800/50 transition">
+        <td class="px-5 py-2">
+          <a href="/jobs/{{ job.id }}" class="text-blue-400 hover:text-blue-300 font-mono">#{{ job.id }}</a>
+        </td>
+        <td class="px-5 py-2 text-gray-300 truncate max-w-[200px]" title="{{ job.filename }}">
+          {{ job.filename }}
+        </td>
+        <td class="px-5 py-2 text-gray-400">{{ job.workflow.name }}</td>
+        <td class="px-5 py-2 text-gray-500 text-xs">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</td>
+        <td class="px-5 py-2 text-gray-400 text-xs">
+          {% if job.submitter %}<span class="truncate block max-w-[120px]" title="{{ job.submitter.email }}">{{ job.submitter.display_name or job.submitter.email }}</span>{% else %}<span class="text-gray-600">Anonymous</span>{% endif %}
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+  {% if pending_count > pending_jobs | length %}
+  <div class="px-5 py-2 text-xs text-gray-500 border-t border-gray-800">
+    Showing {{ pending_jobs | length }} of {{ pending_count }} pending jobs
+  </div>
+  {% endif %}
+</div>
+{% endif %}
+
+{% if stuck_jobs %}
+<div class="bg-red-950/30 border border-red-800 rounded-xl overflow-hidden mb-6">
+  <div class="px-5 py-3 border-b border-red-800 flex items-center justify-between">
+    <h2 class="font-semibold text-sm text-red-300">Stuck Jobs (no heartbeat)</h2>
+    <form method="POST" action="/admin/recover-stuck-jobs">
+      <button type="submit"
+        class="bg-red-700 hover:bg-red-600 rounded px-3 py-1.5 text-xs font-semibold transition">
+        Recover All ({{ stuck_jobs | length }})
+      </button>
+    </form>
+  </div>
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="border-b border-red-800/50 text-gray-500 text-xs">
+        <th class="text-left px-5 py-2">Job ID</th>
+        <th class="text-left px-5 py-2">Created</th>
+        <th class="text-left px-5 py-2">Status</th>
+      </tr>
+    </thead>
+    <tbody>
+      {% for job in stuck_jobs %}
+      <tr class="border-b border-red-800/20 hover:bg-red-950/30">
+        <td class="px-5 py-2">
+          <a href="/jobs/{{ job.id }}" class="text-blue-400 hover:text-blue-300 font-mono">#{{ job.id }}</a>
+        </td>
+        <td class="px-5 py-2 text-gray-400 text-xs">{{ job.created_at.strftime('%Y-%m-%d %H:%M') if job.created_at else '—' }}</td>
+        <td class="px-5 py-2"><span class="text-red-400 text-xs">stuck</span></td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+{% endif %}
+
+{% if not active_workers and not stuck_jobs and pending_count == 0 and running_count == 0 %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500 text-sm">
+  <p>No active workers or queued jobs.</p>
+</div>
+{% endif %}

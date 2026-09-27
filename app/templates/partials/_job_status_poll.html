@@ -1,0 +1,4 @@
+{% set s = job.status.value if job.status.value is defined else job.status %}
+{% set is_terminal = s in ['completed', 'failed', 'partial', 'cancelled'] %}
+{% include "partials/_job_status.html" %}
+{% include "partials/_job_header_terminal_oob.html" %}

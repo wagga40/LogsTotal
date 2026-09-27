@@ -1,0 +1,29 @@
+#!/usr/bin/env bash
+# LogsTotal command runner.
+#
+#   ./logstotal <task> [args…]     same as `task <task> [args…]` from this directory
+#   ./logstotal                    list every command
+#   ./logstotal --task-path        print the go-task binary it would run, and exit
+#
+# Every command is defined once, in Taskfile.yml. This only makes sure a go-task that can
+# load it is available — the copy a release archive ships, a `task` already installed, or a
+# one-time pinned download — so nothing has to be installed before the first command.
+# scripts/lib/task_bin.sh holds the pin and the resolution order.
+#
+# It runs from its own directory, so `/opt/logstotal/logstotal backup` works from anywhere
+# (cron included). Relative paths passed as arguments are therefore relative to this
+# directory; pass absolute paths from elsewhere.
+set -euo pipefail
+
+LT_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=scripts/lib/task_bin.sh
+. "${LT_ROOT}/scripts/lib/task_bin.sh"
+
+if [ "${1:-}" = "--task-path" ]; then
+  lt_task_resolve "$LT_ROOT"
+  exit
+fi
+
+LT_TASK_BIN=$(lt_task_resolve "$LT_ROOT")
+cd "$LT_ROOT"
+exec "$LT_TASK_BIN" "$@"

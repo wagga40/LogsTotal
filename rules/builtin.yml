@@ -1,0 +1,387 @@
+# Built-in label rules — the vocabulary LogsTotal ships, as rules you can read.
+#
+# Each entry seeds one row on /intel/rules with `is_builtin: true`; `key` is its identity
+# (`IntelRule.builtin_key`). Criteria use the entity search grammar — `list:`, `cidr:`,
+# `re:/…/`, AND/OR/-, parentheses — and each rule applies the tag named after it. The
+# named lists live in config/threat_detection.yaml under `lists:`.
+#
+# Loaded at start under one policy: the file updates what nobody edited. A rule still equal
+# to what it was seeded with takes this file's newer version; one an admin edited on the
+# Rules page is left alone; one this file no longer ships is retired if nobody edited it.
+# The Rules page downloads and imports this same document shape.
+#
+# Every condition here is written in the grammar, so every rule can be read and changed on
+# the page. Nothing ships that points at logic living in code — the entropy-based DGA
+# heuristic stays a computed attribute (`attr:dga`) a reader can search or build on, not a
+# shipped rule.
+
+rules:
+  # ── executables ──
+  - key: lolbin
+    name: Living-off-the-land binary
+    description: Windows binaries from the LOLBAS project, matched by exact name against the `lolbas` list.
+    scope: entity
+    entity_types: [executable]
+    criteria: 'list:lolbas'
+    tags: [{name: lolbin, color: orange}]
+    notify: false
+    enabled: true
+
+  - key: gtfobin
+    name: Unix living-off-the-land binary
+    description: Unix binaries with shell-escape, download or file-write capabilities, from the GTFOBins project — the `gtfobins` list.
+    scope: entity
+    entity_types: [executable]
+    criteria: 'list:gtfobins'
+    tags: [{name: gtfobin, color: orange}]
+    notify: false
+    enabled: true
+
+  # ── domains ──
+  - key: suspicious_tld
+    name: Suspicious top-level domain
+    description: Ends in one of the `suspicious_tlds` list (.tk, .top, .pw, .bit, .onion).
+    scope: entity
+    entity_types: [domain]
+    criteria: 'list:suspicious_tlds'
+    tags: [{name: suspicious_tld, color: yellow}]
+    notify: false
+    enabled: true
+
+  # ── users ──
+  - key: privileged
+    name: Privileged account name
+    description: Contains admin/administrator, is exactly root, or carries a service-account prefix (svc-, sa_).
+    scope: entity
+    entity_types: [user]
+    criteria: 're:/admin|administrator|\broot\b|svc-|sa_/'
+    tags: [{name: privileged, color: red}]
+    notify: false
+    enabled: true
+
+  - key: machine
+    name: Machine account
+    description: Ends in `$`, the Windows computer-account convention.
+    scope: entity
+    entity_types: [user]
+    criteria: 're:/\$$/'
+    tags: [{name: machine, color: gray}]
+    notify: false
+    enabled: true
+
+  # ── IP addresses ──
+  - key: public
+    name: Publicly routable address
+    description: In none of the special-purpose blocks below — the complement of every other address rule.
+    scope: entity
+    entity_types: [ip_address]
+    criteria: '-cidr:0.0.0.0/8,10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16,224.0.0.0/4,240.0.0.0/4,::1/128,fc00::/7,fe80::/10,ff00::/8'
+    tags: [{name: public, color: cyan}]
+    notify: false
+    enabled: true
+
+  - key: rfc1918
+    name: RFC1918 private range
+    description: 10/8, 172.16/12 or 192.168/16.
+    scope: entity
+    entity_types: [ip_address]
+    criteria: 'cidr:10.0.0.0/8,172.16.0.0/12,192.168.0.0/16'
+    tags: [{name: rfc1918, color: gray}]
+    notify: false
+    enabled: true
+
+  - key: cgnat
+    name: Carrier-grade NAT range
+    description: 100.64/10, the shared address space of RFC6598.
+    scope: entity
+    entity_types: [ip_address]
+    criteria: 'cidr:100.64.0.0/10'
+    tags: [{name: cgnat, color: gray}]
+    notify: false
+    enabled: true
+
+  - key: loopback
+    name: Loopback address
+    description: 127/8 or ::1.
+    scope: entity
+    entity_types: [ip_address]
+    criteria: 'cidr:127.0.0.0/8,::1/128'
+    tags: [{name: loopback, color: gray}]
+    notify: false
+    enabled: true
+
+  - key: link_local
+    name: Link-local address
+    description: 169.254/16 or fe80::/10.
+    scope: entity
+    entity_types: [ip_address]
+    criteria: 'cidr:169.254.0.0/16,fe80::/10'
+    tags: [{name: link_local, color: gray}]
+    notify: false
+    enabled: true
+
+  - key: multicast
+    name: Multicast address
+    description: 224/4 or ff00::/8.
+    scope: entity
+    entity_types: [ip_address]
+    criteria: 'cidr:224.0.0.0/4,ff00::/8'
+    tags: [{name: multicast, color: gray}]
+    notify: false
+    enabled: true
+
+  - key: reserved
+    name: Reserved address range
+    description: 0/8 (this network) or 240/4 (reserved for future use).
+    scope: entity
+    entity_types: [ip_address]
+    criteria: 'cidr:0.0.0.0/8,240.0.0.0/4'
+    tags: [{name: reserved, color: gray}]
+    notify: false
+    enabled: true
+
+  # ── hashes ──
+  - key: md5
+    name: MD5 digest
+    description: 32 hexadecimal characters.
+    scope: entity
+    entity_types: [hash]
+    criteria: 're:/^[0-9a-f]{32}$/'
+    tags: [{name: md5, color: gray}]
+    notify: false
+    enabled: true
+
+  - key: sha1
+    name: SHA-1 digest
+    description: 40 hexadecimal characters.
+    scope: entity
+    entity_types: [hash]
+    criteria: 're:/^[0-9a-f]{40}$/'
+    tags: [{name: sha1, color: gray}]
+    notify: false
+    enabled: true
+
+  - key: sha256
+    name: SHA-256 digest
+    description: 64 hexadecimal characters.
+    scope: entity
+    entity_types: [hash]
+    criteria: 're:/^[0-9a-f]{64}$/'
+    tags: [{name: sha256, color: gray}]
+    notify: false
+    enabled: true
+
+  - key: sha512
+    name: SHA-512 digest
+    description: 128 hexadecimal characters.
+    scope: entity
+    entity_types: [hash]
+    criteria: 're:/^[0-9a-f]{128}$/'
+    tags: [{name: sha512, color: gray}]
+    notify: false
+    enabled: true
+
+  # ── services ──
+  - key: signed_path
+    name: Runs from a system path
+    description: The binary path names system32, syswow64, a Windows directory or Program Files — a location that implies a trusted, likely-signed binary.
+    scope: entity
+    entity_types: [service]
+    criteria: 're:/system32|syswow64|\\windows\\|\/windows\/|program files/'
+    tags: [{name: signed_path, color: gray}]
+    notify: false
+    enabled: true
+
+  # ══ Analyst rules — the CTI / DFIR defaults. Silent tags, like the labels above. ══
+
+  # ── tooling on the host ──
+  - key: offsec_tool
+    name: Offensive tooling
+    description: A credential dumper, lateral-movement or tunnelling tool, AD reconnaissance tool or Impacket script by exact file name — the `offensive_tools` list.
+    scope: entity
+    entity_types: [executable, cmdline_file]
+    criteria: 'list:offensive_tools'
+    tags: [{name: offsec_tool, color: red}]
+    notify: false
+    enabled: true
+
+  - key: remote_access
+    name: Remote access tool
+    description: AnyDesk, TeamViewer, ScreenConnect, Atera, Splashtop, RustDesk and the like — the `remote_access_tools` list. Legitimate in many estates, and the most common way in.
+    scope: entity
+    entity_types: [executable]
+    criteria: 'list:remote_access_tools'
+    tags: [{name: remote_access, color: amber}]
+    notify: false
+    enabled: true
+
+  - key: staging_tool
+    name: Staging or transfer tool
+    description: An archiver or a sync/transfer client — the `staging_tools` list. Compression followed by a transfer client is the exfiltration signature.
+    scope: entity
+    entity_types: [executable]
+    criteria: 'list:staging_tools'
+    tags: [{name: staging_tool, color: amber}]
+    notify: false
+    enabled: true
+
+  - key: script_file
+    name: Script on a command line
+    description: A PowerShell, VBScript, JScript, HTA or WSF file named on a command line.
+    scope: entity
+    entity_types: [cmdline_file]
+    criteria: 're:/\.(ps1|vbs|js|hta|wsf)$/'
+    tags: [{name: script_file, color: yellow}]
+    notify: false
+    enabled: true
+
+  - key: odd_extension
+    name: Odd executable extension
+    description: A screensaver, control-panel or PIF file named on a command line — a phishing payload staple.
+    scope: entity
+    entity_types: [cmdline_file]
+    criteria: 're:/\.(scr|cpl|pif)$/'
+    tags: [{name: odd_extension, color: amber}]
+    notify: false
+    enabled: true
+
+  # ── persistence ──
+  - key: service_userpath
+    name: Service from a user-writable path
+    description: A service whose binary lives under Users, AppData, Temp, ProgramData, Public, Downloads, /tmp, /dev/shm or /var/tmp.
+    scope: entity
+    entity_types: [service]
+    criteria: 're:/\\users\\|\\appdata\\|\\temp\\|\\programdata\\|\\public\\|\\downloads\\|%temp%|\/tmp\/|\/dev\/shm\/|\/var\/tmp\//'
+    tags: [{name: service_userpath, color: red}]
+    notify: false
+    enabled: true
+
+  - key: service_lolbin
+    name: Service runs a script host
+    description: A service whose image is PowerShell, cmd, rundll32, regsvr32, mshta, wscript, cscript, certutil, bitsadmin, curl or msiexec — a payload launcher, not a service.
+    scope: entity
+    entity_types: [service]
+    criteria: 're:/powershell|pwsh|cmd\.exe|rundll32|regsvr32|mshta|wscript|cscript|certutil|bitsadmin|curl|msiexec/'
+    tags: [{name: service_lolbin, color: red}]
+    notify: false
+    enabled: true
+
+  - key: encoded_command
+    name: Encoded or hidden command
+    description: An encoded PowerShell command, a Base64 payload, FromBase64String, -NoProfile or a hidden window in a service image or a scheduled task.
+    scope: entity
+    entity_types: [service, task]
+    criteria: 're:/-enc(odedcommand)?\s|-e\s+[a-z0-9+\/=]{20,}|frombase64string|-nop\b|-w(indowstyle)?\s+hidden/'
+    tags: [{name: encoded_command, color: red}]
+    notify: false
+    enabled: true
+
+  - key: task_lolbin
+    name: Scheduled task runs a script host
+    description: A scheduled task that launches PowerShell, cmd, mshta, wscript, cscript, rundll32, regsvr32, certutil, bitsadmin or curl, outside the Microsoft task tree.
+    scope: entity
+    entity_types: [task]
+    criteria: 're:/powershell|pwsh|cmd\.exe|mshta|wscript|cscript|rundll32|regsvr32|certutil|bitsadmin|curl/ -re:/^\\microsoft\\/'
+    tags: [{name: task_lolbin, color: red}]
+    notify: false
+    enabled: true
+
+  - key: task_userpath
+    name: Scheduled task from a user path
+    description: A scheduled task whose command lives under Users, AppData, Temp, ProgramData or Public.
+    scope: entity
+    entity_types: [task]
+    criteria: 're:/\\users\\|\\appdata\\|\\temp\\|\\programdata\\|\\public\\|%temp%|%appdata%/'
+    tags: [{name: task_userpath, color: red}]
+    notify: false
+    enabled: true
+
+  # ── accounts ──
+  - key: builtin_account
+    name: Built-in account in use
+    description: Guest, DefaultAccount, WDAGUtilityAccount or krbtgt — the `default_accounts` list. None of them sees ordinary use.
+    scope: entity
+    entity_types: [user]
+    criteria: 'list:default_accounts'
+    tags: [{name: builtin_account, color: amber}]
+    notify: false
+    enabled: true
+
+  - key: anonymous_logon
+    name: Anonymous logon
+    description: The ANONYMOUS LOGON principal — null sessions and relay attempts.
+    scope: entity
+    entity_types: [user]
+    criteria: 're:/^anonymous logon$/'
+    tags: [{name: anonymous_logon, color: amber}]
+    notify: false
+    enabled: true
+
+  # ── network ──
+  - key: dyndns
+    name: Dynamic DNS or tunnel domain
+    description: A host under a dynamic-DNS provider or a public tunnel service — the `dynamic_dns` list.
+    scope: entity
+    entity_types: [domain]
+    criteria: 'list:dynamic_dns'
+    tags: [{name: dyndns, color: amber}]
+    notify: false
+    enabled: true
+
+  - key: sharing_site
+    name: Paste or file-sharing site
+    description: A paste site, anonymous file host or messenger API — the `sharing_sites` list. Payload hosting and stealer exfiltration.
+    scope: entity
+    entity_types: [domain]
+    criteria: 'list:sharing_sites'
+    tags: [{name: sharing_site, color: amber}]
+    notify: false
+    enabled: true
+
+  - key: lookalike
+    name: Lookalike domain
+    description: A domain imitating Microsoft, Windows Update, Office 365, Outlook, PayPal or Google outside their real zones. Shipped switched off — the exclusion list needs tuning per estate before it is quiet enough.
+    scope: entity
+    entity_types: [domain]
+    criteria: 're:/micros[o0]ft|windows-?update|office-?365|login-?live|0utlook|paypa1|g00gle/ -re:/\.(microsoft|windows|live|office|microsoftonline|msftconnecttest|google)\.com$/'
+    tags: [{name: lookalike, color: red}]
+    notify: false
+    enabled: false
+
+  - key: domain_controller
+    name: Domain controller
+    description: A host named like a domain controller. Scoping rather than detection — `tag:domain_controller` pivots straight to the crown jewels.
+    scope: entity
+    entity_types: [computer]
+    criteria: 're:/^dc\d*$|-dc\d*$|^ad\d*$|domaincontroller/'
+    tags: [{name: domain_controller, color: gray}]
+    notify: false
+    enabled: true
+
+  # ── job triage ──
+  - key: needs_triage
+    name: Needs triage
+    description: A finished analysis with a critical or high finding that nobody has tagged as reviewed.
+    scope: job
+    criteria: 'sev:critical,high -tag:reviewed'
+    tags: [{name: needs_triage, color: red}]
+    notify: false
+    enabled: true
+
+  - key: rerun
+    name: Partial run
+    description: At least one tool did not finish — re-run the analysis before trusting the findings.
+    scope: job
+    criteria: 'status:partial'
+    tags: [{name: rerun, color: amber}]
+    notify: false
+    enabled: true
+
+  - key: clean
+    name: Clean
+    description: A completed analysis with no findings at all.
+    scope: job
+    criteria: 'status:completed findings:=0'
+    tags: [{name: clean, color: green}]
+    notify: false
+    enabled: true

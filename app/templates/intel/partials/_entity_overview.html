@@ -1,0 +1,133 @@
+{% from "intel/partials/_entity_type_badge.html" import type_badge_classes %}
+{% from "partials/_severity_macros.html" import sev_pill, sev_dot %}
+{% from "intel/partials/_tag_chip.html" import tag_classes %}
+
+{# The analyst's own words about this entity, first — it is the one section here a human
+   wrote, so it reads before the derived ones. Always rendered, empty state included, so
+   the Edit button stays findable. #}
+<div class="mb-6">
+  {% include "intel/partials/_entity_notes.html" %}
+</div>
+
+<!-- Derived attributes -->
+{#
+  Facts, not labels. This card is what the attribute engine computed for this entity —
+  `attribute_keys()`, straight from `attributes_json` — and the tags in the header are what
+  a rule wrote down. Usually the two agree; when they do not, the gap is the answer: a
+  backfill that has not run, a shared rule somebody edited or switched off, a tag somebody
+  deleted. Rendering this card from the rules would hide exactly that.
+
+  Neutral chips whose text is the key, each linking to the `attr:` filter it *is*. Rules are
+  rows whose criteria do not name attributes, so there is no rule name or colour to borrow
+  and no reason to dress a fact as a label.
+#}
+{% if attribute_keys %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+  <h2 class="text-sm font-medium text-gray-400 mb-4">Attributes <span class="text-gray-600 font-normal ml-1">· what the engine derived</span></h2>
+  <div class="flex flex-wrap gap-2">
+    {% for key in attribute_keys %}
+    <a href="/intel?q=attr:{{ key | urlencode }}" class="lt-chip lt-chip--square lt-chip--btn hover:brightness-125 font-mono {{ tag_classes('gray') }}"
+       title="Show every entity with this attribute">attr:{{ key }}</a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Associated entities (typed relationships, curated per entity type) -->
+{% if associated_groups %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+  <h2 class="text-sm font-medium text-gray-400 mb-4">
+    Associated Entities
+    <span class="text-gray-600 font-normal ml-1">· from typed event relationships</span>
+  </h2>
+  <div class="space-y-3">
+    {% for g in associated_groups %}
+    <div class="flex flex-wrap items-baseline gap-x-3 gap-y-2">
+      <span class="text-xs text-gray-500 w-36 flex-shrink-0">{{ g.label }}</span>
+      <div class="flex flex-wrap gap-2 flex-1 min-w-0">
+        {% for r in g.rows %}
+        <a href="/intel/entities/{{ r.entity.id }}"
+           class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition text-xs
+                  {{ type_badge_classes(r.entity.entity_type) }}
+                  hover:brightness-125"
+           title="{{ r.entity.value }} (observed {{ r.occurrence_count }} time{{ 's' if r.occurrence_count != 1 else '' }})">
+          <span class="font-mono truncate max-w-[180px]">{{ r.entity.value }}</span>
+          <span class="opacity-50 flex-shrink-0">&times;{{ r.occurrence_count }}</span>
+        </a>
+        {% endfor %}
+        {% if g.overflow %}
+        <button type="button" @click="select('relationships')"
+                class="inline-flex items-center px-2.5 py-1.5 rounded-lg border border-gray-700 bg-gray-800
+                       text-xs text-gray-400 hover:text-white hover:border-gray-500 transition"
+                title="Show all on the Relationships tab">
+          +{{ g.overflow }} more
+        </button>
+        {% endif %}
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Threat Context -->
+{% if threat_context and threat_context.categories %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+  <h2 class="text-sm font-medium text-gray-400 mb-4 flex items-center gap-2">
+    Threat Context
+    <span class="text-gray-600 font-normal">· behavioral indicators from linked jobs</span>
+    {% if threat_context.max_severity %}
+    <span class="ml-auto text-xs px-2 py-0.5 rounded border {{ sev_pill(threat_context.max_severity) }}">
+      {{ threat_context.max_severity | capitalize }}
+    </span>
+    {% endif %}
+  </h2>
+  <div class="flex flex-wrap gap-2">
+    {% for cat in threat_context.categories %}
+    {#- Classes come from `tag_classes`, not `bg-{{ cat.color }}-900/30`: Tailwind's
+        scanner never sees an interpolated name, and the safelist covered neither the /30
+        opacity nor the red/amber/gray that THREAT_CATEGORY_META actually uses — so in a
+        production CSS build (./logstotal css:build) these chips rendered with no colour at all. -#}
+    <span class="inline-flex items-center gap-2 px-3 py-2 rounded-lg border text-xs {{ tag_classes(cat.color) }}"
+       title="{{ cat.label }}: seen in {{ cat.job_count }} linked job{{ 's' if cat.job_count != 1 else '' }}">
+      <span class="font-medium">{{ cat.label }}</span>
+      <span class="opacity-60">&times;{{ cat.job_count }} job{{ 's' if cat.job_count != 1 else '' }}</span>
+      <span class="w-1.5 h-1.5 rounded-full flex-shrink-0 {{ sev_dot(cat.severity) }}"></span>
+    </span>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Live enrichment (lazy) -->
+<div hx-get="/intel/entities/{{ entity.id }}/enrichment-partial" hx-trigger="load" hx-swap="innerHTML"></div>
+
+<!-- Co-occurring entities -->
+{% if co_occurring %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+  <h2 class="text-sm font-medium text-gray-400 mb-4">
+    Co-occurring Entities
+    <span class="text-gray-600 font-normal ml-1">· appear in the same analysis jobs</span>
+  </h2>
+  <div class="flex flex-wrap gap-2">
+    {% for co_id, co_value, co_type, shared_count in co_occurring %}
+    <a href="/intel/entities/{{ co_id }}"
+       class="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg border transition text-xs
+              {{ type_badge_classes(co_type) }}
+              hover:brightness-125"
+       title="{{ co_value }} ({{ shared_count }} shared job{{ 's' if shared_count != 1 else '' }})">
+      <span class="font-mono truncate max-w-[180px]">{{ co_value }}</span>
+      <span class="opacity-50 flex-shrink-0">&times;{{ shared_count }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}
+
+<!-- Linked jobs -->
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+  <h2 class="text-sm font-medium text-gray-400 mb-4">Linked Jobs</h2>
+  <div id="entity-jobs-region">
+    {% include "intel/partials/_entity_jobs.html" %}
+  </div>
+</div>

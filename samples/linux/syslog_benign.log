@@ -1,0 +1,18 @@
+Feb 14 06:25:01 app02 CRON[4412]: (root) CMD (/usr/local/bin/backup.sh)
+Feb 14 06:25:01 app02 systemd[1]: Starting Rotate log files...
+Feb 14 06:25:02 app02 systemd[1]: logrotate.service: Deactivated successfully.
+Feb 14 06:25:02 app02 systemd[1]: Finished Rotate log files.
+Feb 14 06:30:14 app02 sshd[4501]: Accepted publickey for deploy from 10.20.0.14 port 49882 ssh2: RSA SHA256:9xM+
+Feb 14 06:30:14 app02 systemd-logind[812]: New session 43 of user deploy.
+Feb 14 06:30:15 app02 sudo[4530]:   deploy : TTY=pts/0 ; PWD=/home/deploy ; USER=root ; COMMAND=/usr/bin/systemctl restart nginx
+Feb 14 06:30:15 app02 systemd[1]: Stopping nginx - high performance web server...
+Feb 14 06:30:16 app02 systemd[1]: Started nginx - high performance web server.
+Feb 14 06:31:40 app02 sshd[4501]: Received disconnect from 10.20.0.14 port 49882:11: disconnected by user
+Feb 14 06:31:40 app02 systemd-logind[812]: Session 43 logged out. Waiting for processes to exit.
+Feb 14 07:00:01 app02 CRON[4720]: (www-data) CMD (php /var/www/app/cron/queue-worker.php)
+Feb 14 07:00:02 app02 postfix/smtpd[4733]: connect from mail.partner.example[198.51.100.24]
+Feb 14 07:00:02 app02 postfix/smtpd[4733]: disconnect from mail.partner.example[198.51.100.24]
+Feb 14 07:05:33 app02 kernel: [720144.201] EXT4-fs (vda1): mounted filesystem with ordered data mode.
+Feb 14 07:17:09 app02 systemd[1]: apt-daily.service: Deactivated successfully.
+Feb 14 08:00:01 app02 CRON[5104]: (root) CMD (test -x /usr/sbin/anacron || run-parts --report /etc/cron.hourly)
+Feb 14 08:42:55 app02 chronyd[788]: Selected source 162.159.200.1 (time.cloudflare.com)

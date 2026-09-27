@@ -1,0 +1,915 @@
+{# Hoisted above <head>: the conditional graph.js tag in <head> needs nav_path,
+   and the nav highlighting further down uses the same value. #}
+{% set nav_path = request.url.path if request else '/' %}
+<!DOCTYPE html>
+<html lang="en" class="h-full">
+<head>
+  <meta charset="UTF-8">
+  {# Fixed-width by construction: the stylesheet carries no @media rules, so
+     `width=device-width` would hand a phone the desktop layout at its own width and break
+     it rather than reflow it. A desktop browser at 1024px or wider is a documented
+     requirement — see docs/limitations.md. #}
+  <meta name="viewport" content="width=1024">
+  <title>{% block title %}LogsTotal{% endblock %}</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🔍</text></svg>">
+  {# themes.css MUST load before Tailwind so --ui-gray-* vars are defined when
+     Tailwind utilities resolve. #}
+  <link rel="stylesheet" href="/static/themes.css?v={{ asset_version('app/static/themes.css') }}">
+  <link rel="stylesheet" href="/static/vendor/prism-tomorrow.min.css?v={{ app_version }}">
+  <!-- TAILWIND:START -->
+  <script src="/static/vendor/tailwind.js"></script>
+  <script>
+    // Dev mode (Play CDN). Mirror the palette in tailwind.config.js so
+    // gray-* utilities resolve through the theme CSS vars.
+    tailwind.config = {
+      theme: {
+        extend: {
+          colors: {
+            brand: { 500: '#3b82f6', 600: '#2563eb' },
+            gray: {
+              50:  'rgb(var(--ui-gray-50)  / <alpha-value>)',
+              100: 'rgb(var(--ui-gray-100) / <alpha-value>)',
+              200: 'rgb(var(--ui-gray-200) / <alpha-value>)',
+              300: 'rgb(var(--ui-gray-300) / <alpha-value>)',
+              400: 'rgb(var(--ui-gray-400) / <alpha-value>)',
+              500: 'rgb(var(--ui-gray-500) / <alpha-value>)',
+              600: 'rgb(var(--ui-gray-600) / <alpha-value>)',
+              700: 'rgb(var(--ui-gray-700) / <alpha-value>)',
+              800: 'rgb(var(--ui-gray-800) / <alpha-value>)',
+              900: 'rgb(var(--ui-gray-900) / <alpha-value>)',
+              950: 'rgb(var(--ui-gray-950) / <alpha-value>)',
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <!-- TAILWIND:END -->
+  <script src="/static/vendor/htmx.min.js?v={{ app_version }}"></script>
+  <script src="/static/vendor/htmx-ext-alpine-morph.js?v={{ app_version }}"></script>
+  {# Our own JS MUST come before alpine.min.js.
+
+     Alpine's CDN build ends with `queueMicrotask(() => Alpine.start())`, and the HTML
+     spec runs a microtask checkpoint after each script executes — so Alpine walks the
+     DOM and evaluates every `x-data` in the microtask immediately after its own script,
+     which is *before* any later deferred script has run. A component factory defined in
+     a deferred script placed after Alpine is therefore undefined exactly when it is
+     needed ("resourceTabs is not defined"). Deferred scripts execute in document order, so
+     listing ours first is what guarantees the factories exist.
+
+     Page-local factories declared in inline <script> blocks are safe either way: inline
+     scripts execute during parsing, before every deferred script. #}
+  <script defer src="/static/app.js?v={{ asset_version('app/static/app.js') }}"></script>
+  {# Renders ```mermaid blocks in analyst prose (AI analyses, case notes, comments).
+     `data-mermaid-src` is how the 3.5 MB vendor bundle gets its versioned URL without the
+     script guessing at one — it is fetched lazily, only when a diagram is actually present,
+     so a page without one pays nothing. docs/index.html loads mermaid eagerly instead;
+     there, diagrams are the content. #}
+  <script defer
+          src="/static/mermaid-render.js?v={{ asset_version('app/static/mermaid-render.js') }}"
+          data-mermaid-src="/static/vendor/mermaid.min.js?v={{ app_version }}"></script>
+  {# Relationship graph — entity detail and case detail only. ONE block, in dependency
+     order: the vendor bundles first (our modules read `window.Sigma` / `window.graphology`
+     / `window.graphologyLibrary`), then our four files, then Alpine.
+
+     Deferred scripts run in document order, so one list is the whole ordering guarantee;
+     two blocks drift. #}
+  {% if nav_path.startswith('/intel/entities/') or nav_path.startswith('/intel/cases/') %}
+  <script defer src="/static/vendor/graphology.umd.min.js?v={{ app_version }}"></script>
+  <script defer src="/static/vendor/graphology-library.min.js?v={{ app_version }}"></script>
+  <script defer src="/static/vendor/sigma.min.js?v={{ app_version }}"></script>
+  <script defer src="/static/graph-view.js?v={{ asset_version('app/static/graph-view.js') }}"></script>
+  <script defer src="/static/graph-algo.js?v={{ asset_version('app/static/graph-algo.js') }}"></script>
+  <script defer src="/static/graph-render.js?v={{ asset_version('app/static/graph-render.js') }}"></script>
+  <script defer src="/static/graph.js?v={{ asset_version('app/static/graph.js') }}"></script>
+  {% endif %}
+  {# Events timeline — job detail and case detail only. Same before-Alpine rule as above. #}
+  {% if nav_path.startswith('/jobs/') or nav_path.startswith('/intel/cases/') %}
+  <script defer src="/static/timeline.js?v={{ asset_version('app/static/timeline.js') }}"></script>
+  <script defer src="/static/timeline-canvas.js?v={{ asset_version('app/static/timeline-canvas.js') }}"></script>
+  {% endif %}
+  <script defer src="/static/vendor/alpine-morph.min.js?v={{ app_version }}"></script>
+  <script defer src="/static/vendor/alpine.min.js?v={{ app_version }}"></script>
+  <script>
+    document.addEventListener('alpine:init', () => {
+      // State that must survive an HTMX swap of the element that renders it lives in a
+      // store, not in the DOM: `openLogs` keeps task-log disclosures open across the job
+      // page's 3s morph poll, and `jobSelection` keeps jobs-list checkboxes ticked across
+      // the 5s tbody swap. The global htmx:afterSwap -> Alpine.initTree below re-binds
+      // the new nodes against these stores.
+      Alpine.store('openLogs', {});
+      Alpine.store('jobSelection', {
+        ids: [],
+        has(id) { return this.ids.includes(id); },
+        toggle(id) {
+          const i = this.ids.indexOf(id);
+          if (i === -1) this.ids.push(id); else this.ids.splice(i, 1);
+        },
+        clear() { this.ids = []; },
+        // Select-all is derived from the rows currently in the DOM, not a server-passed
+        // id list, so it stays correct after the jobs table's 5s poll swaps the tbody.
+        _visibleIds() {
+          return Array.from(document.querySelectorAll('[data-job-select]'))
+            .map(el => parseInt(el.dataset.jobSelect, 10))
+            .filter(n => !Number.isNaN(n));
+        },
+        allVisibleSelected() {
+          const vis = this._visibleIds();
+          return vis.length > 0 && vis.every(id => this.has(id));
+        },
+        setAllVisible(on) {
+          this._visibleIds().forEach(id => {
+            const i = this.ids.indexOf(id);
+            if (on && i === -1) this.ids.push(id);
+            if (!on && i !== -1) this.ids.splice(i, 1);
+          });
+        },
+      });
+      // The AI Analysis pane morph-swaps every 3s while a run is in flight, so both halves
+      // of its UI state have to live out here: which runs are ticked for deletion, and
+      // whether the verbose log is expanded. A separate store from openLogs/jobSelection
+      // because AI run ids, TaskResult ids and job ids are three different namespaces —
+      // sharing one map would have a run silently open a task's log.
+      Alpine.store('aiRuns', {
+        open: {},
+        prompt: {},
+        ids: [],
+        isOpen(id) { return !!this.open[id]; },
+        toggleOpen(id) { this.open[id] = !this.open[id]; },
+        isPromptOpen(id) { return !!this.prompt[id]; },
+        togglePrompt(id) { this.prompt[id] = !this.prompt[id]; },
+        has(id) { return this.ids.includes(id); },
+        toggle(id) {
+          const i = this.ids.indexOf(id);
+          if (i === -1) this.ids.push(id); else this.ids.splice(i, 1);
+        },
+        clear() { this.ids = []; },
+        // Derived from the DOM, not a server-passed list, so a poll that re-renders the
+        // history with one run fewer cannot leave a deleted id ticked. Same rule as
+        // jobSelection._visibleIds.
+        _visibleIds() {
+          return Array.from(document.querySelectorAll('[data-ai-select]'))
+            .map(el => parseInt(el.dataset.aiSelect, 10))
+            .filter(n => !Number.isNaN(n));
+        },
+        allVisibleSelected() {
+          const vis = this._visibleIds();
+          return vis.length > 0 && vis.every(id => this.has(id));
+        },
+        setAllVisible(on) {
+          this._visibleIds().forEach(id => {
+            const i = this.ids.indexOf(id);
+            if (on && i === -1) this.ids.push(id);
+            if (!on && i !== -1) this.ids.splice(i, 1);
+          });
+        },
+        // Drop ids that are no longer on screen. Deleting runs is the case that needs it:
+        // the rows go away, but the store is deliberately outside the swapped markup, so
+        // the ticks it holds survive the very thing that made them meaningless — leaving a
+        // "Delete 2" bar for two runs that no longer exist. Called after every swap, and
+        // only when the pane is actually present, so a page without it cannot clear a
+        // selection that is merely on another tab.
+        pruneToVisible() {
+          if (!document.getElementById('ai-analysis-region')) return;
+          const vis = this._visibleIds();
+          this.ids = this.ids.filter(id => vis.includes(id));
+        },
+      });
+      // Same reasoning as jobSelection: #entity-table-region is swapped on every filter
+      // change, so selection ticked into the DOM would be wiped by the next keystroke.
+      Alpine.store('entitySelection', {
+        ids: [],
+        has(id) { return this.ids.includes(id); },
+        toggle(id) {
+          const i = this.ids.indexOf(id);
+          if (i === -1) this.ids.push(id); else this.ids.splice(i, 1);
+        },
+        clear() { this.ids = []; },
+        _visibleIds() {
+          return Array.from(document.querySelectorAll('[data-entity-select]'))
+            .map(el => parseInt(el.dataset.entitySelect, 10))
+            .filter(n => !Number.isNaN(n));
+        },
+        allVisibleSelected() {
+          const vis = this._visibleIds();
+          return vis.length > 0 && vis.every(id => this.has(id));
+        },
+        setAllVisible(on) {
+          this._visibleIds().forEach(id => {
+            const i = this.ids.indexOf(id);
+            if (on && i === -1) this.ids.push(id);
+            if (!on && i !== -1) this.ids.splice(i, 1);
+          });
+        },
+      });
+      // `timelineRange` keeps each events-timeline's zoom across a swap of the element
+      // that renders it. The case Timeline tab's filter form targets #case-timeline-region
+      // with hx-swap="innerHTML", so every filter change remounts the canvas — without the
+      // store, zooming into a burst and then narrowing to one job threw you back to the
+      // full span. Keyed by surface ("job:12" / "case:3") so two pages never collide.
+      // `rulesFilter` is the search box over /intel/rules. It is a store for the reason
+      // jobSelection is: a save, a delete or an import swaps the whole #rules-region with
+      // outerHTML, so a query held in the markup would be erased by the very action you ran
+      // while filtering. (A toggle and a webhook test replace one button and one line, not
+      // the region.) Rows
+      // carry `data-rule-search` and ask the store whether they match, so the set of rows is
+      // read from the DOM after each swap rather than remembered across one.
+      Alpine.store('rulesFilter', {
+        // `q` is kept **raw**, exactly as typed, because the box binds to it: normalising
+        // on the way in would swallow the space you just pressed and lower-case the
+        // capitals as you typed them. Normalising happens where the comparison does.
+        q: '',
+        set(value) { this.q = value || ''; },
+        clear() { this.q = ''; },
+        matches(el) {
+          const needle = this.q.trim().toLowerCase();
+          if (!needle) return true;
+          const hay = (el && el.dataset ? el.dataset.ruleSearch : '') || '';
+          // Every space-separated word must appear, so "lolbas domain" narrows rather than
+          // widening — the same AND-by-default the condition grammar itself uses.
+          return needle.split(/\s+/).every(w => hay.includes(w));
+        },
+        // How many rows under `rootId` the current query keeps. Used for a section's count
+        // pill and its empty state, so a filter that hides every row does not leave the
+        // heading claiming thirty-six of them over a blank page.
+        //
+        // It re-runs `matches()` over `data-rule-search` rather than counting what is
+        // visible: `offsetParent` would be read in the same tick the rows' own `x-show`
+        // effects run, and Alpine does not order those against this one. The attribute is
+        // already there and cannot be mid-update.
+        visible(rootId) {
+          const root = document.getElementById(rootId);
+          if (!root) return 0;
+          let n = 0;
+          for (const el of root.querySelectorAll('[data-rule-search]')) if (this.matches(el)) n++;
+          return n;
+        },
+      });
+      Alpine.store('timelineRange', {
+        ranges: {},
+        get(key) { return this.ranges[key] || null; },
+        set(key, range) { this.ranges[key] = range; },
+        clear(key) { delete this.ranges[key]; },
+      });
+    });
+  </script>
+  <style>
+    [x-cloak] { display: none !important; }
+    /* Severity colors are themed via CSS vars in /static/themes.css.
+     * The accent left-bar makes severities scannable where the tinted
+     * backgrounds alone sit too close together to tell apart. */
+    .severity-critical { background-color: var(--sev-critical-bg); border-color: var(--sev-critical-border); color: var(--sev-critical-text); border-left: 3px solid var(--sev-critical-accent); }
+    .severity-high     { background-color: var(--sev-high-bg);     border-color: var(--sev-high-border);     color: var(--sev-high-text);     border-left: 3px solid var(--sev-high-accent); }
+    .severity-medium   { background-color: var(--sev-medium-bg);   border-color: var(--sev-medium-border);   color: var(--sev-medium-text);   border-left: 3px solid var(--sev-medium-accent); }
+    .severity-low      { background-color: var(--sev-low-bg);      border-color: var(--sev-low-border);      color: var(--sev-low-text);      border-left: 3px solid var(--sev-low-accent); }
+    .severity-info     { background-color: var(--sev-info-bg);     border-color: var(--sev-info-border);     color: var(--sev-info-text);     border-left: 3px solid var(--sev-info-accent); }
+
+    /* Status badges — themed via --badge-* vars in /static/themes.css.
+     * Used by partials/_status_badge.html. */
+    .badge-base      { display: inline-flex; align-items: center; gap: 0.25rem; padding: 0.125rem 0.5rem; border-radius: 9999px; font-size: 0.75rem; line-height: 1rem; border-width: 1px; border-style: solid; }
+    .badge-dot       { width: 0.375rem; height: 0.375rem; border-radius: 9999px; flex-shrink: 0; }
+    .badge-completed { background-color: var(--badge-completed-bg); color: var(--badge-completed-text); border-color: var(--badge-completed-border); }
+    .badge-completed .badge-dot { background-color: var(--badge-completed-dot); }
+    .badge-running   { background-color: var(--badge-running-bg);   color: var(--badge-running-text);   border-color: var(--badge-running-border); }
+    .badge-running .badge-dot   { background-color: var(--badge-running-dot); }
+    .badge-pending   { background-color: var(--badge-pending-bg);   color: var(--badge-pending-text);   border-color: var(--badge-pending-border); }
+    .badge-pending .badge-dot   { background-color: var(--badge-pending-dot); }
+    .badge-failed    { background-color: var(--badge-failed-bg);    color: var(--badge-failed-text);    border-color: var(--badge-failed-border); }
+    .badge-failed .badge-dot    { background-color: var(--badge-failed-dot); }
+    .badge-partial   { background-color: var(--badge-partial-bg);   color: var(--badge-partial-text);   border-color: var(--badge-partial-border); }
+    .badge-partial .badge-dot   { background-color: var(--badge-partial-dot); }
+    .badge-cancelled { background-color: var(--badge-cancelled-bg); color: var(--badge-cancelled-text); border-color: var(--badge-cancelled-border); }
+    .badge-cancelled .badge-dot { background-color: var(--badge-cancelled-dot); }
+
+    /* MITRE heatmap cells — per-tactic --cell-rgb-list/--cell-color set inline
+     * on the element; alphas come from per-theme --heatmap-* vars. */
+    .heatmap-cell-empty { background-color: rgba(var(--cell-rgb-list), var(--heatmap-alpha-empty)); border-color: rgba(var(--cell-rgb-list), var(--heatmap-alpha-low)); color: rgba(var(--cell-rgb-list), var(--heatmap-text-empty)); }
+    .heatmap-cell-low   { background-color: rgba(var(--cell-rgb-list), var(--heatmap-alpha-low));   border-color: rgba(var(--cell-rgb-list), var(--heatmap-border-low)); color: var(--cell-color); }
+    .heatmap-cell-mid   { background-color: rgba(var(--cell-rgb-list), var(--heatmap-alpha-mid));   border-color: var(--cell-color); color: #ffffff; }
+    .heatmap-cell-high  { background-color: var(--cell-color); border-color: var(--cell-color); color: #ffffff; }
+
+    /* ── Control primitives (.lt-*) ────────────────────────────────────────────
+     * Geometry lives here, in CSS, instead of in Tailwind class strings. A *derived*
+     * height — line-height + 2*py + 2*border — lets button recipes land at different
+     * heights (a primary button that omits `border` sits 2px shorter than the Cancel
+     * beside it). Here `height` is declared, so font-size and padding cannot shift it.
+     *
+     * Colour comes from the --lt-* vars in /static/themes.css, so a control never
+     * hard-codes a palette value. This block is inline in base.html (like .badge-base
+     * and .severity-*), which means it works in BOTH dev (Play CDN) and prod
+     * (css:build) with no rebuild — and it sidesteps the Tailwind scanner and safelist
+     * entirely.
+     *
+     * Scope is controls only — buttons, fields, chips, checkboxes, and the bar that
+     * lines them up — plus ONE layout exception, .lt-scroll (see its own note below).
+     * Panels, layout, typography and every colour *palette* stay Tailwind — chip
+     * geometry is .lt-chip, chip colour is still tag_classes().
+     *
+     * RULE: when you add .lt-btn/.lt-field, delete every utility it replaces
+     * (px-* py-* text-xs|text-sm rounded* border inline-flex items-center gap-*).
+     * The Play CDN injects its sheet at runtime, so a leftover utility can win at
+     * equal specificity. tests/test_control_primitives.py enforces this. */
+    .lt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
+
+    .lt-btn {
+      --lt-h: 1.875rem; --lt-px: 0.75rem; --lt-fs: 0.75rem; --lt-radius: 0.5rem;
+      display: inline-flex; align-items: center; justify-content: center; gap: 0.375rem;
+      height: var(--lt-h); padding: 0 var(--lt-px);
+      font-size: var(--lt-fs); line-height: 1; font-weight: 500; white-space: nowrap;
+      border-radius: var(--lt-radius); border: 1px solid var(--lt-border);
+      background-color: var(--lt-surface); color: var(--lt-fg);
+      cursor: pointer; text-decoration: none;
+      transition: background-color .15s, color .15s, border-color .15s;
+    }
+    .lt-btn--xs    { --lt-h: 1.375rem; --lt-px: .5rem;  --lt-fs: .6875rem; --lt-radius: .25rem; }
+    .lt-btn--sm    { --lt-h: 1.5rem;   --lt-px: .5rem;  --lt-fs: .6875rem; --lt-radius: .375rem; }
+    .lt-btn--lg    { --lt-h: 2.125rem; --lt-px: 1rem;   --lt-fs: .875rem; }
+    .lt-btn--block { width: 100%; }
+    .lt-btn--pill  { --lt-radius: 9999px; }
+    /* Nav chrome: matches the 28px box of the `p-1.5` + 16px-icon buttons beside it. */
+    .lt-btn--nav   { --lt-h: 1.75rem; --lt-px: .375rem; --lt-fs: .875rem; --lt-radius: .375rem; }
+    .lt-btn:hover  { background-color: var(--lt-surface-hover); color: var(--lt-fg-strong); border-color: var(--lt-border-strong); }
+    .lt-btn--primary       { background-color: var(--lt-accent); border-color: var(--lt-accent); color: var(--lt-accent-fg); }
+    .lt-btn--primary:hover { background-color: var(--lt-accent-hover); border-color: var(--lt-accent-hover); color: var(--lt-accent-fg); }
+    .lt-btn--danger        { background-color: var(--lt-danger); border-color: var(--lt-danger); color: #fff; }
+    .lt-btn--danger:hover  { background-color: var(--lt-danger-hover); border-color: var(--lt-danger-hover); color: #fff; }
+    .lt-btn--ghost         { background-color: transparent; border-color: transparent; color: var(--lt-fg-muted); }
+    .lt-btn--ghost:hover   { background-color: var(--lt-surface); color: var(--lt-fg-strong); border-color: transparent; }
+    .lt-btn--active        { background-color: var(--lt-active-bg); border-color: var(--lt-active-border); color: var(--lt-active-fg); }
+    .lt-btn--active:hover  { background-color: var(--lt-active-bg); border-color: var(--lt-active-border); color: var(--lt-active-fg); }
+    .lt-btn--warn          { background-color: var(--lt-warn-bg); border-color: var(--lt-warn-border); color: var(--lt-warn-fg); }
+    .lt-btn:disabled, .lt-btn[disabled] { opacity: .4; cursor: not-allowed; }
+
+    /* One copy button. Nine templates hand-rolled this control with an Alpine
+     * `{ copied: false }`, a `$refs` lookup and two inline SVGs, at three different
+     * overlay offsets — exactly the drift `count_pill` and `.lt-btn` each exist to end.
+     * The markup comes from `partials/_copy_button.html`, the click is handled once in
+     * app.js, and the copy itself goes through `ltCopy()` so it works on a page served
+     * over plain HTTP, where `navigator.clipboard` does not exist. */
+    .lt-copy {
+      display: inline-flex; align-items: center; justify-content: center; gap: .375rem;
+      padding: .25rem; border-radius: .25rem; flex-shrink: 0;
+      font-size: .6875rem; line-height: 1; white-space: nowrap;
+      color: var(--lt-fg-muted); background-color: transparent; border: 0;
+      cursor: pointer; transition: background-color .15s, color .15s;
+    }
+    .lt-copy:hover { color: var(--lt-fg-strong); background-color: var(--lt-surface-hover); }
+    /* Floating over a code block. Every such block reserves `pr-10`, so a single offset
+     * serves all of them. */
+    .lt-copy--overlay {
+      position: absolute; top: .5rem; right: 1rem; z-index: 10;
+      padding: .375rem;
+      background-color: rgb(var(--ui-gray-800) / .8);
+    }
+    /* The process tree's per-node control: one line of <code> reserving `pr-8`, rendered
+     * up to 2,000 times, so it is deliberately the tightest box in the set. */
+    .lt-copy--tight {
+      position: absolute; top: .25rem; right: .25rem;
+      width: 1.5rem; height: 1.5rem; padding: 0;
+    }
+    /* A text link rather than a box — the AI pane's "Copy Markdown", which sits in a row
+     * of baseline-aligned actions and would read as a button among links. */
+    .lt-copy--bare { padding: 0; }
+    .lt-copy--bare:hover { background-color: transparent; }
+
+    .lt-field {
+      --lt-h: 1.875rem; --lt-px: 0.625rem; --lt-fs: 0.75rem; --lt-radius: 0.5rem;
+      height: var(--lt-h); padding: 0 var(--lt-px);
+      /* `line-height: normal`, not 1. An <input> clips its content to the content box,
+       * and at `line-height: 1` the glyph box is exactly 1em — so the tails of g/y/p/q
+       * were cut off. Height is still DECLARED above, so this cannot shift the control;
+       * it only gives the text somewhere to hang. Same reason on .lt-chip/.lt-combo*. */
+      font-size: var(--lt-fs); line-height: normal;
+      border-radius: var(--lt-radius); border: 1px solid var(--lt-border);
+      background-color: var(--lt-surface-sunken); color: var(--lt-fg-strong);
+      outline: none; transition: border-color .15s, box-shadow .15s;
+    }
+    .lt-field--sm { --lt-h: 1.5rem;   --lt-px: .5rem;   --lt-fs: .6875rem; --lt-radius: .375rem; }
+    .lt-field--lg { --lt-h: 2.125rem; --lt-px: .75rem;  --lt-fs: .875rem; }
+    /* Room for an absolutely-positioned clear button. A Tailwind `pr-8` alongside
+     * .lt-field would resolve differently in dev and prod: the Play CDN injects its
+     * sheet at runtime (so the utility wins), but the built stylesheet is linked
+     * BEFORE this <style> block (so .lt-field's shorthand `padding` wins and silently
+     * eats the reserved space). Own it here instead. */
+    .lt-field--clearable   { padding-right: 2rem; }
+    .lt-field:focus        { border-color: var(--lt-accent); box-shadow: 0 0 0 1px var(--lt-accent); }
+    .lt-field::placeholder { color: var(--lt-fg-muted); }
+    textarea.lt-field      { height: auto; padding: .5rem var(--lt-px); line-height: 1.5; }
+    select.lt-field        { cursor: pointer; }
+
+    /* ── Condition editor ────────────────────────────────────────────────────────────
+       A highlight overlay behind a real <textarea>. The textarea keeps its `name` and every
+       htmx attribute, so what the form serialises is still the field the analyst typed into
+       — nothing is copied into a hidden input on a scheduler htmx does not wait for.
+
+       The illusion holds on exactly one condition: **every metric that affects line
+       breaking is declared once, here, and inherited by both layers**. Font, size,
+       line-height, padding, letter-spacing, white-space and word-break all come off
+       `.lt-cond` itself; a value set on only one layer moves one layer's wrap points and
+       the colours slide out from under the glyphs. That is also why the textarea does not
+       wear `.lt-field`: its padding is not this padding, and the two would fight.
+
+       The caret and selection stay visible via `color: transparent` +
+       `-webkit-text-fill-color: transparent` with an explicit `caret-color` — hiding the
+       text with `opacity: 0` would take the caret with it. */
+    .lt-cond {
+      /* Declared, not borrowed. `--lt-px` and `--lt-radius` are per-control knobs that each
+         `.lt-*` block sets for itself — they are not on `:root`, so reading one here without
+         declaring it makes the whole `padding` shorthand invalid at computed-value time and
+         it silently resolves to 0. Which is exactly what happened: both layers came out with
+         no padding at all, and `test_every_lt_var_read_by_base_html_is_defined` cannot catch
+         it, because it deliberately excludes these four local knobs. */
+      --lt-px: 0.625rem; --lt-radius: 0.5rem;
+      position: relative;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: .8125rem;
+      line-height: 1.6;
+      letter-spacing: 0;
+      border-radius: var(--lt-radius);
+      border: 1px solid var(--lt-border);
+      background: var(--lt-surface-sunken);
+      /* NOT `white-space: pre-wrap` here, on pain of a mystery. The container's own child
+         nodes include the template's indentation between <pre> and <textarea>, and under
+         pre-wrap those whitespace-only text nodes render as real lines — measured at 106 px
+         of empty space below an otherwise correct field. It belongs on the layers, which
+         hold text that genuinely must keep its spaces. */
+    }
+    .lt-cond:focus-within { border-color: var(--lt-accent); box-shadow: 0 0 0 1px var(--lt-accent); }
+    /* Both layers, and the padding lives HERE rather than on the container: the container
+       offsets its children, so padding in both places would offset the overlay twice and
+       every glyph would sit one indent right of its colour. */
+    .lt-cond__hl, .lt-cond__input {
+      margin: 0;
+      border: 0;
+      font: inherit;
+      letter-spacing: inherit;
+      line-height: inherit;
+      /* Declared, not inherited, for the reason above: the container must not carry these.
+         A comma-separated cidr: list is one unbroken token, so without `anywhere` it cannot
+         wrap and the field scrolls sideways forever. `anywhere` rather than `break-all` so
+         a space is still preferred wherever one exists. */
+      white-space: pre-wrap;
+      overflow-wrap: anywhere;
+      /* Flush left on every line, and no hanging indent. There was one — a negative
+         `text-indent` cancelling an extra `padding-left` — so that a soft-wrapped
+         500-character cidr: would read as one indented run. It could not work: CSS
+         indents the first line of the BOX, not the first line after each forced break
+         (`text-indent: … each-line` says that and is implemented nowhere), so a newline
+         the analyst typed was indented exactly like a wrap the browser chose. It read as
+         Enter inserting a tab, which is the one thing it never did. A newline is just
+         whitespace to both grammars, so writing one term per line is a real thing to do
+         here — and the paragraph it produced had to look like a paragraph. */
+      padding: .5rem var(--lt-px);
+    }
+    /* The overlay is the one in normal flow, and the textarea floats on top of it.
+       That inversion is what makes the field auto-size with no JavaScript: a <pre> grows
+       with its content, so the container's height is the content's height and the textarea
+       simply fills it.
+
+       The obvious arrangement — textarea in flow, JS setting `height = scrollHeight` — is
+       wrong here, and quietly. Every one of these fields is born inside a closed <details>
+       or a hidden `x-show`, where `scrollHeight` is 0, so the very first measurement set
+       `height: 0px` and the field was invisible when it was finally opened. */
+    .lt-cond__hl {
+      position: static;
+      pointer-events: none;
+      color: var(--lt-fg);
+      /* An empty condition still has to be a field you can click into. */
+      min-height: calc(1.6em + 1rem);
+      box-sizing: border-box;
+    }
+    .lt-cond__input {
+      position: absolute;
+      inset: 0;
+      width: 100%;
+      height: 100%;
+      resize: none;
+      overflow: hidden;
+      background: transparent;
+      color: transparent;
+      -webkit-text-fill-color: transparent;
+      caret-color: var(--lt-fg-strong);
+      outline: none;
+      box-sizing: border-box;
+    }
+    .lt-cond__input::selection { background: var(--lt-active-bg); -webkit-text-fill-color: var(--lt-fg-strong); }
+    /* Token colours. Literal class names, declared here rather than assembled in the
+       template — `tailwind.config.js` scans templates, so `text-{{ kind }}-300` renders
+       unstyled in a production CSS build however well it works against the dev CDN. */
+    .lt-cond-key   { color: #93c5fd; }
+    .lt-cond-val   { color: #e5e7eb; }
+    .lt-cond-str   { color: #fcd34d; }
+    .lt-cond-re    { color: #f0abfc; }
+    .lt-cond-neg   { color: #fca5a5; font-weight: 600; }
+    .lt-cond-bool  { color: #7dd3fc; font-weight: 600; }
+    .lt-cond-paren { color: #9ca3af; }
+    /* Reserved for what is structurally certain — an unclosed quote, regex or paren. Never
+       for an unknown prefix: `foo:bar` is a valid literal search in both grammars. */
+    .lt-cond-bad   { color: #fca5a5; text-decoration: underline wavy #ef4444; text-underline-offset: 2px; }
+    .lt-label { display: block; font-size: .6875rem; color: var(--lt-fg-muted); margin-bottom: .25rem; }
+
+    /* One labelled control: caption and field on a shared baseline, never wrapping between
+     * themselves. `.lt-label` puts its caption *above* the field, which is right for a form
+     * column and wrong for a dense toolbar — mixing the two is how a checkbox ends up a few
+     * pixels off the selects beside it, needing an `items-end` + `pb-1.5` nudge that then
+     * drifts the moment a font or a control height changes. */
+    .lt-ctl        { display: inline-flex; align-items: center; gap: .375rem; white-space: nowrap; }
+    .lt-ctl__label { font-size: .6875rem; line-height: 1; color: var(--lt-fg-muted); }
+
+    .lt-chip {
+      display: inline-flex; align-items: center; gap: .25rem;
+      height: 1.375rem; padding: 0 .5rem;
+      font-size: .6875rem; line-height: normal; white-space: nowrap;
+      border-radius: 9999px; border-width: 1px; border-style: solid;
+    }
+    .lt-chip--square { border-radius: .25rem; }
+    .lt-chip--btn    { cursor: pointer; transition: color .15s, border-color .15s; }
+
+    /* Tag picker (Select2 shape) — the field chrome, with a pill inside it instead of text.
+       Placement is load-bearing twice over: after `.lt-field` so `min-height` beats its
+       fixed `height`, and after `.lt-chip` so the pill can drop that primitive's own
+       `height: 1.375rem` for one that breathes inside the box. */
+    .lt-combo {
+      --lt-h: 1.875rem; --lt-px: 0.625rem; --lt-fs: 0.75rem; --lt-radius: 0.5rem;
+      display: flex; align-items: center; gap: .25rem; flex-wrap: wrap;
+      min-height: var(--lt-h); padding: .1875rem var(--lt-px);
+      font-size: var(--lt-fs); line-height: normal; cursor: text;
+      border-radius: var(--lt-radius); border: 1px solid var(--lt-border);
+      background-color: var(--lt-surface-sunken); color: var(--lt-fg-strong);
+      transition: border-color .15s, box-shadow .15s;
+    }
+    .lt-combo--open { border-color: var(--lt-accent); box-shadow: 0 0 0 1px var(--lt-accent); }
+    /* The bare input inside the box: no border or background of its own, or the field would
+       appear to contain a second field. */
+    .lt-combo-input {
+      flex: 1 1 4rem; min-width: 3rem;
+      background: transparent; border: 0; outline: none; padding: 0;
+      font-size: inherit; line-height: normal; color: inherit;
+    }
+    .lt-combo-pill {
+      display: inline-flex; align-items: center; gap: .25rem;
+      height: 1.25rem; padding: 0 .5rem; max-width: 100%;
+      font-size: .6875rem; line-height: normal;
+      border-radius: 9999px; border-width: 1px; border-style: solid;
+    }
+    .lt-combo-pill > span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lt-combo-pill button { line-height: 1; cursor: pointer; }
+
+    /* `rounded border-gray-700 bg-gray-950 text-blue-600` is INERT on a native
+     * checkbox: tailwind.config.js has plugins: [], so there is no @tailwindcss/forms
+     * and none of those properties reach the UA-rendered control. Eleven call sites
+     * were styling nothing. accent-color is what actually works. */
+    .lt-check {
+      appearance: none; -webkit-appearance: none;
+      width: .875rem; height: .875rem; flex-shrink: 0; cursor: pointer;
+      border: 1px solid var(--lt-border); border-radius: .25rem;
+      background-color: var(--lt-surface-sunken);
+      display: inline-grid; place-content: center;
+      transition: background-color .15s, border-color .15s;
+    }
+    .lt-check:hover        { border-color: var(--lt-border-strong); }
+    .lt-check:checked      { background-color: var(--lt-accent); border-color: var(--lt-accent); }
+    /* The tick is drawn, not a glyph: a ::before character would inherit the page font and
+     * shift between platforms. */
+    .lt-check:checked::before {
+      content: ""; width: .5rem; height: .5rem;
+      clip-path: polygon(14% 44%, 0 65%, 44% 100%, 100% 16%, 80% 0%, 43% 62%);
+      background-color: var(--lt-accent-fg);
+    }
+    .lt-check:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+
+    /* The "?" that explains a control, and the panel it opens. Eight sites had
+     * hand-written this in TWO geometries (w-4/text-[10px] hover vs w-5/text-[11px]
+     * click) with three panel widths, so "what does this box understand?" looked and
+     * behaved differently depending on which box you asked. One geometry, one trigger.
+     *
+     * CLICK, not hover, and the panel is NOT `pointer-events-none`. A hover panel
+     * cannot be opened on a touch device and cannot be selected from — and these
+     * panels hold query syntax, which is exactly the text people want to copy. */
+    .lt-help-wrap { position: relative; display: inline-flex; vertical-align: middle; }
+    .lt-help {
+      width: 1rem; height: 1rem; flex-shrink: 0; padding: 0;
+      display: inline-flex; align-items: center; justify-content: center;
+      font-size: .625rem; font-weight: 700; line-height: normal;
+      border: 0; border-radius: 9999px;
+      background-color: var(--lt-surface-hover); color: var(--lt-fg-muted);
+      cursor: pointer; transition: background-color .15s, color .15s;
+    }
+    .lt-help:hover { background-color: var(--lt-border-strong); color: var(--lt-fg-strong); }
+    .lt-help[aria-expanded="true"] { background-color: var(--lt-accent); color: var(--lt-accent-fg); }
+    .lt-help:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
+    /* Named widths for the same reason .lt-scroll has named heights: a free choice of
+     * width comes with no rule for picking one. */
+    .lt-help-panel {
+      position: absolute; top: 100%; left: 0; margin-top: .25rem; z-index: 50;
+      width: 18rem; max-width: 90vw; padding: .75rem;
+      border-radius: .5rem; border: 1px solid var(--lt-border-strong);
+      background-color: var(--lt-surface); color: var(--lt-fg);
+      font-size: .75rem; line-height: 1.6; text-align: left; font-weight: 400;
+      box-shadow: 0 20px 25px -5px rgb(0 0 0 / .45), 0 8px 10px -6px rgb(0 0 0 / .35);
+    }
+    .lt-help-panel--md    { width: 22rem; }
+    .lt-help-panel--lg    { width: 26rem; }
+    .lt-help-panel--right { left: auto; right: 0; }
+
+    /* Any panel that opens over the page: dropdowns, pickers, menus. Radius, border
+     * colour, z-index and background are one value each, named once.
+     *
+     * The caller still positions it (`absolute`/`fixed` + edges); everything about how it
+     * LOOKS lives here. `--lt-menu-bg` is themed in themes.css. */
+    .lt-menu {
+      z-index: 40;
+      padding: .25rem 0;
+      border-radius: .75rem;
+      border: 1px solid var(--lt-border);
+      background-color: var(--lt-menu-bg);
+      box-shadow: 0 20px 25px -5px rgb(0 0 0 / .45), 0 8px 10px -6px rgb(0 0 0 / .35);
+    }
+    /* For menus whose own content supplies the padding (a form, a swatch grid). */
+    .lt-menu--flush { padding: 0; }
+
+
+
+    /* ── Table rows: not a class, but a settled convention ────────────────────
+     * The five real table surfaces (jobs, jobs-watching, admin users, admin tasks,
+     * activity) share `w-full text-sm`, `thead.border-b border-gray-800`,
+     * `tr.text-gray-400 text-left`, `th.px-4 py-3 font-medium` and
+     * `tbody.divide-y divide-gray-800`, plus three settled choices:
+     *
+     *   hover      `hover:bg-gray-800/50 transition` — everywhere.
+     *   density    `py-3` by default; `py-2.5` for a long sticky-headed list (the activity
+     *              log). Two densities, chosen deliberately.
+     *   truncation a filename cell is `max-w-[420px]` with an inner `truncate` and a
+     *              `title`.
+     *
+     * These stay Tailwind rather than becoming `.lt-row`: this block is controls only, and
+     * a table row is layout. The rule lives here because this is where someone looks for it.
+     */
+
+    /* ── Bounded lists (.lt-scroll) ────────────────────────────────────────────
+     * The one layout class in this block. Three named sizes make a scroll box's height
+     * a deliberate choice rather than an arbitrary max-h-*. Being CSS rather than Tailwind
+     * also means the arbitrary values stop having to survive the production scan —
+     * `max-h-[34rem]` only exists in the built sheet while some template still spells
+     * it — and the thin scrollbar themed below is inherited for free.
+     *
+     * TWO RULES:
+     *
+     *  1. The pager NEVER goes inside the box. Otherwise you scroll fifty rows to
+     *     reach "Next".
+     *  2. `overflow-hidden` and .lt-scroll NEVER share an element. `overflow-hidden`
+     *     (used for rounded-corner clipping on almost every card here) sets BOTH axes,
+     *     so which one wins is stylesheet-order dependent — and dev disagrees with
+     *     prod, because the Play CDN injects at runtime while the built sheet is
+     *     linked before this <style>. Always: outer `rounded-* overflow-hidden`,
+     *     inner .lt-scroll. tests/test_control_primitives.py enforces this.
+     *
+     * `overscroll-behavior: contain` stops a list that has hit its end from scrolling
+     * the page behind it. */
+    .lt-scroll     { overflow-y: auto; overscroll-behavior: contain; }
+    .lt-scroll--sm { max-height: 14rem; }   /* dropdowns and pickers */
+    .lt-scroll--md { max-height: 26rem; }   /* a list inside a card that holds other content */
+    .lt-scroll--lg { max-height: 34rem; }   /* a tab pane whose whole job is the list */
+
+    /* ── Analyst prose (.lt-prose) ─────────────────────────────────────────────
+     * Rendered Markdown for notes and comment threads. This exists because Tailwind's
+     * preflight resets `ul` to no bullets, `h1`-`h6` to body size and `blockquote` to
+     * nothing — so without it, Markdown renders as one run-together paragraph and looks
+     * broken rather than unstyled. @tailwindcss/typography would do this, but
+     * tailwind.config.js has `plugins: []` and adding one would mean a build step in the
+     * dev (Play CDN) path too. Twenty lines here work in both modes, like .lt-btn.
+     *
+     * Deliberately restrained: this is an incident note, not a blog. Headings step down
+     * gently, there is no drop-cap styling, and the whole thing inherits its colour from
+     * the surrounding card so a note reads as part of the page. */
+    .lt-prose > :first-child { margin-top: 0; }
+    .lt-prose > :last-child  { margin-bottom: 0; }
+    .lt-prose p              { margin: 0 0 .75rem; }
+    .lt-prose h1, .lt-prose h2, .lt-prose h3,
+    .lt-prose h4, .lt-prose h5, .lt-prose h6 {
+      font-weight: 600; color: var(--lt-fg-strong); margin: 1.25rem 0 .5rem; line-height: 1.3;
+    }
+    .lt-prose h1 { font-size: 1.125rem; }
+    .lt-prose h2 { font-size: 1rem; }
+    .lt-prose h3, .lt-prose h4, .lt-prose h5, .lt-prose h6 { font-size: .9375rem; }
+    .lt-prose ul, .lt-prose ol { margin: 0 0 .75rem; padding-left: 1.25rem; }
+    .lt-prose ul { list-style: disc; }
+    .lt-prose ol { list-style: decimal; }
+    .lt-prose li { margin: .125rem 0; }
+    .lt-prose li > ul, .lt-prose li > ol { margin-bottom: 0; }
+    .lt-prose a { color: var(--lt-accent); text-decoration: underline; text-underline-offset: 2px; }
+    .lt-prose a:hover { color: var(--lt-accent-hover); }
+    .lt-prose strong { font-weight: 600; color: var(--lt-fg-strong); }
+    .lt-prose em { font-style: italic; }
+    /* Inline code and fenced blocks. An IOC pasted into a note is the single most common
+     * thing anyone wraps in backticks here, so it has to stay legible and selectable. */
+    .lt-prose code {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8125em;
+      background-color: var(--lt-surface-sunken); border: 1px solid var(--lt-border);
+      border-radius: .25rem; padding: .0625rem .25rem; word-break: break-word;
+    }
+    .lt-prose pre {
+      background-color: var(--lt-surface-sunken); border: 1px solid var(--lt-border);
+      border-radius: .375rem; padding: .625rem .75rem; margin: 0 0 .75rem;
+      overflow-x: auto; font-size: .8125rem;
+    }
+    .lt-prose pre code { background: none; border: 0; padding: 0; font-size: inherit; }
+    /* Mermaid diagrams in prose. Before the bundle loads (and after a render failure) the
+     * source shows as an ordinary code block, which is the honest fallback — a reader can
+     * see what was meant. Once rendered the box loses its code-block chrome, because an
+     * SVG in a bordered grey panel reads as a screenshot rather than a figure. */
+    .lt-prose pre.mermaid.lt-mermaid-rendered {
+      background: none; border: 0; padding: 0; margin: 0 0 .75rem;
+      overflow-x: auto; text-align: center; line-height: normal;
+    }
+    .lt-prose pre.mermaid.lt-mermaid-rendered svg { max-width: 100%; height: auto; }
+    .lt-prose .lt-mermaid-note {
+      margin: 0 0 .25rem; font-size: .6875rem; color: var(--lt-fg-muted); font-style: italic;
+    }
+    /* Tables. Tailwind preflight sets `border-collapse: collapse` and strips every border,
+     * so without these a rendered table is an unreadable run of adjacent cells. The wrapper
+     * scrolls rather than the page: a model comparing six columns must not be able to push
+     * the whole layout sideways. */
+    .lt-prose table {
+      width: 100%; margin: 0 0 .75rem; font-size: .8125rem;
+      border-collapse: collapse; display: block; overflow-x: auto;
+    }
+    .lt-prose th, .lt-prose td {
+      border: 1px solid var(--lt-border); padding: .25rem .5rem; text-align: left; vertical-align: top;
+    }
+    .lt-prose th { background-color: var(--lt-surface-sunken); color: var(--lt-fg-strong); font-weight: 600; }
+    .lt-prose blockquote {
+      margin: 0 0 .75rem; padding-left: .75rem;
+      border-left: 2px solid var(--lt-border-strong); color: var(--lt-fg-muted);
+    }
+    .lt-prose hr { border: 0; border-top: 1px solid var(--lt-border); margin: 1rem 0; }
+
+    /* Prism sizing — background is themed in /static/themes.css */
+    pre[class*="language-"], code[class*="language-"] { font-size: 0.75rem; }
+    pre[class*="language-"] { border-radius: 0.375rem; }
+
+    /* Scrollbar — Firefox */
+    * {
+      scrollbar-width: thin;
+      scrollbar-color: var(--scrollbar-thumb) transparent;
+    }
+    /* Scrollbar — Webkit (Chrome, Safari, Edge) */
+    ::-webkit-scrollbar { width: 6px; height: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--scrollbar-thumb); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--scrollbar-thumb-hover); }
+    ::-webkit-scrollbar-corner { background: transparent; }
+
+    /* Keyboard focus ring for accessible navigation */
+    tr[tabindex]:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; border-radius: 0.375rem; }
+    button:focus-visible, a:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; border-radius: 0.25rem; }
+  </style>
+</head>
+<body class="bg-gray-950 text-gray-100 min-h-full flex flex-col">
+
+  <!-- Nav -->
+  <nav class="bg-gray-900 border-b border-gray-800 px-6 py-3">
+    <div class="flex items-center gap-6">
+      <a href="/" class="text-xl font-bold text-blue-400 tracking-tight flex-shrink-0">LogsTotal</a>
+      <span class="text-gray-600 text-sm">|</span>
+      <div class="flex items-center gap-6">
+        <a href="/jobs" class="text-sm transition {% if nav_path.startswith('/jobs') %}text-white font-medium{% else %}text-gray-400 hover:text-white{% endif %}">Jobs</a>
+        {% if user and (user.is_superuser or user.role == 'member') %}
+        <a href="/intel" class="text-sm transition {% if nav_path == '/intel' or nav_path.startswith('/intel/entities') %}text-white font-medium{% else %}text-gray-400 hover:text-white{% endif %}">Intel</a>
+        <a href="/intel/cases" class="text-sm transition {% if nav_path.startswith('/intel/cases') %}text-white font-medium{% else %}text-gray-400 hover:text-white{% endif %}">Cases</a>
+        {#
+          Rules and Tags are top-level for one reason: each spans Jobs *and* Intel, and
+          hanging the single place it is managed off one of the two surfaces it acts on says
+          the wrong thing about which owns it. Rules live at /intel/rules (/intel/watch
+          redirects there) — "watch" means only the job subscription, as everywhere else in
+          the app.
+        #}
+        <a href="/intel/rules" class="text-sm transition {% if nav_path.startswith('/intel/rules') %}text-white font-medium{% else %}text-gray-400 hover:text-white{% endif %}">Rules</a>
+        <a href="/intel/tags" class="text-sm transition {% if nav_path.startswith('/intel/tags') %}text-white font-medium{% else %}text-gray-400 hover:text-white{% endif %}">Tags</a>
+        {% endif %}
+        <a href="/docs" class="text-sm transition {% if nav_path.startswith('/docs') %}text-white font-medium{% else %}text-gray-400 hover:text-white{% endif %}">Docs</a>
+        {% if user and user.is_superuser %}
+        <a href="/admin" class="text-sm transition {% if nav_path.startswith('/admin') %}text-white font-medium{% else %}text-gray-400 hover:text-white{% endif %}">Admin</a>
+        {% endif %}
+      </div>
+      <div class="ml-auto flex items-center gap-4">
+        {# Any logged-in user: job-watch events belong to whoever can view a job, not to Intel. #}
+    {% if user %}
+        <div x-data="watchlistBell()" x-init="loadCount()" @click.outside="open = false"
+             @htmx:after-request="loadCount()"
+             class="relative">
+          <button @click="toggle()" class="relative p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-800 transition flex items-center" title="Alerts">
+            <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9"/>
+            </svg>
+            <span x-show="count > 0" x-cloak
+                  x-text="count > 99 ? '99+' : count"
+                  class="absolute top-0 right-0 min-w-[16px] h-4 px-1 rounded-full bg-amber-500 text-gray-900 text-[10px] font-bold flex items-center justify-center"></span>
+          </button>
+          <div x-show="open" x-cloak x-transition.opacity
+               class="absolute right-0 mt-2 z-50"
+               hx-get="/intel/watchlist-events-partial"
+               hx-trigger="loadWatchlistEvents from:body"
+               hx-swap="innerHTML">
+            <div class="lt-menu lt-menu--flush w-96 max-w-[95vw] p-6 text-center text-sm text-gray-500">
+              Loading…
+            </div>
+          </div>
+        </div>
+        {% endif %}
+        {% if user %}
+          <span class="text-sm text-gray-500 truncate max-w-[200px]">{{ user.email }}</span>
+          <form method="POST" action="/auth/cookie/logout" class="inline"
+                hx-post="/auth/cookie/logout"
+                hx-on::after-request="window.location.href='/'">
+            <button class="lt-btn lt-btn--ghost lt-btn--nav hover:text-red-400">Logout</button>
+          </form>
+        {% else %}
+          <a href="/auth/login" class="text-sm text-gray-400 hover:text-white transition">Login</a>
+        {% endif %}
+      </div>
+    </div>
+  </nav>
+
+  <!-- Flash messages (HTMX errors via HX-Trigger) -->
+  <div id="flash" class="px-6 pt-3" aria-live="polite"></div>
+
+  <!-- Main content -->
+  <main class="flex-1 px-6 py-8 max-w-7xl mx-auto w-full">
+    {% block content %}{% endblock %}
+  </main>
+
+  {% include "partials/_confirm_dialog.html" %}
+
+  {#
+    Global HTMX failure toast. htmx suppresses the swap on any 4xx/5xx, so a failed
+    lazy-tab load or rejected form otherwise leaves the pane spinning with no signal.
+    Driven imperatively from app.js — deliberately not Alpine: this must work even
+    when the failure is what stopped a subtree from initialising.
+  #}
+  <div id="htmx-error-toast" role="alert" aria-live="assertive"
+       class="hidden fixed bottom-6 left-1/2 -translate-x-1/2 z-[60] max-w-md w-[calc(100%-3rem)]
+              flex items-start gap-3 px-4 py-3 rounded-lg border border-red-800 bg-red-950 shadow-lg">
+    <span class="text-red-400 text-sm leading-5">&#9888;</span>
+    <p data-toast-message class="flex-1 text-sm text-red-100"></p>
+    <button type="button" onclick="dismissHtmxError()" aria-label="Dismiss"
+            class="text-red-300 hover:text-white text-sm leading-5">&times;</button>
+  </div>
+
+  <!-- Back to top -->
+  <div x-data="{ show: false }" @scroll.window="show = window.scrollY > 400" class="fixed bottom-6 right-6 z-50">
+    <button x-show="show" x-cloak
+      @click="window.scrollTo({ top: 0, behavior: 'smooth' })"
+      class="p-2.5 rounded-full bg-gray-800 border border-gray-700 text-gray-400 hover:text-white hover:bg-gray-700 shadow-lg transition-all"
+      aria-label="Back to top">
+      <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 15l7-7 7 7"/></svg>
+    </button>
+  </div>
+
+  <footer class="text-center text-xs text-gray-700 py-4 border-t border-gray-900">
+    LogsTotal v{{ app_version }} &mdash; log analysis platform
+  </footer>
+
+  <script src="/static/vendor/prism.min.js?v={{ app_version }}" defer></script>
+  <script src="/static/vendor/prism-yaml.min.js?v={{ app_version }}" defer></script>
+  <script src="/static/vendor/prism-json.min.js?v={{ app_version }}" defer></script>
+  <script src="/static/vendor/prism-sql.min.js?v={{ app_version }}" defer></script>
+  <script>
+    // Re-highlight Prism code blocks after HTMX swaps in new content
+    document.addEventListener('htmx:afterSwap', function(e) {
+      if (window.Prism) Prism.highlightAllUnder(e.detail.target);
+      if (window.Alpine && e.detail.target) {
+        Alpine.initTree(e.detail.target);
+      }
+      // Selection stores live outside the markup they select, which is what makes them
+      // survive a poll — and also what lets them outlive the rows themselves after a
+      // delete. Reconciling here is the other half of that trade.
+      if (window.Alpine && Alpine.store('aiRuns')) Alpine.store('aiRuns').pruneToVisible();
+    });
+
+    // Watchlist nav-bell: polls the unack count, opens a dropdown on click.
+    function watchlistBell() {
+      return {
+        count: 0,
+        open: false,
+        _pollHandle: null,
+        loadCount() {
+          fetch('/intel/watchlist-events-partial?count_only=1', { credentials: 'same-origin' })
+            .then(r => r.ok ? r.text() : '0')
+            .then(t => { this.count = parseInt(t, 10) || 0; })
+            .catch(() => {});
+          if (!this._pollHandle) {
+            this._pollHandle = setInterval(() => this.loadCount(), 60000);
+          }
+        },
+        toggle() {
+          this.open = !this.open;
+          if (this.open) {
+            this.$nextTick(() => document.body.dispatchEvent(new CustomEvent('loadWatchlistEvents')));
+          }
+        }
+      };
+    }
+  </script>
+</body>
+</html>

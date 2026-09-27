@@ -1,0 +1,51 @@
+{# Degraded panel for browsers with no usable WebGL context — a locked-down VM, a remote
+   desktop session, a GPU blocklist.
+
+   Deliberately a **table**, not a static re-render of the graph. A picture with no hover,
+   no click and no zoom is worse than a weight-ordered list with working links, and the analyst
+   still gets the neighbours, the relationship, and a way through to the real pages. The
+   rows come from the same payload the canvas would have drawn, so nothing is invented here.
+
+   Expects: webgl, fallbackRows, graphmlUrl().
+#}
+<div class="border border-gray-800 rounded-xl bg-gray-950 p-4">
+  <div class="flex items-start gap-3 mb-3">
+    <svg class="w-5 h-5 text-amber-400 shrink-0 mt-0.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 9v4m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+    <div class="text-xs">
+      <p class="text-amber-300 font-medium">This browser has no usable WebGL context, so the graph cannot be drawn.</p>
+      <p class="text-gray-400 mt-1">
+        The same neighbourhood is listed below. The
+        <a :href="graphmlUrl()" target="_blank" class="text-blue-400 hover:text-blue-300 underline">GraphML export</a>
+        opens in yEd or Gephi, and the Relationships and Entities tabs answer the same questions server-side.
+      </p>
+    </div>
+  </div>
+
+  <div class="overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead class="text-gray-500 border-b border-gray-800">
+        <tr class="text-left">
+          <th class="py-1.5 pr-3 font-medium">Entity</th>
+          <th class="py-1.5 pr-3 font-medium">Type</th>
+          <th class="py-1.5 pr-3 font-medium">Relationship</th>
+          <th class="py-1.5 pr-3 font-medium text-right">Weight</th>
+          <th class="py-1.5 font-medium text-right">Jobs</th>
+        </tr>
+      </thead>
+      <tbody>
+        <template x-for="row in fallbackRows" :key="row.entityId + ':' + row.relation">
+          <tr class="border-b border-gray-900 hover:bg-gray-900/60">
+            <td class="py-1.5 pr-3">
+              <a :href="'/intel/entities/' + row.entityId" class="text-blue-400 hover:text-blue-300 break-all" x-text="row.label"></a>
+            </td>
+            <td class="py-1.5 pr-3 text-gray-400" x-text="row.type"></td>
+            <td class="py-1.5 pr-3 text-gray-400" x-text="row.relation"></td>
+            <td class="py-1.5 pr-3 text-gray-300 text-right" x-text="row.weight"></td>
+            <td class="py-1.5 text-gray-300 text-right" x-text="row.jobCount"></td>
+          </tr>
+        </template>
+      </tbody>
+    </table>
+    <p x-show="!fallbackRows.length" x-cloak class="text-gray-500 py-4 text-center text-xs">No connected entities.</p>
+  </div>
+</div>

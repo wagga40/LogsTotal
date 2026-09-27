@@ -1,0 +1,49 @@
+name: Bug report
+description: Something does not work the way the documentation says it does.
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        **Security problems do not go here.** See [SECURITY.md](../blob/main/SECURITY.md) —
+        a public issue is a disclosure.
+
+  - type: input
+    id: version
+    attributes:
+      label: Version
+      description: "`./logstotal version`, or the footer of any page. On a branch, the git SHA is what matters."
+      placeholder: "1.0.0 (sha 1a2b3c4)"
+    validations:
+      required: true
+
+  - type: dropdown
+    id: path
+    attributes:
+      label: Deployment path
+      description: From docs/install/prerequisites.md. Several classes of bug exist on only one of these.
+      options:
+        - A — local development
+        - B — Docker, single host (with or without Caddy/HTTPS)
+        - C — multi-server
+    validations:
+      required: true
+
+  - type: textarea
+    id: doctor
+    attributes:
+      label: "`task doctor` output"
+      description: "`task doctor:docker` on the Docker paths. It is a preflight, so it often names the cause outright."
+      render: text
+    validations:
+      required: true
+
+  - type: textarea
+    id: what
+    attributes:
+      label: What you expected, and what happened
+      description: |
+        If it involves an analysis, name the log type and the workflow. `task docker:logs:worker`
+        (or the worker's own output) is where an analysis failure explains itself.
+    validations:
+      required: true

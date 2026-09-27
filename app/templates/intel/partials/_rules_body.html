@@ -1,0 +1,745 @@
+{% from "partials/_page_header.html" import page_header %}
+{% from "partials/_copy_button.html" import copy_button %}
+{% from "partials/_tab_badge.html" import tab_badge, tab_icon %}
+{% from "partials/_count_pill.html" import count_pill %}
+{% from "intel/partials/_tag_chip.html" import tag_classes %}
+{% from "intel/partials/_entity_type_badge.html" import type_badge %}
+{# `with context`: the form renders colour swatches from `tag_colors`. Only the
+   create form is rendered from here — see that file. #}
+{% from "intel/partials/_rule_form.html" import rule_form with context %}
+{% from "intel/partials/_rule_toggle_button.html" import rule_toggle_button %}
+{#
+  Rules body. `/intel/rules` negotiates on HX-Request: a navigation gets the page, every
+  action on the page gets this region back. One source of truth per surface.
+
+  Self-contained: no Alpine scope of its own and none required from the caller.
+
+  The vocabulary, chosen so the page reads as automations rather than as a database:
+  a rule *applies to* entities or jobs, has a *condition* (the search syntax), and *then*
+  adds tags, alerts you, or sends a webhook. "My rules" are yours; "Shared rules" are the
+  ones LogsTotal ships and an admin edits for everyone; "Lists" are the named sets a
+  condition tests with `list:<name>`. The columns underneath keep their old names
+  (`query`, `is_builtin`) — an audit log and a deployed database both have to survive a
+  rename, and the reader never sees them.
+#}
+{#
+  One row, two sections. The analyst's rules and the shared ones render the same way — a
+  rule is a rule — and differ only in who may act on it: `can_edit` is the owner or an
+  admin for the first, an admin alone for the second.
+
+  **One line, always.** The condition truncates rather than wrapping: at thirty-six rules,
+  every second row being two lines is most of what makes the page read as a wall. The full
+  text is still in `title`, and expanding the row shows it in full.
+
+  **Everyone gets the expander**, not just an editor. Truncation is only safe because the
+  text is reachable; a member reading `list:lolbas -tag:known-good` on a shared rule must
+  be able to open it even though the form underneath is not theirs.
+
+  The click target is the label side alone. The controls sit outside it, so Delete does not
+  also toggle the panel and no `.stop` is needed to say so.
+
+  Fixed widths on scope, name and status; the condition takes the slack. Each row is its
+  own element, so this is flexbox and not a grid — grid tracks are shared within one
+  container, and these rows are separate cards with their own borders and panels.
+#}
+{% macro rule_row(r, can_edit, deletable) %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl"
+     x-data="{ editing: false, open: false }"
+     data-rule-search="{{ (r.name ~ ' ' ~ (r.query or '') ~ ' ' ~ (r.action_tag or '') ~ ' ' ~ (r.description or '')) | lower }}"
+     x-show="$store.rulesFilter.matches($el)" x-cloak>
+  <div class="flex items-center gap-3 px-4 py-2.5">
+    <div class="flex items-center gap-3 min-w-0 flex-1 cursor-pointer" @click="open = !open">
+      {# Scope first, because it decides how the condition beside it is read: the same
+         string means different things in the two grammars. Literal classes — the palette
+         lives in `_tag_chip.html` and nowhere else. #}
+      <span class="w-[4.75rem] shrink-0">
+        {% if r.scope == 'job' %}<span class="lt-chip {{ tag_classes('blue') }}">jobs</span>
+        {% else %}<span class="lt-chip {{ tag_classes('gray') }}">entities</span>{% endif %}
+      </span>
+      <span class="w-48 shrink-0 truncate text-sm text-gray-200" {% if r.description %}title="{{ r.description }}"{% endif %}>{{ r.name }}</span>
+      <span class="flex-1 min-w-0 flex items-center gap-2">
+        {% if r.query %}<code class="truncate text-[11px] text-blue-300" title="{{ r.query }}">{{ r.query }}</code>{% endif %}
+        {# Real chips rather than the name in quotes: a rule can carry several tags, and a
+           comma-joined string reads as one strange tag name. Colours come from the rule's own
+           list, index-aligned with the names. `shrink-0` so the condition ellipsizes first —
+           a truncated chip is unreadable, a truncated condition still says what it starts with. #}
+        {% if r.action_tag %}
+        {% set _auto_colors = (r.action_tag_color or 'gray').split(',') %}
+        <span class="shrink-0 inline-flex items-center gap-1">
+          <span class="text-[11px] text-gray-500">&rarr; adds</span>
+          {% for t in r.action_tag.split(',') %}
+          <span class="lt-chip {{ tag_classes((_auto_colors[loop.index0] if loop.index0 < _auto_colors | length else _auto_colors[-1]) | trim) }}">{{ t }}</span>
+          {% endfor %}
+        </span>
+        {% endif %}
+        {% if r.webhook_enabled %}<span class="shrink-0 text-[11px] text-purple-400">&rarr; {{ r.webhook_method }} webhook</span>{% endif %}
+        {% if not r.action_notify and not r.is_builtin %}<span class="shrink-0 text-[11px] text-gray-600" title="Adds its tags and sends its webhook without ringing your bell">&rarr; no alert</span>{% endif %}
+        {% if r.auto_entity_id %}<span class="shrink-0 text-[11px] text-gray-600" title="Created by the Watch button on an entity page">from &starf;</span>{% endif %}
+      {#
+        A shared rule that no longer says what `rules/*.yml` says. `seed_hash` decides this
+        — it is what makes the seeder leave an edited row alone — and the marker makes it
+        visible, so "why did the upgrade not change this rule" has an answer on the page. A
+        marker, deliberately not a Reset button: a reset ceremony would fire on every row
+        after an upgrade.
+      #}
+      {% if r.id in edited_shared %}<span class="shrink-0 text-[11px] text-amber-400" title="Edited here, so the shipped file no longer updates it">edited</span>{% endif %}
+      </span>
+    </div>
+    {# `match_count` counts alerts, so a rule that only tags sits at zero however hard it is
+       working. It reports through `last_matched_at` instead. #}
+    <span class="text-xs text-gray-600 w-28 shrink-0 text-right">
+      {%- if r.match_count -%}{{ r.match_count }} alert{{ '' if r.match_count == 1 else 's' }}
+      {%- elif r.last_matched_at -%}matched {{ r.last_matched_at | time_ago }}
+      {%- else -%}no matches yet
+      {%- endif -%}
+    </span>
+    {% if can_edit %}
+    {{ rule_toggle_button(r) }}
+    {# Two handlers on one button, deliberately: Alpine shows the panel, htmx fills it the
+       first time and never again (`once`), so closing and reopening costs nothing. #}
+    <button type="button" @click="editing = !editing; if (editing) open = true"
+            class="lt-btn lt-btn--sm" :class="editing ? 'lt-btn--active' : ''"
+            hx-get="/intel/rules/{{ r.id }}/form-partial"
+            hx-target="#rule-form-{{ r.id }}" hx-swap="innerHTML" hx-trigger="click once">Edit</button>
+    {# `webhook_enabled` as well as a URL, because the test goes through the real delivery
+       path and `deliver_webhook` returns immediately when the switch is off. Offered on a
+       URL alone, the button would report "queued — check the Activity tab" at something
+       that stays empty for ever. The route refuses it too; this only stops the offer being
+       made. #}
+    {% if r.webhook_url and r.webhook_enabled %}
+    <button type="button" class="lt-btn lt-btn--sm"
+            hx-post="/intel/rules/{{ r.id }}/test" hx-target="#rule-notice-{{ r.id }}" hx-swap="innerHTML"
+            title="Send a synthetic delivery through the real path">Test</button>
+    {% endif %}
+    {% if deletable %}
+    <button type="button" class="lt-btn lt-btn--sm lt-btn--danger"
+            data-confirm-title="Delete this rule?"
+            data-confirm-message="'{{ r.name }}' and its alerts will be removed."
+            data-confirm-accept="Delete"
+            hx-post="/intel/rules/{{ r.id }}/delete" hx-target="#rules-region" hx-swap="outerHTML">Delete</button>
+    {% endif %}
+    {% else %}
+    <span class="text-xs {% if r.enabled %}text-green-400{% else %}text-gray-600{% endif %}">{{ 'On' if r.enabled else 'Off' }}</span>
+    {% endif %}
+  </div>
+  <div x-show="open" x-cloak class="border-t border-gray-800 px-4 py-4 space-y-4">
+    {# The whole condition, which the row above could only start. `break-all` because it is
+       one unbroken token; a comma-separated `cidr:` list has no space to wrap at. #}
+    {% if r.query %}
+    <div>
+      <p class="lt-label">Condition</p>
+      <code class="block text-[11px] text-blue-300 break-all whitespace-pre-wrap">{{ r.query }}</code>
+    </div>
+    {% endif %}
+    {% if r.description %}<p class="text-xs text-gray-500">{{ r.description }}</p>{% endif %}
+
+    {#
+      What the condition's `list:` terms actually contain. A rule reading `list:lolbas`
+      says nothing about what is in lolbas, and without this the answer is on another tab —
+      so the commonest question about a rule would be the one the rule cannot answer.
+
+      The panel is `.lt-menu`, click-to-open, and not `pointer-events-none`: these hold
+      values people copy. Same reasoning as `help_popover`, which is the other "?" on the page.
+    #}
+    {% if rule_lists.get(r.id) %}
+    <div>
+      <p class="lt-label">Tests</p>
+      <div class="lt-bar">
+        {% for name in rule_lists[r.id] %}
+        {% set peek = list_peek.get(name) %}
+        <div class="relative" x-data="{ open: false }" @click.outside="open = false" @keydown.escape="open = false">
+          <button type="button" class="lt-btn lt-btn--sm" :class="open ? 'lt-btn--active' : ''"
+                  :aria-expanded="open" @click="open = !open">
+            <code>list:{{ name }}</code>
+            {% if peek %}<span class="text-gray-500">· {{ peek.count }}</span>{% else %}<span class="text-red-400">· no such list</span>{% endif %}
+          </button>
+          {% if peek %}
+          <div x-show="open" x-cloak class="lt-menu absolute left-0 top-full mt-1 w-80 p-3">
+            <p class="text-[11px] text-gray-500 mb-2">{{ peek.count }} value{{ '' if peek.count == 1 else 's' }}, {{ peek.match }}{% if peek.description %} &middot; {{ peek.description }}{% endif %}</p>
+            <div class="rounded border border-gray-800 overflow-hidden mb-2">
+              <div class="lt-scroll lt-scroll--sm px-2 py-1.5 flex flex-wrap gap-1">
+                {% for v in peek.sample %}<code class="text-[11px] text-gray-300">{{ v }}</code>{% if not loop.last %}<span class="text-[11px] text-gray-700">·</span>{% endif %}{% endfor %}
+              </div>
+            </div>
+            {% if peek.count > peek.sample | length %}<p class="text-[11px] text-gray-600 mb-2">…and {{ peek.count - peek.sample | length }} more.</p>{% endif %}
+            {% if user.is_superuser %}<button type="button" class="lt-btn lt-btn--sm" @click="select('lists'); $dispatch('open-list', { id: {{ peek.id }} }); open = false">Edit this list</button>{% endif %}
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+      </div>
+    </div>
+    {% endif %}
+
+    {#
+      A set spelled out in the condition, and the offer to give it a name. Admin-only for
+      the reason every list write is: a list is instance-wide, while the set it came from
+      was the rule owner's alone. One action, because the halves are useless apart — a list
+      nothing references is clutter, and a rule still spelling the set out is not promoted.
+    #}
+    {% if user.is_superuser and rule_sets.get(r.id) %}
+    <form method="POST" action="/intel/rules/{{ r.id }}/promote-set" class="lt-bar"
+          hx-post="/intel/rules/{{ r.id }}/promote-set" hx-target="#rules-region" hx-swap="outerHTML">
+      <span class="lt-label">Inline set &middot; {{ rule_sets[r.id] | length }} value{{ '' if rule_sets[r.id] | length == 1 else 's' }}</span>
+      <input type="text" name="name" required pattern="[a-z0-9_]{1,50}" class="lt-field w-56 font-mono" placeholder="name_for_this_set">
+      <input type="text" name="description" class="lt-field w-72" placeholder="What these are (optional)">
+      <button type="submit" class="lt-btn">Promote to a list</button>
+    </form>
+    <div id="promote-errors-{{ r.id }}"></div>
+    {% endif %}
+
+    {#
+      Start a rule of your own from this one. The natural move on a shared rule — thirty-six
+      of them ship, a member may not edit any, and "like that but mine" is the commonest
+      thing to want.
+
+      It copies the scope and the condition, which is the part that took the thought, and
+      leaves the actions alone: what to tag or alert on is the decision you are making. The
+      name says where it came from rather than pretending to be new.
+    #}
+    <div class="lt-bar">
+      {#
+        The values ride on `data-*`, not through `| tojson` in the expression. That filter
+        escapes `& < > '` and **not** `"`, so a JSON string inside a double-quoted attribute
+        closes it at its own opening quote — the handler then fails to compile and the
+        button silently does nothing, which is exactly how it first shipped. Jinja escapes
+        an attribute value correctly; `dataset` reads it back.
+      #}
+      <button type="button" class="lt-btn lt-btn--sm"
+              data-seed-name="Copy of {{ r.name }}"
+              data-seed-scope="{{ r.scope }}"
+              data-seed-query="{{ r.query or '' }}"
+              @click="select('rules'); $dispatch('seed-new-rule', { name: $el.dataset.seedName, scope: $el.dataset.seedScope, query: $el.dataset.seedQuery })">
+        Start a rule from this
+      </button>
+    </div>
+    {# Where Test reports. Beside the rule it is testing, instead of as a page-wide notice
+       that cost a full-region swap to show. #}
+    <p id="rule-notice-{{ r.id }}" class="text-xs"></p>
+    {#
+      The edit form arrives here on the first click of Edit — see `_rule_form.html` for why
+      it is not rendered with the page. The placeholder is what a slow fetch shows; htmx
+      replaces all of it.
+    #}
+    {% if can_edit %}
+    <div id="rule-form-{{ r.id }}" x-show="editing" x-cloak>
+      <p class="text-xs text-gray-600">Loading the form…</p>
+    </div>
+    {% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{#
+  One list form for create and edit. The name is the list's identity — every condition that
+  says `list:<name>` — so it is fixed once created; the edit form omits it.
+#}
+{% macro list_form(l) %}
+{# htmx submits it, like the rule form, so a refusal lands in the slot above the buttons and
+   leaves a pasted 2,000-line list where it is; `method`/`action` stay for a submit without
+   JavaScript. #}
+<form method="POST" action="{% if l %}/intel/rules/lists/{{ l.row.id }}/edit{% else %}/intel/rules/lists{% endif %}"
+      hx-post="{% if l %}/intel/rules/lists/{{ l.row.id }}/edit{% else %}/intel/rules/lists{% endif %}" hx-target="#rules-region" hx-swap="outerHTML"
+      class="grid grid-cols-1 sm:grid-cols-3 gap-4" x-data="listValuesDrop()">
+  {% if not l %}
+  <div>
+    <label class="lt-label">Name <span class="text-gray-600">&middot; used as <code>list:&lt;name&gt;</code></span></label>
+    <input type="text" name="name" required pattern="[a-z0-9_]{1,50}" class="lt-field lt-field--lg w-full font-mono" placeholder="known_good_hosts">
+  </div>
+  {% endif %}
+  <div>
+    <label class="lt-label">A value matches when it is</label>
+    <select name="match" class="lt-field lt-field--lg w-full">
+      {% for kind in list_match_kinds %}<option value="{{ kind }}" {% if l and l.spec.match == kind %}selected{% endif %}>{{ list_match_labels[kind] }}{% if kind == 'exact' %} an entry{% else %} an entry{% endif %}</option>{% endfor %}
+    </select>
+  </div>
+  <div{% if l %} class="sm:col-span-2"{% endif %}>
+    <label class="lt-label">Description <span class="text-gray-600">(optional)</span></label>
+    <input type="text" name="description" value="{{ l.spec.description if l else '' }}" class="lt-field lt-field--lg w-full" placeholder="Where these come from">
+  </div>
+  <div class="sm:col-span-3">
+    <label class="lt-label">Values <span class="text-gray-600">&middot; one per line, compared case-insensitively</span></label>
+    <textarea name="values" rows="6" class="lt-field lt-field--lg w-full font-mono" x-ref="values" placeholder="certutil.exe&#10;mshta.exe">{{ l.spec['values'] | join('\n') if l else '' }}</textarea>
+
+    {#
+      A file, straight into the box above. Deliberately no upload route: the textarea is
+      what the form posts, so the save path, its validation and its activity row are
+      untouched, and there is no second way to write a list to keep in step with the first.
+
+      The count is the point. It says what is about to happen — how many are new, how many
+      you already have — before you choose Replace or Add, because "I have just pasted 2,000
+      values over the 72 that were working" is not a thing to discover afterwards.
+    #}
+    <div class="mt-2 rounded-lg border border-dashed px-3 py-2 transition"
+         :class="dragging ? 'border-blue-500 bg-blue-900/20' : 'border-gray-700'"
+         @dragover.prevent="dragging = true" @dragleave.prevent="dragging = false" @drop.prevent="onDrop($event)">
+      <div class="flex flex-wrap items-center gap-2 text-xs text-gray-500">
+        <span>Drop a <code>.txt</code> or <code>.csv</code> here, or</span>
+        <button type="button" class="lt-btn lt-btn--sm" @click="$refs.picker.click()">choose a file</button>
+        <input type="file" x-ref="picker" class="hidden" accept=".txt,.csv,text/plain,text/csv" @change="onPick($event)">
+        <span class="text-gray-600">one value per line; commas count too</span>
+      </div>
+      <p x-show="error" x-cloak class="mt-2 text-xs text-red-400" x-text="error"></p>
+      <div x-show="parsed.length && !error" x-cloak class="mt-2 flex flex-wrap items-center gap-2">
+        <span class="text-xs text-gray-300">
+          <span class="font-mono" x-text="fileName"></span>
+          &mdash; <span x-text="parsed.length"></span> value<span x-show="parsed.length !== 1">s</span>,
+          <span x-text="fresh"></span> new<span x-show="dupes">, <span x-text="dupes"></span> already here</span>
+        </span>
+        <button type="button" class="lt-btn lt-btn--sm" @click="apply('add')">Add to the list</button>
+        <button type="button" class="lt-btn lt-btn--sm lt-btn--warn" @click="apply('replace')">Replace everything</button>
+        <button type="button" class="lt-btn lt-btn--sm lt-btn--ghost" @click="reset()">Cancel</button>
+      </div>
+    </div>
+  </div>
+  {#
+    Where the values come from, when they come from somewhere. For the lists whose upstream
+    moves — dynamic-DNS providers, paste sites, a TLD list — where the alternative is
+    someone remembering to paste a file in every few weeks, and nobody does.
+
+    "Only when I press Refresh" is the default and is a real answer, not a disabled state:
+    plenty of sources change once a year, and an interval that fetches anyway is a request
+    someone else's server serves for nothing.
+  #}
+  <div class="sm:col-span-2">
+    <label class="lt-label">Source URL <span class="text-gray-600">(optional)</span></label>
+    <input type="url" name="source_url" value="{{ l.row.source_url or '' if l else '' }}" class="lt-field lt-field--lg w-full font-mono"
+           placeholder="https://example.org/feed.txt">
+  </div>
+  <div>
+    <label class="lt-label">Re-fetch</label>
+    <select name="refresh_hours" class="lt-field lt-field--lg w-full">
+      {% for hours, label in [(0, 'Only when I press Refresh'), (1, 'Hourly'), (6, 'Every 6 hours'), (24, 'Daily'), (168, 'Weekly')] %}
+      <option value="{{ hours }}" {% if l and (l.row.refresh_hours or 0) == hours %}selected{% endif %}>{{ label }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% if l and l.row.source_url %}
+  <p class="sm:col-span-3 text-[11px] text-gray-600">
+    One value per line; <code>#</code>, <code>;</code> and <code>//</code> comment lines are
+    dropped. A fetch that fails leaves the values you have in place &mdash; a feed that
+    404s must not empty a list your rules test.
+  </p>
+  {% endif %}
+  <div class="sm:col-span-3" id="list-form-errors-{{ l.row.id if l else 'new' }}"></div>
+  <div class="sm:col-span-3 lt-bar">
+    <button type="submit" class="lt-btn lt-btn--lg lt-btn--primary">{% if l %}Save list{% else %}Create list{% endif %}</button>
+    {% if l and l.row.source_url %}
+    <button type="button" class="lt-btn lt-btn--lg"
+            hx-post="/intel/rules/lists/{{ l.row.id }}/refresh" hx-target="#rules-region" hx-swap="outerHTML">Refresh now</button>
+    {% endif %}
+  </div>
+</form>
+{% endmacro %}
+
+{#
+  One list. Same shape as `rule_row`: one line collapsed, the label side opens the panel,
+  the controls sit outside the click target. Everyone gets the expander — a member cannot
+  edit a list but must be able to read the values a shared rule tests against, which is
+  the whole reason the section is visible to them.
+#}
+{% macro list_row(l) %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl" x-data="{ editing: false, open: false }"
+     @open-list.window="if ($event.detail.id === {{ l.row.id }}) { open = true; editing = {{ 'true' if user.is_superuser else 'false' }}; $nextTick(() => $el.scrollIntoView({ block: 'center' })) }">
+  <div class="flex items-center gap-3 px-4 py-2.5">
+    <div class="flex items-center gap-3 min-w-0 flex-1 cursor-pointer" @click="open = !open">
+      <code class="w-48 shrink-0 truncate text-sm text-blue-300">list:{{ l.spec.name }}</code>
+      <span class="w-40 shrink-0 text-xs text-gray-400">{{ l.spec['values'] | length }} value{{ '' if l.spec['values'] | length == 1 else 's' }}, {{ list_match_labels[l.spec.match] }}</span>
+      <span class="flex-1 min-w-0 truncate text-xs text-gray-500" {% if l.spec.description %}title="{{ l.spec.description }}"{% endif %}>{{ l.spec.description }}</span>
+      {% if l.used_by %}<span class="shrink-0 text-[11px] text-gray-600" title="{{ l.used_by | join(', ') }}">&rarr; used by {{ l.used_by | length }} rule{{ '' if l.used_by | length == 1 else 's' }}</span>{% endif %}
+      {#
+        Three states, not two. `last_fetch_ok` is NULL until the first attempt, and "never
+        tried" must not render as "failed" — an admin who has just bound a URL would go
+        looking for a problem that has not happened yet.
+      #}
+      {% if l.row.source_url %}
+        {% if l.row.last_fetch_ok is none %}
+        <span class="shrink-0 text-[11px] text-gray-600" title="{{ l.row.source_url }}">&rarr; from a feed</span>
+        {% elif l.row.last_fetch_ok %}
+        <span class="shrink-0 text-[11px] text-gray-600" title="{{ l.row.source_url }}">&rarr; fetched {{ l.row.last_fetched_at | time_ago }}</span>
+        {% else %}
+        <span class="shrink-0 text-[11px] text-red-400" title="{{ l.row.last_fetch_error }}">&rarr; fetch failed {{ l.row.last_fetched_at | time_ago }}</span>
+        {% endif %}
+      {% endif %}
+    </div>
+    {% if user.is_superuser %}
+    <button type="button" @click="editing = !editing; if (editing) open = true" class="lt-btn lt-btn--sm" :class="editing ? 'lt-btn--active' : ''">Edit</button>
+    <button type="button" class="lt-btn lt-btn--sm lt-btn--danger"
+            data-confirm-title="Delete this list?"
+            data-confirm-message="'{{ l.spec.name }}' will be removed{% if l.used_by %} — but {{ l.used_by | length }} rule{{ '' if l.used_by | length == 1 else 's' }} still test it, so this will be refused{% endif %}."
+            data-confirm-accept="Delete"
+            hx-post="/intel/rules/lists/{{ l.row.id }}/delete" hx-target="#rules-region" hx-swap="outerHTML">Delete</button>
+    {% endif %}
+  </div>
+  <div x-show="open" x-cloak class="border-t border-gray-800 px-4 py-4 space-y-4">
+    {# The values themselves, bounded: `gtfobins` ships 92 and a list may hold 2,000. #}
+    <div>
+      <p class="lt-label">Values</p>
+      <div class="rounded-lg border border-gray-800 overflow-hidden">
+        <div class="lt-scroll lt-scroll--sm px-3 py-2 flex flex-wrap gap-1.5">
+          {% for v in l.spec['values'] %}<code class="text-[11px] text-gray-300">{{ v }}</code>{% if not loop.last %}<span class="text-[11px] text-gray-700">·</span>{% endif %}{% endfor %}
+        </div>
+      </div>
+    </div>
+    {% if l.used_by %}
+    <p class="text-xs text-gray-500">Tested by {{ l.used_by | join(', ') }}.</p>
+    {% endif %}
+
+    {#
+      The other direction: a list small enough to have been a literal, written back as one.
+      Offered rather than applied — rewriting a rule's condition is a change to shared
+      configuration, and which of several rules should absorb the set (and whether the list
+      should then be deleted at all) is not something a button can know. Copy, paste, delete.
+    #}
+    {% if l.spec.match == 'exact' and l.spec['values'] | length <= inset_max %}
+    <div>
+      <p class="lt-label">Small enough to inline</p>
+      <div class="flex items-center gap-2">
+        <code id="inline-set-{{ l.row.id }}" class="flex-1 min-w-0 truncate text-[11px] text-blue-300">in:({{ l.spec['values'] | join(',') }})</code>
+        {{ copy_button(target='inline-set-' ~ l.row.id, title='Copy the equivalent inline set') }}
+      </div>
+      <p class="text-[11px] text-gray-600 mt-1">Paste this into a condition to replace <code>list:{{ l.spec.name }}</code>. The list stays until you delete it.</p>
+    </div>
+    {% endif %}
+    {% if user.is_superuser %}<div x-show="editing" x-cloak>{{ list_form(l) }}</div>{% endif %}
+  </div>
+</div>
+{% endmacro %}
+
+{#
+  Four tabs over one region: Rules, Lists, Alerts, Activity.
+
+  Stacked, the page is six sections and 4,560 px — two of them empty states costing 460 px
+  between them, and thirty-six shared rules in a 2,200 px flat list with nothing to search
+  it by. Rules is a top-level destination, so this is the only strip on the page.
+
+  **The panes are eager `x-show`, not lazy.** `_render_rules` loads all four in one pass, and
+  four `hx-trigger` panes would need four new routes and would hide the headings behind a
+  fetch. A toggle swaps one button and an ack one row; what the page does re-send is
+  headings and rows, which are cheap, while edit forms are fetched one at a time from
+  `_rule_form.html`.
+
+  **Nothing here remembers the open tab.** `select()` writes `location.hash`; the swap
+  destroys this Alpine scope; `resourceTabs.init()` re-reads the hash and restores it. A
+  server-side `active_tab` would be a second answer to the same question.
+
+  `x-data` in **single** quotes: `| tojson` escapes `& < > '` but not `"`, so a
+  double-quoted attribute truncates at the first key.
+#}
+<div id="rules-region">
+  {#
+    The heading lives *inside* the region, not in `rules.html` above it. It carries the
+    pills, and the pills are counts: outside, acknowledging an alert updated the Alerts tab
+    badge and left the red "2 alerts" beside the title saying two, until a reload. Anything
+    that reports a number this page can change has to be inside the thing this page swaps.
+  #}
+  {{ page_header("Rules", "/", "Home", pills=pills) }}
+  {#
+    `page_header` has no `intro=` parameter on purpose — see the macro. This one needs an
+    em-dash that autoescaping would mangle through a parameter, so it is written out here.
+
+    The last sentence is the reason the paragraph exists at all: this platform has two
+    things called rules, and only one of them is yours to write.
+  #}
+  <p class="text-sm text-gray-400 -mt-4 mb-6">
+    Automations over what an analysis produces. A rule is a saved search plus what to do when it matches
+    &mdash; tag it, raise an alert, call a webhook. Rules and their alerts are yours alone; acknowledging one
+    never touches a colleague's. They are <strong class="text-gray-300">not</strong> the SIGMA detection rules
+    the tools run &mdash; those ship with the workflow and decide what a finding <em>is</em>. These decide what
+    happens next.
+  </p>
+  {# The condition editor's grammar — which prefixes exist, and the two boolean words —
+     taken from `queries._PREFIXES` and `jobs_query.PREFIXES`. Data in a JSON block rather
+     than interpolated into script or into each form's `x-data`: this page renders up to
+     thirty-seven condition fields and they all read the same thing. #}
+  <script type="application/json" id="condition-grammar">{{ condition_grammar | tojson }}</script>
+  {% if notice %}
+  <div class="mb-4 text-xs text-green-300 bg-green-900/30 border border-green-700/40 rounded-lg px-3 py-2">{{ notice }}</div>
+  {% endif %}
+  {#
+    The import produces these — it is all or nothing, so the list is what stopped it — and
+    so does a failed refresh. The heading is passed in rather than written here: it read
+    "Nothing was imported:" above a fetch failure, which is a sentence about the wrong thing.
+  #}
+  {% if errors %}
+  <div class="mb-4 text-xs text-red-300 bg-red-900/30 border border-red-700/40 rounded-lg px-3 py-2">
+    <p class="font-medium mb-1">{{ error_title }}</p>
+    <ul class="list-disc pl-4 space-y-0.5">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+  </div>
+  {% endif %}
+
+  <div x-data='resourceTabs({{ tabs | tojson }})'>
+    <div class="flex flex-wrap border-b border-gray-800 mb-6 gap-1">
+      {% for tab in tabs %}
+      <button @click="select('{{ tab.key }}')"
+              :class="tab === '{{ tab.key }}' ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'"
+              class="px-4 py-2 -mb-px border-b-2 text-sm font-medium transition flex items-center gap-2">
+        {{ tab_icon(tab) }} {{ tab.label }} {{ tab_badge(tab) }}
+      </button>
+      {% endfor %}
+    </div>
+
+    {#
+      ── Rules ────────────────────────────────────────────────────────────────────────
+      Mine and shared, in that order, under one filter box. Two sections rather than one
+      list: the shared rules are the shipped vocabulary, and mixing them in would bury an
+      analyst's three under thirty-six and imply they are theirs to delete.
+    #}
+    <div x-show="tab === 'rules'" x-cloak>
+      {# The filter reads and writes the store, never local state — every action on this
+         page swaps the region out from under it. `type="search"` for the native clear
+         affordance; no `name`, so it posts nothing and cannot reach a serializer. #}
+      <div class="lt-bar mb-4">
+        <input type="search" class="lt-field lt-field--lg w-72"
+               placeholder="Filter rules by name, condition or tag…"
+               :value="$store.rulesFilter.q"
+               @input="$store.rulesFilter.set($event.target.value)">
+        <button type="button" class="lt-btn" x-show="$store.rulesFilter.q" x-cloak
+                @click="$store.rulesFilter.clear()">Clear</button>
+        <a href="/intel/rules/export.yml" class="lt-btn ml-auto" title="Download your rules{% if user.is_superuser %}, the shared rules and the lists{% endif %} as YAML">Download YAML</a>
+      </div>
+
+      <section class="mb-8">
+        <h2 class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+          My rules
+          {#
+            The pill stays the true total and the filtered count is plain text beside it.
+            Two pills would be two answers to one question, and a second *live* pill cannot
+            be `count_pill` anyway — that macro takes a label, and `tests/test_control_primitives.py`
+            fails the build on a hand-written one.
+          #}
+          {% if rules %}{{ count_pill(rules | length) }}{% endif %}
+          <span class="text-xs text-gray-600 font-normal">· yours alone, evaluated as each job finishes</span>
+          <span class="text-xs text-gray-500 font-normal" x-show="$store.rulesFilter.q" x-cloak>&middot; <span x-text="$store.rulesFilter.visible('my-rules-rows')"></span> shown</span>
+        </h2>
+        {% if rules %}
+        <div id="my-rules-rows" class="space-y-2 mb-6">
+          {% for r in rules %}{{ rule_row(r, true, true) }}{% endfor %}
+        </div>
+        {#
+          A filter that hides every row must not leave the heading claiming thirty-six of
+          them over blank space, which reads as a broken page rather than a narrow search.
+        #}
+        <p class="text-xs text-gray-600 mb-6" x-cloak
+           x-show="$store.rulesFilter.q && $store.rulesFilter.visible('my-rules-rows') === 0">
+          None of your rules match &ldquo;<span x-text="$store.rulesFilter.q"></span>&rdquo;.
+        </p>
+        {% endif %}
+
+        {# Closed by default, like New list on the Lists tab. It is 724 px of form, and it
+           sat permanently open between the rules you came to read and the shared ones
+           below them — a create form is a thing you go to, not a thing you scroll past. #}
+        <details class="bg-gray-900 border border-gray-800 rounded-xl" x-data="newRuleSeed()" x-ref="newRule"
+                 @seed-new-rule.window="seed($event.detail)">
+          <summary class="cursor-pointer px-6 py-3 text-sm font-medium text-gray-300">New rule <span class="text-gray-600 font-normal">&middot; {{ own_rule_count }} of {{ rule_cap }} used</span></summary>
+          <div class="px-6 pb-6">{{ rule_form(none) }}</div>
+        </details>
+
+        {#
+          Load and save, page-level, in the document `rules/*.yml` is written in. Download is
+          a link (a GET with a download disposition). Import posts the pasted text or a file
+          and swaps this region with the outcome; a refusal comes back into the slot inside the
+          form instead, so the pasted document and the open panel survive it.
+        #}
+        <details class="mt-4 bg-gray-900 border border-gray-800 rounded-xl">
+          <summary class="cursor-pointer px-6 py-3 text-sm font-medium text-gray-300">Import YAML <span class="text-gray-600 font-normal">&middot; the format Download writes</span></summary>
+          <form hx-post="/intel/rules/import" hx-target="#rules-region" hx-swap="outerHTML" hx-encoding="multipart/form-data" class="px-6 pb-6 space-y-3">
+            <textarea name="yaml_text" rows="8" class="lt-field lt-field--lg w-full font-mono"
+                      placeholder="rules:&#10;  - name: New LOLBins&#10;    condition: 'list:lolbas -tag:known-good'&#10;    tags: [{name: triage, color: orange}]"></textarea>
+            <div id="rules-import-errors"></div>
+            <div class="flex flex-wrap items-center gap-3">
+              <input type="file" name="file" accept=".yml,.yaml,text/yaml" class="text-xs text-gray-400">
+              {% if user.is_superuser %}
+              <label class="lt-btn lt-btn--sm cursor-pointer">
+                <input type="checkbox" name="as_shared" value="1" class="lt-check"> Import rules as shared rules
+              </label>
+              {% endif %}
+              <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary">Import</button>
+            </div>
+            <p class="text-[11px] text-gray-600">All or nothing: a document with one bad rule imports none. Your own rules are matched by name and updated in place; new ones count against your limit.{% if user.is_superuser %} Shared rules are matched by <code>key</code>; lists in the document are always shared.{% endif %}</p>
+          </form>
+        </details>
+      </section>
+
+      {#
+        Shared rules — the ones LogsTotal ships, seeded from `rules/*.yml` at start and the
+        same for everyone. Read-only for a member and editable by an admin, because a shared
+        rule is instance-wide: changing one changes what `lolbin` means for every colleague.
+        The seeder updates what nobody edited and leaves an admin's edit alone, so there is
+        no "modified" state to show.
+      #}
+      <section class="mb-8">
+        <h2 class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+          Shared rules
+          {% if shared_rules %}{{ count_pill(shared_rules | length) }}{% endif %}
+          <span class="text-xs text-gray-600 font-normal">· the same for everyone{% if user.is_superuser %}; you can edit them{% else %}; an administrator edits them{% endif %}</span>
+          <span class="text-xs text-gray-500 font-normal" x-show="$store.rulesFilter.q" x-cloak>&middot; <span x-text="$store.rulesFilter.visible('shared-rules-rows')"></span> shown</span>
+        </h2>
+        {% if not builtin_rules_enabled %}
+        <div class="mb-3 text-xs text-amber-300 bg-amber-900/20 border border-amber-700/40 rounded-lg px-3 py-2">
+          Shared rules are switched off instance-wide at <a href="/admin/settings" class="underline">Settings</a>. Existing tags are untouched; nothing new is being tagged by them.
+        </div>
+        {% endif %}
+        {% if shared_rules %}
+        <div id="shared-rules-rows" class="space-y-2 mb-3">
+          {% for r in shared_rules %}{{ rule_row(r, user.is_superuser, false) }}{% endfor %}
+        </div>
+        <p class="text-xs text-gray-600 mb-3" x-cloak
+           x-show="$store.rulesFilter.q && $store.rulesFilter.visible('shared-rules-rows') === 0">
+          No shared rule matches &ldquo;<span x-text="$store.rulesFilter.q"></span>&rdquo;.
+        </p>
+        {% endif %}
+        <p class="text-xs text-gray-600">
+          Applied as each job finishes. To tag entities from analyses that ran before these
+          rules existed, run the <strong>Shared rules</strong> backfill once from
+          {% if user.is_superuser %}<a href="/admin#maintenance" class="text-blue-400 hover:text-blue-300">Admin &rarr; Maintenance</a>{% else %}Admin &rarr; Maintenance{% endif %}.
+        </p>
+      </section>
+    </div>
+
+    {#
+      ── Lists ────────────────────────────────────────────────────────────────────────
+      The named sets a condition tests with `list:<name>`. Instance-wide like the shared
+      rules and edited by an admin; a member reads them so `list:lolbas` in the condition
+      box is not a magic word. The rules' own copy: `config/threat_detection.yaml` carries
+      the detection pipeline's sets separately, and the two may drift by choice.
+    #}
+    <div x-show="tab === 'lists'" x-cloak>
+      <section class="mb-8">
+        <h2 class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+          Lists
+          {% if lists %}{{ count_pill(lists | length) }}{% endif %}
+          <span class="text-xs text-gray-600 font-normal">· named sets a condition can test with <code>list:&lt;name&gt;</code></span>
+        </h2>
+        {% if lists %}
+        <div class="space-y-2 mb-3">
+          {% for l in lists %}{{ list_row(l) }}{% endfor %}
+        </div>
+        {% else %}
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 text-center mb-3">
+          <p class="text-sm text-gray-400">No lists yet.</p>
+        </div>
+        {% endif %}
+        {% if user.is_superuser %}
+        <details class="bg-gray-900 border border-gray-800 rounded-xl">
+          <summary class="cursor-pointer px-6 py-3 text-sm font-medium text-gray-300">New list</summary>
+          <div class="px-6 pb-6">{{ list_form(none) }}</div>
+        </details>
+        {% endif %}
+      </section>
+    </div>
+
+    {#
+      ── Alerts ───────────────────────────────────────────────────────────────────────
+      One pane over two tables. `intel_rule_match` keys an entity alert on
+      (rule, entity, job); `job_rule_match` keys a job alert on (rule, job), and they cannot
+      share a table (see `JobRuleMatch`'s docstring). They do share a reader, so one
+      "Acknowledge all" clears both — a button that leaves half the badge behind is worse
+      than no button, because the reader has no way to tell which half is left.
+    #}
+    <div x-show="tab === 'alerts'" x-cloak>
+      <section class="mb-8">
+        {% set alert_total = (alerts | length) + (job_alerts | length) %}
+        <h2 class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+          Alerts
+          {% if alert_total %}{{ count_pill(alert_total, 'red') }}{% endif %}
+          <span class="text-xs text-gray-600 font-normal">· unacknowledged matches on your rules</span>
+        </h2>
+        {% if alert_total %}
+        <form hx-post="/intel/rules/alerts/ack-all" hx-target="#rules-region" hx-swap="outerHTML" class="mb-3">
+          <button type="submit" class="lt-btn">Acknowledge all</button>
+        </form>
+        {# Two hundred rows is the cap, so the box is bounded. `.lt-scroll` on the inner
+           element — it and `overflow-hidden` must never share one, and which wins is
+           stylesheet-order dependent, which differs between the dev CDN and the built sheet. #}
+        <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div class="lt-scroll lt-scroll--md">
+          {% for a in job_alerts %}
+          <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-800/50 last:border-0 hover:bg-gray-800/50 transition">
+            <a href="/jobs/{{ a.job.id }}" class="text-sm text-gray-200 hover:text-white truncate flex-1" title="{{ a.job.filename }}">{{ a.job.filename }}</a>
+            <span class="w-20 text-center"><span class="lt-chip {{ tag_classes('blue') }}">job</span></span>
+            <span class="text-xs text-gray-500 truncate max-w-[12rem]" title="{{ a.rule.name }}">{{ a.rule.name }}</span>
+            <a href="/jobs/{{ a.job.id }}" class="text-xs text-blue-400 hover:text-blue-300">job #{{ a.job.id }}</a>
+            <span class="text-xs text-gray-600 w-20 text-right">{{ a.match.created_at | time_ago }}</span>
+            <form hx-post="/intel/rules/job-alerts/{{ a.match.id }}/ack" hx-target="#rules-region" hx-swap="outerHTML">
+              <button type="submit" class="lt-btn lt-btn--sm" title="Acknowledge">&check;</button>
+            </form>
+          </div>
+          {% endfor %}
+          {% for a in alerts %}
+          <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-800/50 last:border-0 hover:bg-gray-800/50 transition">
+            <a href="/intel/entities/{{ a.entity.id }}" class="font-mono text-sm text-gray-200 hover:text-white truncate flex-1" title="{{ a.entity.value }}">{{ a.entity.value }}</a>
+            <span class="w-20 text-center">{{ type_badge(a.entity.entity_type) }}</span>
+            <span class="text-xs text-gray-500 truncate max-w-[12rem]" title="{{ a.rule.name }}">{{ a.rule.name }}</span>
+            <a href="/jobs/{{ a.match.job_id }}" class="text-xs text-blue-400 hover:text-blue-300">job #{{ a.match.job_id }}</a>
+            <span class="text-xs text-gray-600 w-20 text-right">{{ a.match.created_at | time_ago }}</span>
+            <form hx-post="/intel/rules/alerts/{{ a.match.id }}/ack" hx-target="#rules-region" hx-swap="outerHTML">
+              <button type="submit" class="lt-btn lt-btn--sm" title="Acknowledge">&check;</button>
+            </form>
+          </div>
+          {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-10 text-center">
+          <p class="text-sm text-gray-400">No unacknowledged alerts.</p>
+          <p class="text-xs text-gray-600 mt-1">Create a rule to be told when a matching entity &mdash; or a matching job &mdash; turns up.</p>
+        </div>
+        {% endif %}
+      </section>
+    </div>
+
+    {#
+      ── Activity ─────────────────────────────────────────────────────────────────────
+      What happened, as opposed to what is configured. Neither half is a rule: a job watch
+      is a *subscription* — no condition, no evaluation pass, just "tell me when something
+      happens here" — and a delivery is the record of one webhook attempt.
+
+      Jobs you watch renders the **same partial** `/jobs?tab=watching` does, mounted twice
+      rather than copied. Its buttons post to their own routes and swap
+      `#jobs-watching-region`, so they work here unchanged; its out-of-band tab badge finds
+      no target on this page and htmx skips it.
+
+      `/jobs/watching` stays where it is: it is open to any logged-in user and this page is
+      member-and-above, so moving it would take watching away from the one role that has it
+      and no Intel access.
+    #}
+    <div x-show="tab === 'activity'" x-cloak>
+      <section class="mb-8">
+        <h2 class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+          Jobs you watch
+          {% if watched %}{{ count_pill(watched) }}{% endif %}
+          <span class="text-xs text-gray-600 font-normal">· subscriptions, not conditions</span>
+        </h2>
+        {% include "partials/_jobs_watching.html" %}
+      </section>
+
+      <section>
+        <h2 class="text-sm font-medium text-gray-300 mb-3 flex items-center gap-2">
+          Webhook deliveries
+          {% if deliveries %}{{ count_pill(deliveries | length) }}{% endif %}
+          <span class="text-xs text-gray-600 font-normal">· every attempt, including failures</span>
+        </h2>
+        {% if deliveries %}
+        <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+          <div class="lt-scroll lt-scroll--md">
+          {% for d in deliveries %}
+          <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-800/50 last:border-0">
+            <span class="w-16 text-xs {% if d.ok %}text-green-400{% else %}text-red-400{% endif %}">{{ d.status_code or '—' }}</span>
+            <span class="flex-1 text-xs text-gray-400 truncate">{{ d.error_message or 'delivered' }}</span>
+            <span class="text-xs text-gray-600">attempt {{ d.attempt }}</span>
+            <span class="text-xs text-gray-600">{{ d.match_count }} match{{ '' if d.match_count == 1 else 'es' }}</span>
+            <span class="text-xs text-gray-600 w-20 text-right">{{ d.created_at | time_ago }}</span>
+          </div>
+          {% endfor %}
+          </div>
+        </div>
+        {% else %}
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-10 text-center">
+          <p class="text-sm text-gray-400">No webhook deliveries yet.</p>
+        </div>
+        {% endif %}
+      </section>
+    </div>
+  </div>
+</div>

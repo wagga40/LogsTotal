@@ -1,0 +1,8 @@
+{% from "partials/_copy_button.html" import copy_button with context %}
+{% if rule_author %}
+<p class="text-xs text-gray-400 mb-2">Rule author: <span class="text-gray-200">{{ rule_author }}</span></p>
+{% endif %}
+<div class="relative">
+  {{ copy_button(target='ruleCode' ~ finding.id, variant='overlay', title='Copy rule to clipboard') }}
+  <pre id="ruleCode{{ finding.id }}" class="language-{{ lang }} p-3 pr-10 max-h-96 overflow-y-auto"><code class="language-{{ lang }}">{{ rule_content }}</code></pre>
+</div>

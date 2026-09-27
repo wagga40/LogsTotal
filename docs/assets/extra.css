@@ -1,0 +1,22 @@
+/* LogsTotal brand on top of the Material-compatible theme: the logo's blue as primary,
+   its cyan as accent, and the app's near-black for the dark scheme. */
+:root {
+  --md-primary-fg-color: #0057ff;
+  --md-primary-fg-color--light: #3d7eff;
+  --md-primary-fg-color--dark: #0043c4;
+  --md-accent-fg-color: #00b8cc;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-primary-fg-color: #0a0e1a;
+  --md-primary-fg-color--light: #111827;
+  --md-primary-fg-color--dark: #05070d;
+  --md-accent-fg-color: #00e5ff;
+  --md-default-bg-color: #0d1220;
+  --md-typeset-a-color: #4fd8ff;
+}
+
+/* Command blocks carry most of these pages; give them room to breathe. */
+.md-typeset pre > code {
+  font-size: 0.8rem;
+}

@@ -1,0 +1,26 @@
+# Weekly update proposals for what is pinned by hand and otherwise goes stale silently.
+#
+# Python packages are deliberately absent: pdm.lock is the source of truth and
+# requirements.txt is generated from it (`./logstotal lock`), and Dependabot can update only
+# the latter, which would leave the two disagreeing.
+#
+# The cooldown holds a newly published version back for a week, so a release that is
+# yanked or turns out to be compromised in its first days is never proposed.
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+    groups:
+      actions:
+        patterns: ["*"]
+
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7

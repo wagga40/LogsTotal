@@ -1,0 +1,39 @@
+{#
+  The one tag chip for a listing row.
+
+  Every chip here is a tag: a shared rule writes `lolbin` as an ordinary `EntityTag`, so
+  there is no separate system-label source to draw. What the attribute derivation computed
+  is readable on the entity Overview tab's Attributes card.
+
+  Geometry is `.lt-chip` (base.html). Colour stays in `_tag_chip.html::tag_classes`, whose
+  12-colour dict is the only place those Tailwind class names appear as literals — the
+  scanner cannot see an interpolated `bg-{{ color }}-900/40`, so it must not move.
+
+  XSS: the label text is carried in `data-tag` and read via `$el.dataset.tag`, never
+  interpolated into the Alpine expression. Same rule as `_tag_chip.html`.
+#}
+{% from "intel/partials/_tag_chip.html" import tag_classes %}
+
+{% macro label_chip(chip, size='xs', pivot=true) %}
+{%- set classes = 'lt-chip ' ~ tag_classes(chip.color) -%}
+{%- if pivot -%}
+<a href="/intel?tags={{ chip.key | urlencode }}"
+   class="{{ classes }} lt-chip--btn hover:brightness-125"
+   data-tag="{{ chip.key }}"
+   @click.prevent.stop="toggleTag($el.dataset.tag); triggerRefresh(true)"
+   title="Filter to {{ chip.label }}">{{ chip.label }}</a>
+{%- else -%}
+<span class="{{ classes }}">{{ chip.label }}</span>
+{%- endif -%}
+{% endmacro %}
+
+{#
+  A chip list with an overflow counter. `cap` of 0 means render everything.
+#}
+{% macro label_chips(chips, cap=0, pivot=true) %}
+{%- set shown = chips[:cap] if cap else chips -%}
+{%- for chip in shown %}{{ label_chip(chip, pivot=pivot) }} {% endfor -%}
+{%- if cap and chips | length > cap -%}
+<span class="text-[10px] text-gray-500">+{{ chips | length - cap }}</span>
+{%- endif -%}
+{% endmacro %}

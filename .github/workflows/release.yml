@@ -1,0 +1,131 @@
+name: Release
+
+# Two of the five documented install paths start from a release archive
+# (`7z x logstotal-<version>.7z`), and docs/runbooks/upgrading.md gives a copy-paste command that
+# downloads one. This workflow builds and publishes that asset.
+on:
+  push:
+    tags: ["v*"]
+  # Re-runnable by hand against an existing tag, for when a release needs rebuilding.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build (must already exist)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  # The full CI suite, reused rather than reimplemented. Without this the only gate on a
+  # public release would be a string comparison between the tag and the files that declare
+  # a version.
+  ci:
+    uses: ./.github/workflows/ci.yml
+    with:
+      ref: ${{ inputs.tag || github.ref }}
+
+  release:
+    needs: ci
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v4.2.2
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+          # The reused CI job asserts `git tag --list v<version>` is non-empty, and skips
+          # only when `.git` is absent — a shallow checkout leaves `.git` present with zero
+          # tags, so the test does not skip, it fails.
+          fetch-depth: 0
+
+      # A tag whose name disagrees with the version in the code produces an archive that
+      # reports a different version than the release it is attached to. Caught here rather
+      # than by whoever downloads it.
+      - name: The tag matches the declared version
+        # The tag reaches the shell through `env:`, never `${{ }}` interpolation inside
+        # `run:`. A ref name is attacker-influencable on a fork, and interpolation splices
+        # it into the script text before bash ever sees it.
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          declared=$(sed -n 's/.*app_version: str = "\([^"]*\)".*/\1/p' app/config.py | head -1)
+          pyproject=$(sed -n 's/^version = "\([^"]*\)".*/\1/p' pyproject.toml | head -1)
+          manifest=$(sed -n 's/^version: *//p' VERSION | head -1)
+          echo "tag=$TAG  app/config.py=$declared  pyproject.toml=$pyproject  VERSION=$manifest"
+          # All three, not just config.py. `task release:prepare` writes them together, so
+          # a disagreement here means the tool was bypassed or half-applied — and pyproject
+          # is what `pip install .` and the wheel metadata report.
+          for src in "app/config.py=$declared" "pyproject.toml=$pyproject" "VERSION=$manifest"; do
+            [ "$TAG" = "v${src#*=}" ] || {
+              echo "::error::tag $TAG does not match ${src%%=*} version ${src#*=}"
+              exit 1
+            }
+          done
+
+      - name: Build the release archive
+        run: |
+          sudo apt-get update && sudo apt-get install -y --no-install-recommends p7zip-full
+          # Tailwind so the published archive ships the compiled stylesheet: `tools/tailwind/`
+          # is gitignored, and without the CLI `scripts/package.sh` takes its warning branch
+          # and publishes the Play-CDN dev bundle — a JIT compiler running in the browser on
+          # every page load. package.sh builds the production sheet itself when the CLI is
+          # present, and restores dev mode after.
+          bash scripts/ci-provision.sh tailwind
+          # RELEASE_REPO_URL stamps .release-origin into the archive, so a host installed
+          # from it resolves its upgrades against THIS server. Without it an archive
+          # install has no origin at all and falls back to a built-in default.
+          RELEASE_REPO_URL="${{ github.server_url }}/${{ github.repository }}" \
+            bash scripts/package.sh
+
+      - name: Verify the archive
+        run: bash scripts/verify-artifacts.sh archive
+
+      # Just this version's section — `body_path: CHANGELOG.md` would publish the entire
+      # file, so every release's notes would restate the whole project history.
+      - name: Extract the release notes
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          awk -v v="$version" '
+            $0 ~ "^## \\[" v "\\]" { inside = 1; next }
+            inside && /^## \[/     { exit }
+            inside                 { print }
+          ' CHANGELOG.md > release-notes.md
+          # A silently-empty body is how a release ends up looking unremarkable. The
+          # changelog guard in the test suite makes this unreachable, which is exactly why
+          # a failure here means something upstream broke rather than someone forgot.
+          [ -s release-notes.md ] || {
+            echo "::error::no '## [$version]' section in CHANGELOG.md"
+            exit 1
+          }
+          echo "release notes: $(wc -l <release-notes.md) lines"
+
+      - name: Stage the assets
+        # Into an otherwise-empty directory, by NAME. A glob over the worktree would publish
+        # whatever an earlier build left there — a stale `.sha256` for another version reads
+        # as a checksum for the file being downloaded. Same as .forgejo/workflows/release.yml.
+        env:
+          TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          version="${TAG#v}"
+          mkdir -p dist/release
+          mv "logstotal-${version}.7z" "logstotal-${version}.7z.sha256" dist/release/
+          ls -l dist/release
+
+      - name: Publish
+        # softprops/action-gh-release v2.2.1 — SHA-pinned like every other action here.
+        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          # The CHANGELOG is the release notes; generate_release_notes appends the commit
+          # list underneath for anyone who wants it. Without body_path the notes would be
+          # the raw commit list and nothing else.
+          body_path: release-notes.md
+          generate_release_notes: true
+          # The checksum goes up with the archive. `task upgrade` fetches <asset>.sha256
+          # and checks the download against it; a release that publishes none is reported
+          # as unchecked rather than refused, so older pins keep working.
+          # The staging directory holds exactly the two files, named by the step above.
+          files: dist/release/*
+          fail_on_unmatched_files: true

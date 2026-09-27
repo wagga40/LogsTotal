@@ -1,0 +1,113 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+/lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+.venv/
+venv/
+ENV/
+env/
+.pdm-python
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+.nox/
+.ruff_cache/
+.mypy_cache/
+.dmypy.json
+dmypy.json
+
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+._*
+.DocumentRevisions-V100
+.fseventsd
+.Spotlight-V100
+.Trashes
+.__*
+**/__MACOSX/
+
+# LogsTotal project
+.env
+deploy.env
+deploy-envs/
+# The control plane's record of its own fleet — instance state, not source.
+fleet/
+testkit/
+uploads/*
+!uploads/.gitkeep
+*.db
+*.db-shm
+*.db-wal
+logstotal.db
+logs/
+backups/
+logstotal-*.7z
+
+# Tailwind CSS binaries and directory
+tools/tailwind/
+tools/tailwind/*
+
+# IDE / editor / AI related files 
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.claude/
+CLAUDE.md
+CLAUDE-internals.md
+.cursor/
+.cursorrules
+.cursorignore
+.superpowers/
+security-review/
+SKILLS.md
+SKILL.md
+
+# Planning/spec scratch written during development — local notes, not product docs.
+# The published documentation set is docs/*.md (see docs/README.md).
+docs/superpowers/
+
+# Runtime state. `data/` is the SQLite/uploads volume mount from docker-compose.yml; it
+# has only ever escaped tracking because nothing happened to create it in a dev checkout.
+data/
+
+# PROXY_TLS=custom certificates and keys — never committed. The .gitkeep is what
+# keeps the bind-mount source present so Docker does not create it root-owned.
+certs/*
+!certs/.gitkeep
+
+# Stamped into a release archive by scripts/package.sh so the deployment it becomes can
+# resolve its own upgrades. Never committed: it describes an artifact, not the source.
+.release-origin
+
+.env.deploy.sha256
+
+# The pinned go-task ./logstotal extracts (scripts/lib/task_bin.sh). A cache, never shipped.
+/.bin/
+# The go-task tarballs scripts/package.sh puts in a release archive. Fetched per build.
+/tools/go-task/
+# The built documentation website (./logstotal docs:build). Never committed or shipped.
+/site/
+# An operator's own Compose changes (see docs/security.md). Instance state, never part of a release.
+/docker-compose.override.yml

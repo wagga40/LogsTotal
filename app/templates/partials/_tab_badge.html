@@ -1,0 +1,45 @@
+{% from "partials/_icons.html" import icon with context %}
+{#
+  The count beside a tab label, on the job, entity and case detail pages.
+
+  It carries an id and is rendered **even when the count is zero** (empty and `hidden`)
+  for one reason: it is an out-of-band swap target. Posting a comment replaces only the
+  thread partial, so a badge that existed only while non-zero could never go 0 → 1 — htmx
+  would have nothing to swap into, and the count would stay stale until a page reload. See the
+  `hx-swap-oob` span at the foot of `partials/_comment_thread.html`.
+
+  Keep the label immediately before this macro's output. `tests/test_intel_job_scope.py`
+  reads badge numbers back out of the rendered page with a regex anchored on that
+  adjacency, and it is the only thing checking that a badge agrees with its own pane.
+#}
+{% macro tab_badge(tab) -%}
+<span id="tab-badge-{{ tab.key }}" class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400"{% if not tab.badge %} hidden{% endif %}>{{ tab.badge if tab.badge else '' }}</span>
+{%- endmacro %}
+
+{#
+  The same span, addressed for an out-of-band swap. `count` is the fresh total.
+#}
+{% macro tab_badge_oob(key, count) -%}
+<span id="tab-badge-{{ key }}" hx-swap-oob="true" class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400"{% if not count %} hidden{% endif %}>{{ count if count else '' }}</span>
+{%- endmacro %}
+
+{#
+  The glyph before a tab label, on the job, entity and case detail pages.
+
+  Keyed off the tab dict's optional `icon` field rather than its `key`, and that indirection
+  earns its keep: the three tab strips share one dict shape and one Alpine component, so a
+  `{% if tab.key == 'ai' %}` in one template is exactly how they stop being shared. Two tabs
+  in different pages can also mean the same thing — `results` and `findings` are both "what
+  was detected" — and naming the *glyph* lets them say so.
+
+  A tab with no `icon` still renders: this returns nothing and the label stands alone. That
+  is what keeps adding a tab from being a two-file change.
+
+  `currentColor` throughout, so the icon inherits the tab's active/inactive colour from the
+  button and there is no palette here to drift from `_severity_macros.html`. All glyphs are
+  one 24×24 stroked outline at the same weight — mixing filled and stroked icons in one
+  strip reads as two designs.
+#}
+{% macro tab_icon(tab) -%}
+{{- icon(tab.icon, "w-3.5 h-3.5") -}}
+{%- endmacro %}

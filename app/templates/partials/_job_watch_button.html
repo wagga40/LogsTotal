@@ -1,0 +1,18 @@
+{#
+  Watch toggle for the job header. Its own swap target (outerHTML), so it stays
+  self-contained.
+
+  Any logged-in user, not member+: this mirrors commenting exactly — a job thread is open to
+  whoever can view the job, and a watch is the notification half of the same act. Anonymous
+  visitors get nothing, because there is nowhere to notify them.
+#}
+<span id="job-watch-region">
+  <button hx-post="/jobs/{{ job_id }}/watch"
+          hx-target="#job-watch-region"
+          hx-swap="outerHTML"
+          class="lt-btn lt-btn--sm{% if watching %} lt-btn--primary{% endif %}"
+          title="{% if watching %}Stop being notified about comments, tags and AI analyses on this job{% else %}Be notified when someone comments, tags, or runs an AI analysis on this job{% endif %}">
+    {% if watching %}Watching{% else %}Watch{% endif %}
+  </button>
+  {% if notice %}<span class="text-xs text-amber-400 ml-2" role="status">{{ notice }}</span>{% endif %}
+</span>

@@ -1,0 +1,79 @@
+{#
+  One finding row, shared by the entity Findings tab and /intel/jobs/{id}/findings.
+
+  The two surfaces ask different questions — "what did this rule say about this entity"
+  versus "what did this job find, and who did it touch" — but the row itself is the same
+  object, and a second copy of this markup would drift the moment one of them gained a
+  column. `tests/test_intel_job_findings.py` asserts it exists in exactly one place.
+
+  `f` is a Row from either query: both select the same seven columns plus `has_details`,
+  which is a boolean, NOT the events. The events are lazy-loaded on click from the job
+  page's own finding-scoped endpoint, which re-checks `can_view_job` itself.
+
+  `entities` is optional: a list of {id, value, entity_type} chips, plus `overflow` for
+  the exact "+N more" count. The entity tab passes nothing (the entity is the page).
+#}
+{% from "partials/_severity_macros.html" import sev_pill %}
+{% from "intel/partials/_entity_type_badge.html" import type_badge_classes %}
+
+{% macro finding_row(f, entities=None, overflow=0) %}
+<div x-data="{ open: false }">
+  <div class="flex flex-wrap items-center gap-3 px-4 py-3 bg-gray-900 hover:bg-gray-800/60 transition">
+    <span class="text-xs px-2 py-0.5 rounded border font-medium uppercase tracking-wider {{ sev_pill(f.severity.value) }}">
+      {{ f.severity.value }}
+    </span>
+    <div class="flex-1 min-w-0">
+      <a href="/jobs/{{ f.job_id }}#finding-{{ f.id }}" class="text-sm text-gray-200 hover:text-white truncate block" title="{{ f.rule_name }}">
+        {{ f.rule_name }}
+      </a>
+      <div class="text-xs text-gray-500 mt-0.5">
+        {% if f.rule_id %}<code class="text-gray-600">{{ f.rule_id }}</code> · {% endif %}
+        <span class="text-gray-500">{{ f.tool_name }}</span>
+        · <span class="text-gray-500">{{ f.count }} event{{ 's' if f.count != 1 else '' }}</span>
+      </div>
+      {% if entities %}
+      {# The Intel-native half: which entities this finding actually touched. Bounded
+         server-side by one windowed query for the whole page, never one query per row. #}
+      <div class="flex flex-wrap items-center gap-1 mt-1.5">
+        {% for e in entities %}
+        <a href="/intel/entities/{{ e.id }}"
+           class="lt-chip lt-chip--btn {{ type_badge_classes(e.entity_type) }}"
+           title="{{ e.entity_type.replace('_', ' ') }} — {{ e.value }}">
+          <span class="font-mono truncate max-w-[14rem]">{{ e.value }}</span>
+        </a>
+        {% endfor %}
+        {% if overflow %}
+        <a href="/intel?job={{ f.job_id }}" class="text-[10px] text-gray-500 hover:text-blue-300 transition">+{{ overflow }} more</a>
+        {% endif %}
+      </div>
+      {% endif %}
+    </div>
+    {% if f.has_details %}
+    <button type="button"
+            @click="open = !open"
+            hx-get="/jobs/findings/{{ f.id }}/events"
+            hx-trigger="click once"
+            hx-target="#entity-finding-events-{{ f.id }}"
+            hx-swap="innerHTML"
+            class="shrink-0 text-xs text-purple-400 hover:text-purple-300 transition inline-flex items-center gap-1">
+      <svg class="w-3 h-3 transition-transform" :class="open ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+      <span x-text="open ? 'Hide events' : 'Show events'"></span>
+    </button>
+    {% endif %}
+    <a href="/jobs/{{ f.job_id }}"
+       class="text-xs text-blue-400 hover:text-blue-300 transition flex-shrink-0">
+      job #{{ f.job_id }} →
+    </a>
+  </div>
+  {% if f.has_details %}
+  {# Id namespaced away from the job page's `#events-{{ id }}`. The two never render on
+     the same document today; the collision costs nothing to rule out permanently. #}
+  <div x-show="open" x-cloak id="entity-finding-events-{{ f.id }}" class="px-4 py-3 bg-gray-950/40 border-t border-gray-800" style="display:none">
+    <div class="flex items-center justify-center py-4 text-gray-500 text-xs">
+      <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+      Loading events…
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}

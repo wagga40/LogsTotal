@@ -1,0 +1,17 @@
+{
+  "repo": "M00NLIG7/ChopChopGo",
+  "version": "v1.1.0",
+  "binaries": {
+    "chopchopgo-intel-lin": "96df4e38f65ae2b4f95e658fbd49249e8dfda03d2244d08f615256683503ad5a",
+    "chopchopgo-arm-lin": "dfdd28e8b40faf271b37a00e5027eb73666db17c0d12446a898a12ea4da5be48"
+  },
+  "rules": {
+    "repo": "SigmaHQ/sigma",
+    "commit": "2e8fd89f82d9104c1b30321a307254ddeea17de2",
+    "committed_at": "2026-09-15T11:45:27Z",
+    "trees": {
+      "rules": "5b7869bd30dde16d261b500b5c2f83d1b5910bc7589a87625c94a670d914e93b",
+      "mappings": "3a24e4aecaef32e5b2c1ac99d81bd5e7b414fe9d91bffc962e233ca9e1b6b566"
+    }
+  }
+}

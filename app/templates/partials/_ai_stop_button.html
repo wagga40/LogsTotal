@@ -1,0 +1,19 @@
+{#
+  Stop control for one AI run. Its own file because it is rendered from two states of
+  `_ai_analysis.html` — an in-flight run and an abandoned one — and the second is the case
+  that matters: a run whose worker died can only be closed off by pressing this, so a copy
+  that drifted would leave that row stuck forever.
+
+  Expects `job` and `analysis` in scope, and the caller to have already checked
+  `analysis.id in manageable_ids`. The route re-checks; this only decides what renders.
+#}
+{% if ai_base is not defined %}{% set ai_base = "/jobs/" ~ job.id %}{% endif %}
+<form hx-post="{{ ai_base }}/ai-analysis/{{ analysis.id }}/cancel"
+      hx-target="#ai-analysis-region"
+      hx-swap="outerHTML"
+      data-confirm-title="Stop this analysis?"
+      data-confirm-message="The connection to the provider is closed and no answer is saved. Anything the model has already generated is lost."
+      data-confirm-accept="Stop"
+      class="flex-shrink-0">
+  <button type="submit" class="lt-btn lt-btn--sm lt-btn--danger">Stop</button>
+</form>

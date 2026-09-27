@@ -1,0 +1,187 @@
+# GitHub CI — the gate that merges.
+#
+# It says how to PROVISION a runner. It never says what to CHECK: every check is a
+# `task ci:*`, defined once in Taskfile.yml and called identically by
+# .forgejo/workflows/ci.yml, and `tests/test_ci_workflows.py` keeps the two in step. The
+# upside for a human: any red job below reproduces locally with one command.
+#
+# Jobs are independent and carry no `needs:`, so GitHub runs all six in parallel.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  # Callable, so `release.yml` gates publishing on the *same* jobs rather than a duplicated
+  # subset. `ci.yml` does not trigger on tags, so without this a tag push would go from
+  # "edit app/config.py" to "public archive" without running a single test.
+  workflow_call:
+    inputs:
+      # What to check out. A manual re-run of release.yml builds an existing tag, and without
+      # this every job below would test the default branch instead — a green gate over code
+      # that is not the code being published. Empty for push and pull_request: the event's own.
+      ref:
+        type: string
+        required: false
+        default: ""
+
+# One run per ref: a superseded push is cancelled. Deliberately NOT set on release.yml: a
+# cancelled release is worse than a slow one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Makes tests/test_postgres_sql_compat.py fail rather than skip if its server is missing.
+  CI: "true"
+
+jobs:
+  # ── Lint ───────────────────────────────────────────────────────────────────
+  #
+  # Its own job, off the matrix. `task check` is ruff twice plus a shellcheck per script,
+  # and `pyproject.toml` pins `target-version = "py311"`, so the result cannot depend on
+  # which interpreter runs it — running it in all three matrix legs would waste two thirds.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v4.2.2 — SHA-pinned like every other action here.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Set up PDM (with Python)
+        # pdm-project/setup-pdm v4.5 — third-party actions pinned to commit SHAs
+        uses: pdm-project/setup-pdm@973541a5febeafcfdadf8a51211435be6ecfd90f
+        with:
+          # The version the image ships and the one this is developed on, so a lint that
+          # passes here passes locally. Ruff's rules are version-independent; the reason to
+          # pin anything at all is reproducibility.
+          python-version: "3.14"
+          cache: true
+
+      - name: Provision
+        # The same shellcheck as the Forgejo runner. The runner image's own drifts, and a
+        # newer one flags what an older one passed — or the other way round.
+        run: bash scripts/ci-provision.sh shellcheck
+
+      - run: pdm install
+      - run: ./logstotal check
+
+  # ── The test suite, across the supported Python range ──────────────────────
+  test:
+    runs-on: ubuntu-latest
+    services:
+      # `tests/test_postgres_sql_compat.py` executes the app's own statements against a real
+      # PostgreSQL through asyncpg. Everything else runs on SQLite, which is permissive
+      # exactly where PostgreSQL is strict — an enum-vs-VARCHAR comparison passes there and
+      # 500s on PostgreSQL.
+      #
+      # There is no Redis service: conftest points app.redis_client at fakeredis
+      # and Huey's queue at MemoryStorage, so nothing in the suite reaches a broker. A real
+      # Redis is exercised by the deploy-smoke job below, against the real stack.
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: pgtest
+          POSTGRES_PASSWORD: pgtest
+          POSTGRES_DB: pgtest
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U pgtest"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor `pyproject.toml` declares and what Debian 12 — a documented
+        # target — ships. 3.14 is the ceiling: `requires-python = ">=3.11"` has no upper
+        # bound, and it is both what this project is developed on and what the Docker image
+        # ships (`Dockerfile`), so the endpoint and the shipped runtime are the same
+        # row. 3.12 stays as the middle — an operator running Path A on a distro's older
+        # interpreter is the case neither endpoint covers.
+        python-version: ["3.11", "3.12", "3.14"]
+
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+          # `test_the_declared_version_has_a_git_tag` asserts `git tag --list v<version>`
+          # is non-empty, and skips only when `.git` is absent. A shallow checkout leaves
+          # `.git` present with zero tags — so the test does not skip, it fails, and no
+          # amount of tagging fixes it from the runner's side. `fetch-tags` rather than
+          # `fetch-depth: 0`: the tags are all the test reads.
+          fetch-depth: 1
+          fetch-tags: true
+
+      - name: Set up PDM (with Python)
+        uses: pdm-project/setup-pdm@973541a5febeafcfdadf8a51211435be6ecfd90f
+        with:
+          python-version: "${{ matrix.python-version }}"
+          cache: true
+
+      - run: pdm install
+
+      - name: Test suite
+        env:
+          POSTGRES_TEST_URL: postgresql://pgtest:pgtest@127.0.0.1:5432/pgtest
+        run: ./logstotal ci:test
+
+  # ── What a release hands to an operator ────────────────────────────────────
+  #
+  # Unexercised, a .dockerignore gap ships credentials and a database dump inside every
+  # image unnoticed.
+  artifacts:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Provide 7z
+        # `./logstotal ci:artifacts` runs scripts/package.sh, which gates on `command -v 7z`.
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends p7zip-full
+
+      - name: Provide the Tailwind CLI
+        # What release.yml does, so the archive checked here is built the way a published
+        # one is: with the compiled stylesheet, not the Play-CDN fallback.
+        run: bash scripts/ci-provision.sh tailwind
+
+      - name: Compose parses, image builds, archive builds, neither ships a secret
+        run: ./logstotal ci:artifacts
+
+  # ── The deployment actually runs ───────────────────────────────────────────
+  #
+  # Everything above reasons *about* the deployment. This starts it: the real entrypoint,
+  # init_db.py, migrations in a container, a worker registering in Redis, and a log going
+  # in and findings coming out. Docker-path failures are environment-shaped and invisible
+  # to both code review and the test suite.
+  deploy-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Boot the stack, smoke it, analyse a log
+        run: ./logstotal ci:deploy
+
+  # ── The deploy chain, without a fleet ──────────────────────────────────────
+  #
+  # What it can prove: the chain completes, in order, touching no network. What it cannot:
+  # anything about a real remote shell — a real multi-host rehearsal owns that.
+  dry-run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Provision
+        run: bash scripts/ci-provision.sh shellcheck
+
+      - name: Shellcheck, then the whole chain against nothing
+        run: ./logstotal ci:dry-run

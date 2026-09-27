@@ -1,0 +1,25 @@
+{#
+  Analyst prose — the one place that decides how a note or a comment is displayed.
+
+  Every surface that renders user-written text goes through `rich_text()`: case notes,
+  entity notes and all three comment threads. Two reasons it is a macro rather than a bare
+  `| markdown` at each call site. The site setting has to be consulted in exactly one
+  place, or one forgotten `{% if %}` renders Markdown on an instance that turned it off.
+  And the *disabled* branch has to keep the plain rendering byte-for-byte —
+  `whitespace-pre-wrap`, which is what preserves an analyst's line breaks — so switching
+  the setting back is genuinely lossless.
+
+  `site_settings` may be absent, and the truthiness test below is deliberate rather than
+  lazy: a caller whose own context lacks the name passes Jinja's `Undefined`, which is NOT
+  `None` — so `is not none` would take the *disabled* branch and silently turn Markdown off
+  on that surface only. Both missing forms are falsy, so `site_settings and …` treats
+  either as "on", matching the column default.
+#}
+{% macro rich_text(value, site_settings=None, class="") %}
+{%- if not value -%}
+{%- elif site_settings and not site_settings.render_markdown -%}
+<div class="whitespace-pre-wrap leading-relaxed {{ class }}">{{ value }}</div>
+{%- else -%}
+<div class="lt-prose leading-relaxed {{ class }}">{{ value | markdown }}</div>
+{%- endif -%}
+{% endmacro %}

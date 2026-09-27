@@ -1,0 +1,108 @@
+{% from "intel/partials/_entity_type_badge.html" import type_badge %}
+{#
+  The nav bell. Two streams share it: watch-rule alerts (an entity matched your rule) and
+  job-watch events (something happened on a job you subscribed to). They branch on
+  `item.stream` rather than on which fields happen to be present — the second is how a
+  missing join quietly renders a blank row instead of failing.
+
+  The ack buttons post to different routes on purpose: the ids come from different tables,
+  and one route guessing which would turn an off-by-one into a cross-user acknowledgement.
+  Both target this region, so either kind of click leaves both halves consistent.
+#}
+<div id="watchlist-events-list" class="lt-menu lt-menu--flush w-96 max-w-[95vw] overflow-hidden">
+  <div class="flex items-center justify-between px-4 py-2.5 border-b border-gray-800">
+    <span class="text-sm font-medium text-gray-200">Alerts</span>
+    {% if items %}
+    <button hx-post="/intel/watchlist-events/ack-all"
+            hx-target="#watchlist-events-list"
+            hx-swap="outerHTML"
+            class="text-xs text-gray-400 hover:text-white transition">
+      Acknowledge all
+    </button>
+    {% endif %}
+  </div>
+
+  {% if not items %}
+  <div class="px-4 py-8 text-center text-sm text-gray-500">
+    Nothing unacknowledged.
+  </div>
+  {% else %}
+  <div class="lt-scroll lt-scroll--md divide-y divide-gray-800">
+    {% for item in items %}
+    <div class="flex items-start gap-2 px-4 py-3 hover:bg-gray-800/50 transition">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-1">
+          {#
+            Three streams, three badges. An `{% if %}`/`{% else %}` pair silently gave a
+            job-rule alert the job-watch treatment when the third arrived — same shape,
+            wrong words. Branch on every value the discriminator can take.
+          #}
+          {% if item.stream == 'rule' %}
+          {{ type_badge(item.entity.entity_type) }}
+          {% elif item.stream == 'jobrule' %}
+          <span class="text-[10px] px-2 py-0.5 rounded-full bg-amber-900/50 text-amber-300 border border-amber-700/40 font-medium whitespace-nowrap">Job matched</span>
+          {% else %}
+          <span class="text-[10px] px-2 py-0.5 rounded-full bg-blue-900/50 text-blue-300 border border-blue-700/40 font-medium whitespace-nowrap">{{ item.kind_label }}</span>
+          {% endif %}
+          <span class="text-xs text-gray-500"
+                {% if item.at %}title="{{ item.at.strftime('%Y-%m-%d %H:%M UTC') }}"{% endif %}>
+            {{ item.at | time_ago }}
+          </span>
+        </div>
+
+        {% if item.stream == 'rule' %}
+        <a href="/intel/entities/{{ item.entity.id }}" class="font-mono text-sm text-gray-200 hover:text-white block truncate" title="{{ item.entity.value }}">
+          {{ item.entity.value }}
+        </a>
+        <div class="flex items-center gap-2">
+          <a href="/jobs/{{ item.job.id }}" class="text-xs text-blue-400 hover:text-blue-300">Job #{{ item.job.id }}</a>
+          {% if item.rule %}<span class="text-xs text-gray-600 truncate" title="Matched by your rule: {{ item.rule.name }}">via {{ item.rule.name }}</span>{% endif %}
+        </div>
+        {% elif item.stream == 'jobrule' %}
+        {# No entity to name — the rule was about the job. The rule name carries the meaning
+           here, so it leads rather than trailing as an aside. #}
+        <a href="/jobs/{{ item.job.id }}" class="text-sm text-gray-200 hover:text-white block truncate" title="{{ item.rule.name if item.rule else '' }}">
+          {{ item.rule.name if item.rule else 'A rule matched this job' }}
+        </a>
+        <div class="flex items-center gap-2">
+          <a href="/jobs/{{ item.job.id }}" class="text-xs text-blue-400 hover:text-blue-300">Job #{{ item.job.id }}</a>
+          <span class="text-xs text-gray-600">matched your rule</span>
+        </div>
+        {% else %}
+        <a href="/jobs/{{ item.job.id }}" class="text-sm text-gray-200 hover:text-white block truncate">
+          {{ item.event.summary or 'Activity' }}
+        </a>
+        <div class="flex items-center gap-2">
+          <a href="/jobs/{{ item.job.id }}" class="text-xs text-blue-400 hover:text-blue-300">Job #{{ item.job.id }}</a>
+          <span class="text-xs text-gray-600">a job you are watching</span>
+        </div>
+        {% endif %}
+      </div>
+      {# Three tables, three id spaces, three ack routes — the reason `/jobs/watch-events/…`
+         was already separate from `/intel/watchlist-events/…`. #}
+      {% if item.stream == 'rule' %}{% set ack_url = '/intel/watchlist-events/' ~ item.id ~ '/ack' %}
+      {% elif item.stream == 'jobrule' %}{% set ack_url = '/intel/watchlist-events/job-rule/' ~ item.id ~ '/ack' %}
+      {% else %}{% set ack_url = '/jobs/watch-events/' ~ item.id ~ '/ack' %}{% endif %}
+      <button hx-post="{{ ack_url }}"
+              hx-target="#watchlist-events-list"
+              hx-swap="outerHTML"
+              title="Acknowledge"
+              class="text-gray-500 hover:text-emerald-400 transition flex-shrink-0">
+        <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"/></svg>
+      </button>
+    </div>
+    {% endfor %}
+  </div>
+  {% if total > limit %}
+  <div class="px-4 py-2 border-t border-gray-800 text-xs text-gray-500 text-center">
+    Showing latest {{ limit }} of {{ total }}.
+  </div>
+  {% endif %}
+  {% endif %}
+
+  {% if user and (user.is_superuser or user.role == 'member') %}
+  <div class="px-4 py-2 border-t border-gray-800">
+    <a href="/intel/rules" class="text-xs text-blue-400 hover:text-blue-300">Rules &amp; all alerts &rarr;</a>
+  </div>
+  {% endif %}
+</div>

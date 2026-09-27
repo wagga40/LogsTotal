@@ -1,0 +1,422 @@
+{% if ai_base is not defined %}{% set ai_base = "/jobs/" ~ job.id %}{% endif %}
+{% set ai_subject = ai_subject | default("job") %}
+{% from "partials/_rich_text.html" import rich_text %}
+{% from "partials/_copy_button.html" import copy_button with context %}
+{% from "partials/_markdown_help.html" import markdown_help with context %}
+{#
+  The AI Analysis pane. One partial for every state — empty, queued, running, finished,
+  failed, cancelled, abandoned — and its own swap target, the same self-contained-region
+  idiom as `_comment_thread.html` and `_case_notes.html`. Rendering every state here is what
+  keeps a POST reply and a poll from disagreeing: both go through `ai._render_panel`.
+
+  POLLING CONTRACT (the `_job_status.html` / `_bg_task_status.html` rule): the
+  `hx-trigger="every 3s"` is emitted **only while `is_active`**, so a finished run stops
+  polling by itself. Getting this backwards leaves every viewer of an old job issuing a
+  request every three seconds forever.
+
+  SWAP CONTRACT: `hx-swap="morph"` + `hx-ext="alpine-morph"`. The value is **exactly
+  `morph`**, with no `:outerHTML` suffix, and that is not cosmetic — it is the whole
+  difference between this region updating in place and being rebuilt three times a minute.
+
+  `htmx-ext-alpine-morph.js` matches `swapStyle === 'morph'` and nothing else. Give htmx
+  `morph:outerHTML` and the extension declines it, htmx's `default:` branch finds no
+  handler, and it falls through to `htmx.config.defaultSwapStyle` — **innerHTML**. Three
+  things then happen at once, and all three were reported as bugs: every child is destroyed
+  and recreated on each poll (visible flicker), the log <pre> is a brand-new element so its
+  scroll position resets mid-read, and — because innerHTML never touches the *outer*
+  element's attributes — `hx-trigger="every 3s"` survives on a region whose replacement no
+  longer carries it, so the polling never stops until the page is reloaded.
+
+  A real morph updates the region in place: node identity survives, so scroll position and
+  focus survive with it, and when the run finishes the poll attributes are morphed away and
+  the polling stops. `tests/test_alpine_bindings_initialize.py` pins the spelling against
+  the extension's own source, because every symptom of getting it wrong looks like a
+  different bug.
+
+  The model's answer is Markdown and goes through `rich_text()`, never a bare `| markdown`.
+  That is safe because `app/markdown_render.py` is configured so unsafe output is never
+  produced — `html=False` escapes raw HTML at the parser and `validateLink` rejects
+  javascript:/data: URLs — rather than being scrubbed afterwards.
+#}
+<div id="ai-analysis-region"
+     class="space-y-4"
+     {% if is_active %}
+     hx-get="{{ ai_base }}/ai-analysis-partial{% if analysis %}?analysis_id={{ analysis.id }}{% endif %}"
+     hx-trigger="every 3s"
+     hx-swap="morph"
+     hx-ext="alpine-morph"
+     {% endif %}>
+
+  {% if ai_subject == "case" %}
+  <p class="text-sm text-gray-400">Assess the linked evidence and analyst notes together. Reports are saved snapshots; run again after the case changes.</p>
+  {% endif %}
+  {% if message %}
+  <div class="rounded-lg border border-yellow-800/60 bg-yellow-900/20 px-4 py-3 text-sm text-yellow-200">{{ message }}</div>
+  {% endif %}
+
+  {# ── Controls ─────────────────────────────────────────────────────────── #}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+    {% if can_run and providers and can_run_now %}
+    <form hx-post="{{ ai_base }}/ai-analysis"
+          hx-target="#ai-analysis-region"
+          hx-swap="outerHTML"
+          class="lt-bar">
+      <div class="lt-ctl">
+        <label class="lt-ctl__label" for="ai-provider">Provider</label>
+        <select id="ai-provider" name="provider_id" class="lt-field lt-field--sm w-auto">
+          {% for p in providers %}
+          <option value="{{ p.id }}"{% if p.is_default %} selected{% endif %}>{{ p.name }} — {{ p.model }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary"{% if is_active %} disabled{% endif %}>
+        {% if history %}Run again{% else %}Analyse this {{ ai_subject }}{% endif %}
+      </button>
+      {% if is_active %}
+      <span class="text-xs text-gray-500">A run is already in progress.</span>
+      {% endif %}
+    </form>
+    {% elif can_run and not can_run_now %}
+    {#
+      The viewer may start a run; this job has nothing to start one on. Said plainly and
+      separately from "no provider", because the two have different remedies — one is wait,
+      the other is ask an admin.
+    #}
+    <p class="text-sm text-gray-400">
+      {% if ai_subject == "case" %}
+      Add a completed or partial job, or an entity, to this case before running an analysis.
+      {% else %}
+      {% set s = job.status.value if job.status.value is defined else job.status %}
+      {% if s in ('pending', 'running') %}
+      This job is still running. An AI analysis reads its findings, so it can be started once the analysis has finished — reload this page then.
+      {% else %}
+      This job {{ 'failed' if s == 'failed' else 'was cancelled' }} before producing findings, so there is nothing for a model to read.
+      {% endif %}
+      {% endif %}
+    </p>
+    {% elif can_run and not providers %}
+    <p class="text-sm text-gray-400">
+      No AI provider is configured yet.
+      {% if user and user.is_superuser %}
+      Add one on <a href="/admin/ai" class="text-blue-400 hover:text-blue-300">the AI providers page</a>.
+      {% else %}
+      Ask an administrator to add one.
+      {% endif %}
+    </p>
+    {% elif not history %}
+    <p class="text-sm text-gray-400">No AI analysis has been run for this {{ ai_subject }}.</p>
+    {% else %}
+    <p class="text-sm text-gray-400">Showing a previously generated analysis.</p>
+    {% endif %}
+
+    {#
+      History. Runs accumulate rather than overwrite (see JobAiAnalysis), so this is the
+      only way to reach an earlier answer — and, without a delete, the only way for a job to
+      collect twenty of them.
+
+      Still suppressed at one run: a picker with a single entry is a choice of one, and that
+      entry is the run already on screen. The single-run case is not left without a delete —
+      it gets the per-run control in the result card below, which is also what makes the
+      bulk selection here honestly optional rather than the only way to remove anything.
+
+      Wrapped in a bare `x-data` so `$refs` resolve to *this* form rather than to the page's
+      tab component. (`partials/_jobs_list_pane.html` wraps its table in a bare `x-data` too,
+      but for the other reason: Alpine only walks subtrees rooted at one.)
+    #}
+    {% if history | length > 1 %}
+    <div x-data class="mt-3 pt-3 border-t border-gray-800 space-y-2">
+      <div class="lt-bar">
+        <span class="lt-ctl__label">History ({{ history | length }})</span>
+
+        {% if manageable_ids %}
+        <label class="flex items-center gap-1.5 text-xs text-gray-400 cursor-pointer">
+          <input type="checkbox"
+                 class="lt-check"
+                 :checked="$store.aiRuns.allVisibleSelected()"
+                 @change="$store.aiRuns.setAllVisible($event.target.checked)">
+          Select all
+        </label>
+
+        {#
+          type="button" + requestSubmit(), not a submit button. The ids live in the store,
+          so they have to be written into the form *before* anything serializes it — doing
+          that inside a `submit` handler races htmx's own listener. Writing the value first
+          and then calling requestSubmit() has no ordering question in it at all.
+        #}
+        <form hx-post="{{ ai_base }}/ai-analysis/delete"
+              hx-target="#ai-analysis-region"
+              hx-swap="outerHTML"
+              x-ref="aiDeleteForm"
+              data-confirm-title="Delete analysis runs"
+              data-confirm-message="Permanently delete the selected AI analysis runs? The answers are not stored anywhere else."
+              data-confirm-accept="Delete"
+              x-show="$store.aiRuns.ids.length" x-cloak>
+          <input type="hidden" name="analysis_ids" x-ref="aiDeleteIds">
+          <button type="button"
+                  class="lt-btn lt-btn--xs lt-btn--danger"
+                  @click="$refs.aiDeleteIds.value = $store.aiRuns.ids.join(','); $refs.aiDeleteForm.requestSubmit()">
+            Delete <span x-text="$store.aiRuns.ids.length"></span>
+          </button>
+        </form>
+
+        <button type="button" class="lt-btn lt-btn--xs" x-show="$store.aiRuns.ids.length" x-cloak
+                @click="$store.aiRuns.clear()">Clear</button>
+        {% endif %}
+      </div>
+
+      {#
+        A list of rows, not a row of chips. The chips carried a time and a provider name and
+        nothing else, so choosing between "2 hours ago · OpenRouter" and "2 hours ago ·
+        OpenRouter" — the same provider, a different model, a different outcome — meant
+        clicking each in turn to find out. Comparing runs is the entire reason history is
+        kept, so the row shows what you would compare on: outcome, model, cost, and how long
+        it took. Selection sits in the same row as the thing being selected.
+      #}
+      <ul class="rounded-lg border border-gray-800 divide-y divide-gray-800/70 overflow-hidden">
+        {% for run in history %}
+        {% set rs = run.status.value %}
+        {% set current = analysis and run.id == analysis.id %}
+        <li class="flex items-center gap-2 px-2 py-1.5 text-xs {% if current %}bg-blue-950/30{% else %}hover:bg-gray-800/40{% endif %} transition-colors">
+          {% if run.id in manageable_ids %}
+          <input type="checkbox"
+                 data-ai-select="{{ run.id }}"
+                 class="lt-check"
+                 :checked="$store.aiRuns.has({{ run.id }})"
+                 @change="$store.aiRuns.toggle({{ run.id }})"
+                 aria-label="Select the run from {{ run.created_at }} for deletion">
+          {% else %}
+          <span class="w-4 shrink-0" aria-hidden="true"></span>
+          {% endif %}
+
+          {# Outcome at a glance. Written out per branch rather than through a map, because a
+             runtime-assembled Tailwind class name is invisible to the production CSS scanner
+             — the same rule as `_tag_chip.html::tag_classes`. #}
+          <span class="shrink-0 w-1.5 h-1.5 rounded-full
+            {% if rs == 'completed' %}bg-green-500{% elif rs == 'failed' %}bg-red-500{% elif rs == 'cancelled' %}bg-gray-600{% else %}bg-blue-500 animate-pulse{% endif %}"
+            title="{{ rs }}"></span>
+
+          <a href="{{ ai_base }}/ai-analysis-partial?analysis_id={{ run.id }}"
+             hx-get="{{ ai_base }}/ai-analysis-partial?analysis_id={{ run.id }}"
+             hx-target="#ai-analysis-region"
+             hx-swap="outerHTML"
+             class="flex-1 min-w-0 flex items-baseline gap-2 {% if current %}text-white{% else %}text-gray-300 hover:text-white{% endif %}">
+            <span class="truncate">{{ run.provider_name }}</span>
+            <span class="font-mono text-[11px] text-gray-500 truncate">{{ run.model }}</span>
+          </a>
+
+          <span class="shrink-0 text-gray-500 tabular-nums">{{ run.created_at | time_ago }}</span>
+          <span class="shrink-0 w-12 text-right text-gray-500 tabular-nums">
+            {%- if run.duration_ms %}{{ '%.0fs' % (run.duration_ms / 1000) }}{% endif -%}
+          </span>
+          <span class="shrink-0 w-24 text-right font-mono text-[11px] text-gray-600 tabular-nums">
+            {%- if run.input_tokens or run.output_tokens %}{{ run.input_tokens or '?' }}/{{ run.output_tokens or '?' }}{% endif -%}
+          </span>
+        </li>
+        {% endfor %}
+      </ul>
+    </div>
+    {% endif %}
+  </div>
+
+  {# ── Result ───────────────────────────────────────────────────────────── #}
+  {% if analysis %}
+  {% set status = analysis.status.value %}{# an Enum column, same as _bg_task_status.html #}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+    <div class="flex flex-wrap items-center justify-between gap-2 mb-4 pb-3 border-b border-gray-800">
+      <div class="flex items-center gap-2 text-xs text-gray-500">
+        <span class="text-gray-300 font-medium">{{ analysis.provider_name }}</span>
+        <span class="font-mono">{{ analysis.model }}</span>
+        {% if analysis.requested_by %}<span>· requested by {{ analysis.requested_by.display_name or analysis.requested_by.email }}</span>{% endif %}
+        <span>· {{ analysis.created_at | time_ago }}</span>
+      </div>
+      <div class="flex items-center gap-2 text-xs text-gray-500">
+        {% if analysis.prompt_chars %}<span title="Size of the brief sent to the model">{{ '{:,}'.format(analysis.prompt_chars) }} char brief</span>{% endif %}
+        {% if analysis.duration_ms %}<span>{{ '%.1fs' % (analysis.duration_ms / 1000) }}</span>{% endif %}
+        {% if analysis.input_tokens or analysis.output_tokens %}
+        <span class="font-mono">{{ analysis.input_tokens or '?' }} in / {{ analysis.output_tokens or '?' }} out</span>
+        {% endif %}
+      </div>
+    </div>
+
+    {% if is_stalled %}
+    {#
+      Pending/running, but nothing is behind it: for a running row the worker's heartbeat is
+      gone, for a pending one Huey has already discarded the task. Saying "in progress"
+      would have every viewer of this job re-requesting the partial every three seconds
+      indefinitely — and, worse, would be untrue.
+    #}
+    <div class="rounded-lg border border-yellow-800/60 bg-yellow-900/20 px-4 py-3">
+      <p class="text-sm text-yellow-200 font-medium mb-1">This run never reported back</p>
+      <p class="text-xs text-yellow-200/80">
+        {% if status == 'pending' %}
+        It waited in the queue longer than a queued task survives, so no worker will pick it up — usually the worker fleet was down when it was submitted.
+        {% else %}
+        No worker is processing it any more, which usually means the worker was restarted while it was running.
+        {% endif %}
+        Nothing was recorded.{% if analysis.id in manageable_ids %} Use Stop below to close it off, then run it again.{% elif can_run %} Run it again above.{% endif %}
+      </p>
+    </div>
+    {% if analysis.id in manageable_ids %}
+    <div class="mt-3">{% include "partials/_ai_stop_button.html" %}</div>
+    {% endif %}
+
+    {% elif status in ('pending', 'running') %}
+    <div class="flex items-center justify-between gap-3 py-6">
+      <div class="flex items-center gap-3 text-sm text-blue-300">
+        <svg class="animate-spin h-4 w-4" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+        <span>
+          {% if status == 'pending' %}Queued — waiting for a worker…{% else %}The model is reading this {{ ai_subject }}'s {{ 'evidence' if ai_subject == 'case' else 'findings' }}…{% endif %}
+          <span class="text-gray-500 block mt-1">This runs in the background. You can leave this tab or the page and come back.</span>
+        </span>
+      </div>
+      {% if analysis.id in manageable_ids %}
+      {% include "partials/_ai_stop_button.html" %}
+      {% endif %}
+    </div>
+
+    {% elif status == 'failed' %}
+    <div class="rounded-lg border border-red-900/60 bg-red-900/20 px-4 py-3">
+      <p class="text-sm text-red-300 font-medium mb-1">The analysis failed</p>
+      {# The detail can name the provider's internal host or quote a proxy's error page, so
+         it goes to an admin and to whoever started the run — the people who can act on it.
+         Tool errors on the same job page are gated the same way. #}
+      {% if user and (user.is_superuser or analysis.id in manageable_ids) %}
+      <p class="text-xs text-red-200/80">{{ analysis.error_message or 'No error detail was recorded.' }}</p>
+      {% else %}
+      <p class="text-xs text-red-200/80">The provider did not return an answer for this run.</p>
+      {% endif %}
+    </div>
+
+    {% elif status == 'cancelled' %}
+    <div class="rounded-lg border border-gray-700/60 bg-gray-800/30 px-4 py-3">
+      <p class="text-sm text-gray-300 font-medium mb-1">This run was stopped</p>
+      <p class="text-xs text-gray-400">
+        It was cancelled before it produced an answer, so nothing was saved.{% if can_run %} Run it again above.{% endif %}
+      </p>
+    </div>
+
+    {% else %}
+    {#
+      The answer gets a card of its own, the same shape a comment gets in
+      `_comment_thread.html`: a sunken panel, a baseline header naming who said it and
+      when, right-aligned actions, then the body. Rendered bare inside the metadata card
+      above, a model's assessment would sit at the same level as the token count — the one
+      piece of prose on the page with no frame around it.
+    #}
+    <div class="bg-gray-950/60 border border-gray-800 rounded-lg px-4 py-3">
+      <div class="flex items-baseline gap-2 mb-2">
+        <span class="text-sm font-medium text-gray-200">{{ analysis.provider_name }}</span>
+        <span class="text-xs text-gray-500 font-mono">{{ analysis.model }}</span>
+        <span class="text-xs text-gray-500" {% if analysis.created_at %}title="{{ analysis.created_at.strftime('%Y-%m-%d %H:%M UTC') }}"{% endif %}>{{ analysis.created_at | time_ago }}</span>
+        <span class="ml-auto flex items-center gap-2">
+          {{ markdown_help(site_settings) }}
+          {#
+            Copies the **Markdown source**, not the rendered text — which is why it reads
+            from a hidden <pre> rather than the prose div. Every other copy button in the
+            app copies `textContent` off what is on screen; here that would hand you a
+            wall of unformatted paragraphs and silently lose every table and diagram.
+
+            It goes through the one handler in app.js like every other copy button, but its
+            target is special:
+            `target=` names a hidden <pre>, where the others copy from the sibling
+            element the reader can see.
+          #}
+          {{ copy_button(target='ai-markdown-' ~ analysis.id, variant='bare', label='Copy Markdown', title='Copy this analysis as Markdown') }}
+        </span>
+      </div>
+
+      <div class="text-sm text-gray-300">{{ rich_text(analysis.content, site_settings) }}</div>
+
+      {# The source the button copies. `hidden` rather than a zero-size box: the handler
+         reads textContent, which a display:none element still carries. #}
+      <pre id="ai-markdown-{{ analysis.id }}" hidden>{{ analysis.content }}</pre>
+
+      <p class="mt-4 pt-3 border-t border-gray-800 text-[11px] text-gray-600">
+        Generated by a language model from this {{ ai_subject }}'s {{ 'evidence' if ai_subject == 'case' else 'findings' }}. Treat it as a starting point for
+        investigation, not as a verdict — verify anything you act on against the findings themselves.
+      </p>
+    </div>
+    {% endif %}
+
+    {#
+      Per-run delete, for the run currently on screen. Terminal-only: a worker holding a
+      live row is about to commit to it, and deleting underneath it turns a clean cancel
+      into a lost update — the route refuses it too, this just does not offer it.
+
+      It is not a duplicate of the bulk control above. That one only appears once a job has
+      collected more than one run; this is what makes a single unwanted answer removable,
+      which is the common case.
+    #}
+    {% if analysis.id in manageable_ids and status in ('completed', 'failed', 'cancelled') %}
+    <div x-data class="mt-4 pt-3 border-t border-gray-800">
+      <form hx-post="{{ ai_base }}/ai-analysis/delete"
+            hx-target="#ai-analysis-region"
+            hx-swap="outerHTML"
+            data-confirm-title="Delete this analysis run"
+            data-confirm-message="Permanently delete this run? The answer is not stored anywhere else."
+            data-confirm-accept="Delete">
+        <input type="hidden" name="analysis_ids" value="{{ analysis.id }}">
+        <button type="submit" class="lt-btn lt-btn--xs lt-btn--danger">Delete this run</button>
+      </form>
+    </div>
+    {% endif %}
+
+    {#
+      Verbose trace. Admin-only, the same gate `_job_status.html` puts on "Show logs" and
+      for the same reason: it names the provider's base URL and the exact model, which is
+      deployment detail rather than analysis. Unlike that one it renders **while the run is
+      still going**, which is the entire point — "is this actually working?" is a question
+      about a run in flight, not a finished one.
+
+      The disclosure flag lives in `Alpine.store('aiRuns').open`, keyed by run id, so the
+      3s poll re-rendering this block cannot slam it shut mid-read.
+    #}
+    {% if ai_subject == "case" and analysis.evidence_captured_at %}
+    <p class="mt-3 text-xs text-gray-500">Evidence captured {{ analysis.evidence_captured_at.strftime("%Y-%m-%d %H:%M UTC") }}. Access to every source job is required to read this report.</p>
+    {% endif %}
+    {% set show_prompt = user and user.is_superuser and analysis.prompt_text and site_settings and site_settings.show_ai_prompt %}
+    {% if user and user.is_superuser and (analysis.log_output or show_prompt) %}
+    <div x-data class="mt-4 pt-3 border-t border-gray-800 space-y-2">
+      <div class="lt-bar">
+        {% if analysis.log_output %}
+        <button type="button"
+                class="lt-btn lt-btn--xs"
+                @click="$store.aiRuns.toggleOpen({{ analysis.id }})"
+                :class="$store.aiRuns.isOpen({{ analysis.id }}) ? 'lt-btn--active' : ''">
+          <span x-text="$store.aiRuns.isOpen({{ analysis.id }}) ? 'Hide run log' : 'Show run log'">Show run log</span>
+        </button>
+        {% endif %}
+        {#
+          The brief exactly as it was sent. Not a reconstruction: the worker stores the
+          rendered string before the request goes out, so what is shown here is the bytes
+          that left the instance — which is the only form in which "is it safe to point this
+          at a hosted model?" can actually be answered. Admin-only and gated on the site
+          setting; see SiteSettings.show_ai_prompt, which governs storage as well as display.
+        #}
+        {% if show_prompt %}
+        <button type="button"
+                class="lt-btn lt-btn--xs"
+                @click="$store.aiRuns.togglePrompt({{ analysis.id }})"
+                :class="$store.aiRuns.isPromptOpen({{ analysis.id }}) ? 'lt-btn--active' : ''">
+          <span x-text="$store.aiRuns.isPromptOpen({{ analysis.id }}) ? 'Hide prompt sent' : 'Show prompt sent'">Show prompt sent</span>
+        </button>
+        <span class="text-[11px] text-gray-600">{{ '{:,}'.format(analysis.prompt_text | length) }} characters sent to {{ analysis.provider_name }}</span>
+        {% endif %}
+      </div>
+
+      {# max-h-64 + overflow-y-auto, matching the tool-log <pre> in _job_status.html.
+         Deliberately not `.lt-scroll`: that primitive is for a flat list of uniform rows
+         with a pager under it, which neither a log nor a prompt is. #}
+      {% if analysis.log_output %}
+      <pre x-show="$store.aiRuns.isOpen({{ analysis.id }})" x-cloak
+           class="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words bg-gray-950 rounded p-3 max-h-64 overflow-y-auto">{{ analysis.log_output | e }}</pre>
+      {% endif %}
+      {% if show_prompt %}
+      <pre x-show="$store.aiRuns.isPromptOpen({{ analysis.id }})" x-cloak
+           class="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words bg-gray-950 rounded p-3 max-h-96 overflow-y-auto">{{ analysis.prompt_text | e }}</pre>
+      {% endif %}
+    </div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>

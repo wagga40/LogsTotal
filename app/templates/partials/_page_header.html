@@ -1,0 +1,59 @@
+{#
+  The page header every top-level page and every admin sub-page wears.
+
+  Two destinations, and the distinction is the point:
+
+  * a **top-level page** goes back to Home (`/`);
+  * an **admin sub-page** goes back to `/admin#manage` — the Manage tab it was launched
+    from, not the Overview tab a bare `/admin` lands on.
+
+  `#manage` works because `resourceTabs.init()` reads `location.hash` on load
+  (`app/static/app.js`). It works for a **cross-page** link only: the component registers no
+  `hashchange` listener, so a same-document `#manage` link would move the URL and leave the
+  pane where it was. Never put one of these on `/admin` itself.
+
+  There is deliberately **no `intro` parameter**. Four of the pages that want one need Jinja
+  inside it (a pluralised count) or a literal em-dash that autoescaping would mangle into
+  `&amp;mdash;`, so a shared parameter would be bypassed by a fifth of its call sites.
+  Each page writes its own `<p class="text-sm text-gray-500 mb-6">`
+  underneath.
+
+  Use `{% call %}` for a right-hand action:
+
+      {% call page_header('Analysis Jobs', '/', 'Home') %}
+        <a href="/" class="...">+ New Analysis</a>
+      {% endcall %}
+
+  `pills=` is a list of `(label, tone)` pairs rendered immediately after the title — "what
+  is on this page, in one number". It has to be a parameter rather than the `{% call %}`
+  slot, because that slot is on the far right and already spoken for by the action button.
+
+      {{ page_header('Users', '/admin#manage', 'Manage',
+                     pills=[('%d users' % total_users, 'gray'), ('%d admins' % total_admins, 'blue')]) }}
+#}
+{% from "partials/_count_pill.html" import count_pills %}
+{% macro page_header(title, back_href='', back_label='', pills=None) %}
+{#
+  `items-center`, not `items-start`: the back link sits inline beside the title, so a
+  right-hand action has to level with the 24px heading rather than the 14px link.
+
+  Both halves of `back` are required together — with two independent arguments a caller can
+  pass the label alone and get an unlinked word floating in the header, which renders
+  perfectly and does nothing.
+
+  The pills are a sibling of the `<h1>`, not a child: `truncate` is what keeps a long title
+  from pushing the action off the row, and it would clip anything inside it. `shrink-0`
+  means a narrow viewport truncates the title rather than squeezing the counts, which is
+  the right way round — the number is the part you came for.
+#}
+<div class="flex items-center justify-between gap-4 mb-6">
+  <div class="flex items-center gap-3 min-w-0">
+    {% if back_href and back_label %}
+    <a href="{{ back_href }}" class="text-gray-500 hover:text-gray-300 text-sm whitespace-nowrap">&larr; {{ back_label }}</a>
+    {% endif %}
+    <h1 class="text-2xl font-bold text-white truncate">{{ title }}</h1>
+    {% if pills %}<div class="flex items-center gap-1.5 shrink-0">{{ count_pills(pills) }}</div>{% endif %}
+  </div>
+  {% if caller is defined %}<div class="flex items-center gap-2 shrink-0">{{ caller() }}</div>{% endif %}
+</div>
+{% endmacro %}

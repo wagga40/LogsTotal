@@ -1,0 +1,51 @@
+---
+title: Splashtop (Remote Monitoring and Management tool)
+group: MFT
+description: Splashtop (remote management tool) artifacts
+authors:
+  - Krzysztof Kuzin
+
+
+kind: mft
+level: medium
+status: stable
+timestamp: StandardInfoCreated
+
+
+fields:
+  - name: FileNamePath
+    to: FullPath
+  - name: StandardInfoLastModified0x10
+    to: StandardInfoLastModified
+  - name: StandardInfoLastAccess0x10
+    to: StandardInfoLastAccess
+  - name: FileNameCreated0x30
+    to: FileNameCreated
+  - name: FileNameLastModified0x30
+    to: FileNameLastModified
+  - name: FileNameLastAccess0x30
+    to: FileNameLastAccess
+  - name: FileSize
+    to: FileSize
+  - name: IsADirectory
+    to: IsADirectory
+  - name: IsDeleted
+    to: IsDeleted
+  - name: HasAlternateDataStreams
+    to: HasAlternateDataStreams
+  - name: DataStreams
+    to: DataStreams
+
+filter:
+  condition: splashtop
+
+  splashtop:
+    FullPath:
+      - 'i*strwinclt.exe*'
+      - 'i*SRAgent.sqlite3*'
+      - 'i*SRFeature.exe*'
+      - 'i*SRUtility.exe*'
+      - 'i*SSUAgent.exe*'
+      - 'i*SRAgent.exe*'
+      - 'i*SRService.exe*'
+      - 'i*SSUAgent.exe*'

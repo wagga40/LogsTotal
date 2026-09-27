@@ -1,0 +1,488 @@
+{% extends "base.html" %}
+{% from "partials/_help_popover.html" import help_popover %}
+{% from "partials/_page_header.html" import page_header %}
+{% from "partials/_icons.html" import icon with context %}
+{% block title %}Intel Dashboard – LogsTotal{% endblock %}
+
+{% block content %}
+<div x-data="{
+  entityType: new URLSearchParams(location.search).get('type') || '',
+  searchQuery: new URLSearchParams(location.search).get('q') || '',
+  watchlistOnly: new URLSearchParams(location.search).get('watchlist') === '1',
+  since: new URLSearchParams(location.search).get('since') || '',
+  minJobs: parseInt(new URLSearchParams(location.search).get('min_jobs') || '0', 10) || 0,
+  includeAllowlisted: new URLSearchParams(location.search).get('include_allowlisted') !== '0',
+  sort: new URLSearchParams(location.search).get('sort') || 'last_seen',
+  page: parseInt(new URLSearchParams(location.search).get('page') || '1', 10) || 1,
+  tags: (new URLSearchParams(location.search).get('tags') || '').split(',').filter(Boolean),
+  {# Server-resolved: the id is visibility-checked there, and an id the viewer may not
+     see never reaches the client. Only the integer is interpolated into this attribute
+     — the filename is rendered as an escaped text node in the chip below, because
+     `| tojson` emits double quotes and this x-data attribute is double-quoted. #}
+  jobId: {{ job_context.id if job_context else 0 }},
+  advancedOpen: false,
+  {# Debounce handle for the search box's @input. Must stay declared here: Alpine evaluates
+     bindings with `with(scope)`, so a bare `searchTimeout` that is not a property of this
+     object throws `ReferenceError` on the *read* in `clearTimeout(searchTimeout)` — the
+     handler dies before it can schedule anything and typing stops refreshing the table,
+     while the page still renders and every route test still passes. #}
+  searchTimeout: null,
+  clearJob() { this.jobId = 0; },
+  hasAdvancedFilters() {
+    // Tags are deliberately NOT counted here: they are a primary filter with their own
+    // chips in the main bar, not something hidden behind the Advanced toggle.
+    return this.since || this.minJobs > 0 || !this.includeAllowlisted || this.sort !== 'last_seen';
+  },
+  toggleTag(t) {
+    if (!t) return;
+    const i = this.tags.indexOf(t);
+    if (i === -1) this.tags.push(t); else this.tags.splice(i, 1);
+  },
+  syncUrl() {
+    const params = new URLSearchParams();
+    if (this.entityType) params.set('type', this.entityType);
+    if (this.searchQuery) params.set('q', this.searchQuery);
+    if (this.tags.length) params.set('tags', this.tags.join(','));
+    if (this.watchlistOnly) params.set('watchlist', '1');
+    if (this.since) params.set('since', this.since);
+    if (this.minJobs > 0) params.set('min_jobs', String(this.minJobs));
+    if (!this.includeAllowlisted) params.set('include_allowlisted', '0');
+    if (this.sort !== 'last_seen') params.set('sort', this.sort);
+    if (this.jobId) params.set('job', String(this.jobId));
+    if (this.page > 1) params.set('page', String(this.page));
+    const qs = params.toString();
+    history.replaceState({}, '', location.pathname + (qs ? ('?' + qs) : ''));
+  },
+  triggerRefresh(resetPage = true) {
+    if (resetPage) this.page = 1;
+    this.syncUrl();
+    $nextTick(() => htmx.trigger('#entity-table-region', 'filterChange'));
+  },
+  clearAllFilters() {
+    this.entityType = '';
+    this.searchQuery = '';
+    this.tags = [];
+    this.watchlistOnly = false;
+    this.since = '';
+    this.minJobs = 0;
+    this.includeAllowlisted = true;
+    this.sort = 'last_seen';
+    this.clearJob();
+    this.triggerRefresh(true);
+  },
+  {# Quick filters add to searchQuery rather than overwrite it — overwriting would allow one
+     at a time and silently destroy whatever the analyst had typed. Terms AND, so toggling a
+     chip adds or removes exactly its own token and leaves the rest of the query alone. #}
+  {# A quoted run is one term, as the server's tokenizer reads it, so a chip for a tag with a
+     space toggles as a unit. `\x22` rather than a literal quote: this whole object sits in a
+     double-quoted x-data attribute. #}
+  queryTokens() {
+    return (this.searchQuery || '').match(/\x22[^\x22]*\x22|\S+/g) || [];
+  },
+  toggleQueryToken(token) {
+    const parts = this.queryTokens();
+    const i = parts.indexOf(token);
+    if (i === -1) parts.push(token); else parts.splice(i, 1);
+    this.searchQuery = parts.join(' ');
+    this.triggerRefresh(true);
+  },
+  hasQueryToken(token) {
+    return this.queryTokens().indexOf(token) !== -1;
+  },
+  {# Mirrors queries.py::_is_boolean closely enough for the UI decision below: bare
+     uppercase OR/AND, or parentheses. It only ever suppresses chips, so erring toward
+     "boolean" costs an affordance rather than corrupting a query. #}
+  isBooleanQuery() {
+    const q = this.searchQuery || '';
+    return /(^|\s)(OR|AND)(\s|$)/.test(q) || /[()]/.test(q);
+  },
+  {# Only the structured terms become removable chips. A free-text phrase stays in the
+     search box where it was typed — turning it into a chip would imply it can be toggled
+     independently, which it cannot.
+
+     A boolean query gets no chips at all, for the same reason taken one step further: its
+     terms are *not* independent. Splitting `(tag:a OR tag:b) label:c` on whitespace yields
+     `tag:b)`, which looks like a removable chip and takes the closing parenthesis with it
+     when clicked, leaving a query that no longer parses. #}
+  queryTokens() {
+    if (this.isBooleanQuery()) return [];
+    return (this.searchQuery || '').split(/\s+/).filter(Boolean)
+      .filter(t => /^-?(label|tag|attr|list|cidr|re|job|type):/i.test(t));
+  },
+  advancedSummary() {
+    const out = [];
+    if (this.since) out.push({ key: 'since', label: 'since ' + this.since });
+    if (this.minJobs > 0) out.push({ key: 'minJobs', label: '≥ ' + this.minJobs + ' jobs' });
+    if (this.watchlistOnly) out.push({ key: 'watchlistOnly', label: 'watched only' });
+    if (!this.includeAllowlisted) out.push({ key: 'includeAllowlisted', label: 'allowlisted hidden' });
+    if (this.sort !== 'last_seen') out.push({ key: 'sort', label: 'sort: ' + this.sort });
+    return out;
+  },
+  clearAdvanced(key) {
+    if (key === 'since') this.since = '';
+    else if (key === 'minJobs') this.minJobs = 0;
+    else if (key === 'watchlistOnly') this.watchlistOnly = false;
+    else if (key === 'includeAllowlisted') this.includeAllowlisted = true;
+    else if (key === 'sort') this.sort = 'last_seen';
+    this.triggerRefresh(true);
+  },
+  {# Drives both the Filters badge and whether the chip strip renders at all. Free text is
+     deliberately excluded: it is already visible in the search box. #}
+  activeFilterCount() {
+    return (this.jobId ? 1 : 0) + this.tags.length + this.queryTokens().length + this.advancedSummary().length;
+  },
+  exportQs() {
+    let qs = '';
+    if (this.entityType) qs += '&types=' + encodeURIComponent(this.entityType);
+    if (this.since) qs += '&since=' + encodeURIComponent(this.since);
+    return qs;
+  }
+}">
+
+  {{ page_header("Intel", "/", "Home") }}
+  <p class="text-sm text-gray-400 -mt-4 mb-6">Entities extracted from analyzed logs. Click any entity to investigate its connections, MITRE techniques, and timeline.</p>
+
+  {#
+    No section tab strip. Rules and Tags are top-level destinations — they act on jobs as
+    well as entities — so a strip here would hold a single tab plus links to pages the global
+    nav lists forty pixels above. Cases and unacknowledged alerts are tiles in the stats row
+    below. The dashboard is the entity dashboard.
+  #}
+
+  <div>
+  <!-- Stats row — compact, display-only -->
+  <div class="grid grid-cols-3 sm:grid-cols-6 gap-2 mb-6">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
+      <div class="text-lg font-bold text-white">{{ total_entities }}</div>
+      <div class="text-[11px] text-gray-400">Total Entities</div>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
+      <div class="text-lg font-bold text-blue-400">{{ jobs_with_entities }}</div>
+      <div class="text-[11px] text-gray-400">Jobs Analyzed</div>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
+      <div class="text-lg font-bold text-yellow-400">{{ watchlisted_count }}</div>
+      <div class="text-[11px] text-gray-400">Watchlisted</div>
+    </div>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
+      <div class="text-lg font-bold text-green-400">{{ allowlisted_count }}</div>
+      <div class="text-[11px] text-gray-400">Allowlisted</div>
+    </div>
+    <a href="/intel/cases" class="bg-gray-900 border border-gray-800 rounded-xl p-3 hover:border-gray-600 transition">
+      <div class="text-lg font-bold text-purple-400">{{ cases_count }}</div>
+      <div class="text-[11px] text-gray-400">Cases</div>
+    </a>
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-3">
+      <div class="text-lg font-bold {% if unacked_alerts %}text-red-400{% else %}text-gray-500{% endif %}">{{ unacked_alerts }}</div>
+      <div class="text-[11px] text-gray-400">Unacked Alerts</div>
+    </div>
+  </div>
+
+  {#
+    One search row and one panel, rather than bands of controls before the first result:
+    search + type + Filters + toolbar on one line; every active filter in one chip strip that
+    appears only when something is active; everything else behind Filters.
+  #}
+  <div class="lt-bar mb-3">
+    {#
+      Nested x-data: `searchSuggest()` reaches searchQuery / searchTimeout / triggerRefresh
+      through Alpine's scope proxy, the same way savedSearchManager below does.
+
+      `focusout` on the container rather than `blur` on the input, and `relatedTarget` to
+      tell whether focus actually left — clicking a suggestion blurs the input, and closing
+      on that would unmount the row before its handler ran. The same trap _tag_combobox
+      documents; the option rows use `@mousedown.prevent` for the same reason.
+    #}
+    <div class="flex-1 min-w-[260px] relative" x-data="searchSuggest()"
+         @focusout="if (!$event.currentTarget.contains($event.relatedTarget)) close()">
+      <input type="text" placeholder="Search entities…  type:ip  job:42  tag:apt28  label:lolbin AND (job:7 OR job:9)" x-model="searchQuery"
+             x-ref="search" autocomplete="off" spellcheck="false"
+             @input="clearTimeout(searchTimeout); searchTimeout = setTimeout(() => triggerRefresh(true), 300); schedule()"
+             {# Arrow keys and clicks move the caret without changing the value, so `input`
+                alone would leave the list describing the wrong term. #}
+             @keyup.arrow-left="schedule()" @keyup.arrow-right="schedule()" @click="schedule()"
+             @keydown="onKey($event)"
+             class="lt-field lt-field--clearable w-full">
+      <button type="button" x-show="searchQuery" x-cloak
+              @click="searchQuery = ''; close(); triggerRefresh(true)"
+              class="absolute right-2 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-sm"
+              title="Clear search">&times;</button>
+
+      {# Labels and details are tag names and uploaded filenames — bound with x-text, never
+         interpolated into markup. Same rule as _add_to_case_dialog.html. #}
+      <div x-show="open" x-cloak data-search-suggest
+           class="lt-menu absolute left-0 right-0 top-full mt-1 lt-scroll lt-scroll--sm">
+        <template x-for="(item, i) in items" :key="item.insert">
+          <button type="button" @mousedown.prevent="pick(item)" @mouseenter="highlight = i"
+                  :class="highlight === i ? 'bg-gray-800' : ''"
+                  class="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-800 transition">
+            <span class="font-mono text-xs text-gray-200" x-text="item.label"></span>
+            <span class="ml-auto text-[10px] text-gray-500 truncate max-w-[55%]" x-text="item.detail"></span>
+          </button>
+        </template>
+      </div>
+    </div>
+
+    {# Beside the box, like every other search in the app — help two clicks and a scroll
+       away from the field it describes drifts out of date without anyone noticing. #}
+    {{ help_popover('Search help', rows=entity_syntax_help, align='left', width='lg', intro=entity_syntax_intro) }}
+
+    <select x-model="entityType" @change="triggerRefresh(true)" class="lt-field">
+      <option value="">All types</option>
+      {% for etype, meta in entity_type_meta.items() %}
+      {% if type_counts.get(etype, 0) > 0 %}
+      <option value="{{ etype }}">{{ meta.label }} ({{ type_counts.get(etype, 0) }})</option>
+      {% endif %}
+      {% endfor %}
+    </select>
+
+    <button type="button" @click="advancedOpen = !advancedOpen"
+            :class="(advancedOpen || activeFilterCount() > 0) ? 'lt-btn--active' : ''"
+            class="lt-btn">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M3 4a1 1 0 011-1h16a1 1 0 011 1v2.586a1 1 0 01-.293.707l-6.414 6.414a1 1 0 00-.293.707V17l-4 4v-6.586a1 1 0 00-.293-.707L3.293 7.293A1 1 0 013 6.586V4z"/></svg>
+      Filters
+      <span x-show="activeFilterCount() > 0" x-cloak
+            class="text-[10px] px-1.5 py-0.5 rounded-full bg-blue-700 text-white" x-text="activeFilterCount()"></span>
+    </button>
+
+    <div class="ml-auto flex items-center gap-2" x-data="savedSearchManager()">
+      <div class="relative">
+        <button type="button" @click="togglePanel()" :class="open ? 'lt-btn--active' : ''" class="lt-btn">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 5a2 2 0 012-2h10a2 2 0 012 2v16l-7-3.5L5 21V5z"/></svg>
+          Saved <span class="opacity-60">&#9662;</span>
+        </button>
+        <div x-show="open" x-cloak @click.outside="open = false"
+             class="lt-menu lt-menu--flush absolute right-0 mt-2 w-72 p-3">
+          <div id="saved-searches-region" hx-get="/intel/saved-searches-partial?scope=entities" hx-trigger="reloadSavedSearches from:body, load" hx-swap="innerHTML">
+            <p class="text-xs text-gray-500 px-2 py-2">Loading…</p>
+          </div>
+          <div class="border-t border-gray-800 mt-2 pt-2 lt-bar">
+            <input type="text" x-model="newName" placeholder="Save current filters as…" class="lt-field lt-field--sm flex-1 min-w-0">
+            <label class="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">
+              <input type="checkbox" x-model="newShared" class="lt-check">
+              shared
+            </label>
+            <button type="button" @click="save()" :disabled="!newName.trim()" class="lt-btn lt-btn--sm lt-btn--primary flex-shrink-0">Save</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="relative" x-data="{ exportOpen: false }">
+        <button type="button" @click="exportOpen = !exportOpen" :class="exportOpen ? 'lt-btn--active' : ''" class="lt-btn">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Export <span class="opacity-60">&#9662;</span>
+        </button>
+        <div x-show="exportOpen" x-cloak @click.outside="exportOpen = false"
+             class="lt-menu absolute right-0 mt-2 w-64">
+          <p class="px-3 pb-1 text-[10px] text-gray-500 uppercase tracking-wide">IOC feed</p>
+          <a :href="'/intel/ioc-feed?format=json' + exportQs()" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">JSON</a>
+          <a :href="'/intel/ioc-feed?format=csv' + exportQs()" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">CSV</a>
+          <a :href="'/intel/ioc-feed?format=stix' + exportQs()" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">STIX 2.1 bundle</a>
+          <a :href="'/intel/ioc-feed?format=misp' + exportQs()" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">MISP event</a>
+          <div class="border-t border-gray-800 my-1"></div>
+          <a href="/intel/mitre-layer" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">MITRE Navigator layer <span class="text-gray-500">(all jobs)</span></a>
+          <p class="px-3 pt-1.5 text-[10px] text-gray-600 border-t border-gray-800 mt-1">Respects Type and Since filters. Allowlisted entities are always excluded. Search/watchlist filters do not apply.</p>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  {# Every active filter in one strip, each removable where it sits. Appears only when
+     something is on, so a clean dashboard shows no filter chrome at all. #}
+  <div x-show="activeFilterCount() > 0" x-cloak class="flex flex-wrap items-center gap-1.5 mb-4">
+    <span class="text-[10px] text-gray-500 uppercase tracking-wide mr-1">Filters</span>
+
+    <button type="button" x-show="jobId" x-cloak @click="clearJob(); triggerRefresh(true)"
+            class="lt-btn lt-btn--sm lt-btn--pill lt-btn--active" title="Remove the job filter">
+      job #<span x-text="jobId"></span>{% if job_context %} · {{ job_context.label }}{% endif %}
+      <span class="opacity-60">&times;</span>
+    </button>
+    {# The chip removes the filter; these two follow it. Both are plain links because the
+       job id is already in Alpine state and neither destination is a dashboard filter. #}
+    <a x-show="jobId" x-cloak :href="'/intel/jobs/' + jobId + '/findings'"
+       class="lt-btn lt-btn--sm lt-btn--pill" title="Every finding in this job, with its entities">findings</a>
+    <a x-show="jobId" x-cloak :href="'/jobs/' + jobId"
+       class="lt-btn lt-btn--sm lt-btn--pill" title="Open the job page">job page &rarr;</a>
+
+    <template x-for="t in tags" :key="t">
+      <button type="button" @click="toggleTag(t); triggerRefresh(true)" class="lt-btn lt-btn--sm lt-btn--pill lt-btn--active">
+        tag:<span x-text="t"></span><span class="opacity-60">&times;</span>
+      </button>
+    </template>
+
+    <template x-for="tok in queryTokens()" :key="tok">
+      <button type="button" @click="toggleQueryToken(tok)" class="lt-btn lt-btn--sm lt-btn--pill lt-btn--active">
+        <span x-text="tok"></span><span class="opacity-60">&times;</span>
+      </button>
+    </template>
+
+    <template x-for="f in advancedSummary()" :key="f.key">
+      <button type="button" @click="clearAdvanced(f.key)" class="lt-btn lt-btn--sm lt-btn--pill">
+        <span x-text="f.label"></span><span class="opacity-60">&times;</span>
+      </button>
+    </template>
+
+    <button type="button" @click="clearAllFilters()" class="text-[11px] text-gray-500 hover:text-gray-300 ml-1">clear all</button>
+  </div>
+
+  <!-- Filters panel -->
+  <div x-show="advancedOpen" x-cloak x-transition.opacity
+       class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6 space-y-5">
+
+    {#
+      One chip per enabled shared rule, emitting `tag:<what it adds>` — the rules are rows,
+      so the panel reads them rather than a registry, and a nineteenth is one import away
+      from being one click away. `attr:` stays available in the box for the derived facts
+      themselves.
+    #}
+    <div>
+      <p class="text-[10px] text-gray-500 uppercase tracking-wide mb-2">Tags from shared rules <span class="text-gray-600 normal-case">· the rules on <a href="/intel/rules" class="underline hover:text-gray-400">Rules</a>, ANDed</span></p>
+      <div class="flex flex-wrap items-center gap-1.5">
+        {% for chip in builtin_labels %}
+        {#- The term rides in data-token and is read from $el.dataset: a tag is admin-written
+            text, and inside a quoted JS literal a quote ends the string. A tag with a space is
+            one quoted term, which both the grammar and toggleQueryToken read as a unit. -#}
+        {% set token = ('"tag:' ~ chip.tag ~ '"') if (chip.tag.split() | length) > 1 else ('tag:' ~ chip.tag) %}
+        <button type="button" data-token="{{ token }}" @click="toggleQueryToken($el.dataset.token)"
+                :class="hasQueryToken($el.dataset.token) ? 'lt-btn--active' : ''"
+                class="lt-btn lt-btn--sm lt-btn--pill" title="{{ chip.name }}">{{ chip.tag }}</button>
+        {% endfor %}
+        {% if not builtin_labels %}<span class="text-xs text-gray-600">No shared rule is switched on.</span>{% endif %}
+      </div>
+    </div>
+
+    <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 border-t border-gray-800 pt-4">
+      <div>
+        <label class="lt-label">Last seen since</label>
+        <input type="date" x-model="since" @change="triggerRefresh(true)" class="lt-field w-full">
+      </div>
+      <div>
+        <label class="lt-label">Seen in ≥ N jobs</label>
+        <input type="number" min="0" max="9999" x-model.number="minJobs" @change="triggerRefresh(true)" class="lt-field w-full">
+      </div>
+      <div>
+        <label class="lt-label">Sort by</label>
+        <select x-model="sort" @change="triggerRefresh(true)" class="lt-field w-full">
+          <option value="last_seen">Last seen (newest)</option>
+          <option value="first_seen">First seen (oldest)</option>
+          <option value="jobs">Job count</option>
+          <option value="value">Value (A–Z)</option>
+          <option value="watchlist">Watched first</option>
+        </select>
+      </div>
+      <div class="space-y-1.5">
+        <label class="flex items-center gap-2 text-xs text-gray-300">
+          <input type="checkbox" x-model="watchlistOnly" @change="triggerRefresh(true)" class="lt-check">
+          Watched only
+        </label>
+        <label class="flex items-center gap-2 text-xs text-gray-300">
+          <input type="checkbox" x-model="includeAllowlisted" @change="triggerRefresh(true)" class="lt-check">
+          Show allowlisted
+        </label>
+      </div>
+    </div>
+
+  </div>
+
+  {% include "intel/partials/_entity_bulk_actions.html" %}
+
+  <!-- Entity table -->
+  <div id="entity-table-region"
+       hx-get="/intel/entities-partial"
+       hx-trigger="load, filterChange"
+       x-bind:hx-vals="JSON.stringify({entity_type: entityType, tags: tags.join(','), q: searchQuery, watchlist: watchlistOnly ? 1 : 0, since: since, min_jobs: minJobs, include_allowlisted: includeAllowlisted ? 1 : 0, sort: sort, page: page, job: jobId})"
+       hx-swap="innerHTML">
+    <div class="flex items-center justify-center py-20 text-gray-500">
+      <svg class="animate-spin h-5 w-5 mr-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+      Loading entities...
+    </div>
+  </div>
+
+  {% if total_entities == 0 %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center mt-6">
+    <svg class="w-12 h-12 mx-auto text-gray-600 mb-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="1.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+    <h3 class="text-lg font-medium text-gray-300 mb-2">No entities yet</h3>
+    <p class="text-sm text-gray-500 max-w-md mx-auto">
+      Entities are extracted automatically when logs are analyzed. Upload a log file to start populating the intelligence database.
+      {% if user and user.is_superuser %}
+      <br><br>If you have existing jobs, <a href="/admin" class="text-blue-400 hover:text-blue-300">run the Entity Backfill</a> from the admin dashboard.
+      {% endif %}
+    </p>
+  </div>
+  {% endif %}
+
+  </div>
+</div>
+
+<script>
+  function savedSearchManager() {
+    // Nested inside the dashboard's root x-data: `this` resolves filter state
+    // (entityType, searchQuery, …) through Alpine scope inheritance.
+    return {
+      open: false,
+      newName: '',
+      newShared: false,
+      togglePanel() {
+        this.open = !this.open;
+        if (this.open) {
+          this.$nextTick(() => document.body.dispatchEvent(new CustomEvent('reloadSavedSearches')));
+        }
+      },
+      flash(message, ok = false) {
+        const f = document.getElementById('flash');
+        if (!f) return;
+        f.innerHTML = ok
+          ? '<div class="bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 px-3 py-2 rounded text-sm"></div>'
+          : '<div class="bg-red-900/40 border border-red-700/50 text-red-300 px-3 py-2 rounded text-sm"></div>';
+        f.firstChild.textContent = message;
+        setTimeout(() => { f.innerHTML = ''; }, 3000);
+      },
+      loadSearch(raw) {
+        let q;
+        try { q = JSON.parse(raw); } catch (err) { this.flash('Could not load saved search.'); return; }
+        // Back-compat: pre-existing searches lack `sort` (and may lack other keys).
+        this.entityType = q.type || '';
+        this.searchQuery = q.q || '';
+        this.watchlistOnly = !!q.watchlist;
+        this.since = q.since || '';
+        this.minJobs = parseInt(q.min_jobs || 0, 10) || 0;
+        this.includeAllowlisted = q.include_allowlisted !== 0;
+        this.sort = q.sort || 'last_seen';
+        this.tags = Array.isArray(q.tags) ? q.tags : [];
+        this.triggerRefresh(true);
+      },
+      save() {
+        const name = this.newName.trim();
+        if (!name) return;
+        const payload = {
+          type: this.entityType || '',
+          q: this.searchQuery || '',
+          watchlist: this.watchlistOnly ? 1 : 0,
+          since: this.since || '',
+          min_jobs: this.minJobs || 0,
+          include_allowlisted: this.includeAllowlisted ? 1 : 0,
+        };
+        if (this.sort && this.sort !== 'last_seen') payload.sort = this.sort;
+        if (this.tags.length) payload.tags = this.tags;
+        const form = new FormData();
+        form.set('name', name);
+        form.set('scope', 'entities');
+        form.set('query_json', JSON.stringify(payload));
+        form.set('is_shared', this.newShared ? '1' : '0');
+        fetch('/intel/saved-searches', { method: 'POST', body: form, credentials: 'same-origin' })
+          .then(r => r.ok ? r.json() : Promise.reject(r))
+          .then(() => {
+            this.newName = '';
+            this.newShared = false;
+            document.body.dispatchEvent(new CustomEvent('reloadSavedSearches'));
+          })
+          .catch(() => this.flash('Failed to save search.'));
+      }
+    };
+  }
+</script>
+
+{# No _confirm_dialog.html include: base.html renders it for every page. A second one here
+   would put two `id="confirm-dialog"` elements in the document, and getElementById would
+   bind the handler to the first while the other sat dead in the markup. #}
+{% endblock %}

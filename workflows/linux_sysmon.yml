@@ -1,0 +1,12 @@
+name: "Linux Sysmon Analysis"
+description: "Run Zircolite against Sysmon for Linux events with the Linux SIGMA ruleset"
+is_default: false
+log_types:
+  - sysmon_linux
+
+tasks:
+  - tool: zircolite
+    # Pinned by digest — see docs/runbooks/detection-tools.md#updating-rule-sets to move it.
+    docker_image: wagga40/zircolite:4.0.0@sha256:552f1900fb5533a58fdad1ae61f46c09018271787d5d7a2d08cb318d3221461f
+    rules_path: tools/zircolite/rules/rules_linux.json
+    timeout: 300

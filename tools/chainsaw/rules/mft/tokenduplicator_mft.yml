@@ -1,0 +1,46 @@
+---
+title: TokenDuplicator
+group: MFT
+description: TokenDuplicator artifacts - https://github.com/magnusstubman/tokenduplicator/
+authors:
+  - Krzysztof Kuzin
+
+
+kind: mft
+level: critical
+status: stable
+timestamp: StandardInfoCreated
+
+
+fields:
+  - name: FileNamePath
+    to: FullPath
+  - name: StandardInfoLastModified0x10
+    to: StandardInfoLastModified
+  - name: StandardInfoLastAccess0x10
+    to: StandardInfoLastAccess
+  - name: FileNameCreated0x30
+    to: FileNameCreated
+  - name: FileNameLastModified0x30
+    to: FileNameLastModified
+  - name: FileNameLastAccess0x30
+    to: FileNameLastAccess
+  - name: FileSize
+    to: FileSize
+  - name: IsADirectory
+    to: IsADirectory
+  - name: IsDeleted
+    to: IsDeleted
+  - name: HasAlternateDataStreams
+    to: HasAlternateDataStreams
+  - name: DataStreams
+    to: DataStreams
+
+filter:
+  condition: tokenduplicator
+
+  tokenduplicator:
+    FullPath:
+      - 'i*tokenduplicator.exe*'
+      - 'i*tokenduplicator-main.zip*'
+      - 'i*tokenduplicator.zip*'

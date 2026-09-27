@@ -1,0 +1,56 @@
+{#
+  A single entity row on the case detail page — extracted from case_detail.html so it
+  can also be re-rendered standalone (outerHTML swap) by POST /{case_id}/entities/{id}/note.
+
+  Expects in context: case, el (a CaseEntityLink with .entity and .added_by eager-loaded),
+  user, is_owner, and `tags_by_entity` (entity_id -> [{tag, color}]).
+
+  NOTE: `tags_by_entity` must be supplied by BOTH render paths — case_detail (bulk-loaded
+  for every linked entity) and case_entity_note_save (which re-renders one row on its
+  own). Miss the second and the chips vanish the moment someone edits a note.
+#}
+{% from "intel/partials/_entity_type_badge.html" import type_badge %}
+{% from "intel/partials/_tag_chip.html" import tag_chip %}
+{% set e = el.entity %}
+{% set can_edit_note = is_owner or (el.added_by_user_id == user.id) %}
+<div id="case-entity-row-{{ el.id }}" class="px-5 py-3 hover:bg-gray-800/40 transition group" x-data="{ editingNote: false }">
+  <div class="flex items-center gap-3">
+    {{ type_badge(e.entity_type) }}
+    <a href="/intel/entities/{{ e.id }}" class="min-w-0 font-mono text-sm text-gray-200 hover:text-white truncate">{{ e.value }}</a>
+    <span class="flex-1 flex flex-wrap items-center gap-1">
+      {% for t in (tags_by_entity or {}).get(e.id, [])[:3] %}
+      {{ tag_chip(t.tag, t.color, href='/intel?tags=' ~ (t.tag | urlencode), size='[10px]') }}
+      {% endfor %}
+    </span>
+    {% if can_edit_note %}
+    <button type="button" @click="editingNote = !editingNote"
+            class="text-xs text-gray-500 hover:text-blue-400 transition opacity-0 group-hover:opacity-100" title="Edit note">&#9998;</button>
+    {% endif %}
+    {% if is_owner %}
+    <form method="POST" action="/intel/cases/{{ case.id }}/entities/{{ e.id }}/remove"
+          data-confirm-title="Remove entity"
+          data-confirm-message="Remove '{{ e.value }}' from this case?"
+          data-confirm-accept="Remove" class="opacity-0 group-hover:opacity-100 transition">
+      <button type="submit" class="text-xs text-gray-500 hover:text-red-400 transition" title="Remove from case">×</button>
+    </form>
+    {% endif %}
+  </div>
+  <div class="mt-1 text-xs text-gray-500">
+    added {{ el.added_at | time_ago }} by {% if el.added_by %}{{ el.added_by.display_name or el.added_by.email }}{% else %}unknown{% endif %}
+  </div>
+  {% if el.note %}
+  <p class="mt-0.5 text-xs italic text-gray-500">{{ el.note }}</p>
+  {% endif %}
+  {% if can_edit_note %}
+  <form x-show="editingNote" x-cloak
+        hx-post="/intel/cases/{{ case.id }}/entities/{{ e.id }}/note"
+        hx-target="#case-entity-row-{{ el.id }}"
+        hx-swap="outerHTML"
+        class="mt-2 flex items-center gap-2">
+    <input type="text" name="note" maxlength="500" value="{{ el.note or '' }}"
+           placeholder="Why is this here? (optional)"
+           class="lt-field lt-field--sm flex-1">
+    <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary">Save</button>
+  </form>
+  {% endif %}
+</div>

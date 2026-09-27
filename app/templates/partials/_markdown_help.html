@@ -1,0 +1,48 @@
+{% from "partials/_help_popover.html" import help_popover %}
+{#
+  The "?" beside an editor that accepts Markdown, and the placeholder text that goes with it.
+
+  One macro pair rather than three copies, for the same reason `rich_text()` is one macro:
+  the site setting has to be consulted in a single place. An editor whose placeholder still
+  promises "plain text" while the reader renders Markdown is worse than no hint at all —
+  it tells the analyst their asterisks will be left alone, and then eats them.
+
+  The button and panel are `help_popover()` — the app's one help affordance. This file keeps
+  its own body because the right-hand column is *rendered* Markdown (`<strong>bold</strong>`),
+  not a string, which the macro's `rows=` form would escape.
+#}
+
+{% macro markdown_enabled(site_settings) -%}
+{{- 'yes' if (not site_settings or site_settings.render_markdown) else '' -}}
+{%- endmacro %}
+
+{% macro editor_placeholder(site_settings, subject, max_chars) -%}
+{%- if not site_settings or site_settings.render_markdown -%}
+{{ subject }} Markdown supported. Max {{ max_chars }} chars.
+{%- else -%}
+{{ subject }} Plain text, line breaks preserved. Max {{ max_chars }} chars.
+{%- endif -%}
+{%- endmacro %}
+
+{% macro markdown_help(site_settings) %}
+{% if not site_settings or site_settings.render_markdown %}
+{% call help_popover('Markdown help', intro='Markdown is supported',
+                     footnote='HTML is escaped, and bare domains are left as text so an IOC never becomes a clickable link by accident.') %}
+    <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 font-mono text-[11px]">
+      <dt class="text-gray-500">**bold**</dt><dd class="font-sans"><strong>bold</strong></dd>
+      <dt class="text-gray-500">*italic*</dt><dd class="font-sans"><em>italic</em></dd>
+      <dt class="text-gray-500">`code`</dt><dd class="font-sans">inline code</dd>
+      <dt class="text-gray-500">```</dt><dd class="font-sans">fenced code block</dd>
+      <dt class="text-gray-500">- item</dt><dd class="font-sans">bullet list</dd>
+      <dt class="text-gray-500"># Title</dt><dd class="font-sans">heading</dd>
+      <dt class="text-gray-500">[text](url)</dt><dd class="font-sans">link</dd>
+      <dt class="text-gray-500">&gt; quote</dt><dd class="font-sans">blockquote</dd>
+      {# Both of these have worked since the parser was configured — `md.enable("table")`
+         and the mermaid fence rule — and neither was ever mentioned here, so nobody used
+         them. A capability nobody knows about is indistinguishable from one that is off. #}
+      <dt class="text-gray-500">| a | b |</dt><dd class="font-sans">table</dd>
+      <dt class="text-gray-500">```mermaid</dt><dd class="font-sans">diagram</dd>
+    </dl>
+{% endcall %}
+{% endif %}
+{% endmacro %}

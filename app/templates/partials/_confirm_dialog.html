@@ -1,0 +1,18 @@
+<dialog id="confirm-dialog"
+        class="w-full max-w-md rounded-xl border border-gray-800 bg-gray-900 text-gray-100 p-0 backdrop:bg-black/70">
+  <form method="dialog" class="p-5 space-y-4">
+    <h2 id="confirm-dialog-title" class="text-lg font-semibold">Confirm action</h2>
+    <p id="confirm-dialog-message" class="text-sm text-gray-400">Are you sure?</p>
+    <div class="flex items-center justify-end gap-2 pt-2 border-t border-gray-800">
+      <button type="submit" value="cancel"
+              class="px-3 py-2 text-sm rounded border border-gray-700 bg-gray-800 hover:bg-gray-700 transition">
+        Cancel
+      </button>
+      <button type="submit" value="confirm"
+              id="confirm-dialog-accept"
+              class="px-3 py-2 text-sm rounded bg-red-700 hover:bg-red-600 text-white transition">
+        Continue
+      </button>
+    </div>
+  </form>
+</dialog>

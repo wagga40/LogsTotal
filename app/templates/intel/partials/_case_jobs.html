@@ -1,0 +1,27 @@
+{% from "partials/_pager.html" import pager %}
+{#
+  One page of a case's job links. Twin of `_case_entities.html`; see it for the structure.
+
+  Visibility is applied in SQL by `_case_job_links_stmt`, not by a Python pass over the
+  page — dropping a private job another member linked into a shared case after the LIMIT
+  would shorten the page, which is what makes offset/limit pagination ragged.
+
+  Expects: case, job_links, job_total, page, total_pages, user, is_owner.
+#}
+{% if job_links %}
+<div class="divide-y divide-gray-800/50 lt-scroll lt-scroll--lg">
+  {% for jl in job_links %}
+  {% include "intel/partials/_case_job_row.html" %}
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between px-5 py-3 border-t border-gray-800 text-xs text-gray-500">
+  <span>{{ (page - 1) * page_size + 1 }}&ndash;{{ (page - 1) * page_size + job_links | length }} of {{ job_total }}</span>
+  {{ pager(page, total_pages, url='/intel/cases/' ~ case.id ~ '/jobs-partial', target='#case-jobs-region') }}
+</div>
+{% endif %}
+
+{% else %}
+<p class="px-5 py-8 text-sm text-gray-500 text-center">No jobs.</p>
+{% endif %}

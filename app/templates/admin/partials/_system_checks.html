@@ -1,0 +1,68 @@
+<!-- System Status card body — lazy-loaded via /admin/system-checks-partial -->
+<div class="flex items-center gap-4 text-xs text-gray-500 mb-3 pb-3 border-b border-gray-800">
+  <span>Version <span class="text-gray-300 font-mono">{{ version_info.version }}</span></span>
+  {#
+    Three things this row says: when the results are from, that a run is happening, and
+    that a second click will not start a second run.
+
+    The suite takes seconds (a storage probe, an Argon2 verify per superuser, a `docker
+    info` that can block for ten), so a button that changes nothing on screen until it
+    returns reads as inert and invites another click — each one starting another full run.
+    `hx-disabled-elt` closes that; `?force=1` is what makes this
+    button, and only this button, bypass the shared cache.
+  #}
+  {% if ran_at %}<span class="text-gray-600">Checked {{ ran_at | time_ago }}</span>{% endif %}
+  <button class="ml-auto flex items-center gap-1.5 text-gray-400 hover:text-gray-200 underline disabled:text-gray-600 disabled:no-underline disabled:cursor-not-allowed"
+          hx-get="/admin/system-checks-partial?force=1"
+          hx-target="closest div.system-checks-body"
+          hx-swap="innerHTML"
+          hx-disabled-elt="this">
+    {# htmx puts `htmx-request` on the requesting element for the life of the request, and
+       its own injected rule lights up a descendant `.htmx-indicator` — so the spinner needs
+       no `hx-indicator` attribute and reserves only its own 12px when idle. #}
+    <svg class="htmx-indicator animate-spin h-3 w-3" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+    Re-run checks
+  </button>
+</div>
+
+{% if summary %}
+<div class="flex items-center gap-3 flex-wrap mb-3">
+  {% if summary.status == 'ready' %}
+  <span class="px-2.5 py-1 rounded-full bg-green-500/10 text-green-400 border border-green-500/30 text-xs font-semibold">Ready</span>
+  {% elif summary.status == 'ready_warn' %}
+  <span class="px-2.5 py-1 rounded-full bg-yellow-500/10 text-yellow-300 border border-yellow-500/30 text-xs font-semibold">Ready with warnings</span>
+  {% else %}
+  <span class="px-2.5 py-1 rounded-full bg-red-500/10 text-red-400 border border-red-500/30 text-xs font-semibold">Not ready</span>
+  {% endif %}
+  <span class="text-xs text-gray-500">{{ summary.passed }} pass &middot; {{ summary.warned }} warn &middot; {{ summary.failed }} fail</span>
+</div>
+{% endif %}
+
+{% set level_styles = {
+  'PASS': ('text-green-400', '&#10003;'),
+  'WARN': ('text-yellow-400', '!'),
+  'FAIL': ('text-red-400', '&#10007;'),
+  'INFO': ('text-sky-400', '&middot;')
+} %}
+
+{% set ns = namespace(last_section=None) %}
+<div class="space-y-1 text-sm">
+  {% for r in results %}
+    {% if r.section != ns.last_section %}
+      {% set ns.last_section = r.section %}
+      <div class="text-xs text-gray-500 uppercase tracking-wide {% if not loop.first %}pt-3{% endif %}">{{ r.section }}</div>
+    {% endif %}
+    <div class="flex items-start gap-2">
+      <span class="{{ level_styles[r.level][0] }} font-mono w-4 text-center shrink-0">{{ level_styles[r.level][1] | safe }}</span>
+      <div class="min-w-0">
+        <span class="text-gray-300">{{ r.name }}</span>
+        {% if r.message %}<span class="text-gray-500"> — {{ r.message }}</span>{% endif %}
+        {% if r.fix and r.level in ('WARN', 'FAIL') %}
+        <div class="text-xs text-gray-500 mt-0.5"><span class="text-gray-600">fix:</span> {{ r.fix }}</div>
+        {% endif %}
+      </div>
+    </div>
+  {% else %}
+    <div class="text-gray-500">No checks returned.</div>
+  {% endfor %}
+</div>

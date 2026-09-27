@@ -1,0 +1,8 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}Watched jobs – LogsTotal{% endblock %}
+{# Standalone page half of `/jobs/watching`; the region itself is partials/_jobs_watching.html. #}
+{% block content %}
+{{ page_header("Watched jobs", "/jobs", "Jobs") }}
+{% include "partials/_jobs_watching.html" %}
+{% endblock %}

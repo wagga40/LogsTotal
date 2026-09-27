@@ -1,0 +1,791 @@
+{% extends "base.html" %}
+{% block title %}Docs – LogsTotal{% endblock %}
+
+{#- One list drives the sidebar, so adding a section means adding a tuple and hand-written
+    <a> blocks cannot drift. -#}
+{% set doc_sections = [
+  ('what-is',    'What is LogsTotal?'),
+  ('submitting', 'Submitting a log'),
+  ('reading',    'Reading a job'),
+  ('similarity', 'Similarity &amp; correlation'),
+  ('intel',      'Intel: entities'),
+  ('cases',      'Cases'),
+  ('rules',      'Rules'),
+  ('exports',    'Exports &amp; API'),
+  ('roles',      'Roles &amp; access'),
+  ('workflows',  'Workflows'),
+  ('admins',     'For administrators'),
+  ('faq',        'FAQ'),
+] %}
+
+{% block content %}
+<style>
+  /* Documentation page only, scoped under .lt-doc.
+     NOT `.lt-prose`, deliberately: app/static/mermaid-render.js claims `pre.mermaid`
+     inside `.lt-prose` and re-renders it under `htmlLabels: false`, which strips the
+     <br/> out of this page's diagram labels. See the comment above SELECTOR in that file. */
+  .lt-doc { color: var(--lt-fg); font-size: .875rem; line-height: 1.65; }
+  .lt-doc p { margin: 0 0 .75rem; }
+  .lt-doc section { margin-bottom: 3rem; }
+  .lt-doc h2 {
+    font-size: 1.25rem; font-weight: 600; color: var(--lt-fg-strong);
+    margin: 0 0 1rem; padding-bottom: .5rem; border-bottom: 1px solid var(--lt-border);
+  }
+  .lt-doc h3 { font-size: 1rem;    font-weight: 600; color: var(--lt-fg-strong); margin: 1.75rem 0 .5rem; }
+  .lt-doc h4 { font-size: .875rem; font-weight: 600; color: var(--lt-fg);        margin: 1.25rem 0 .375rem; }
+  .lt-doc ul, .lt-doc ol { margin: 0 0 .75rem; padding-left: 1.25rem; }
+  .lt-doc ul { list-style: disc; }
+  .lt-doc ol { list-style: decimal; }
+  .lt-doc li { margin-bottom: .375rem; }
+  /* `:not([class])` so a link that states its own colour keeps it — `.lt-doc a` alone
+     outranks a Tailwind `text-*` utility and would repaint the "← Home" link. */
+  .lt-doc a:not([class]) { color: #60a5fa; }
+  .lt-doc a:hover { text-decoration: underline; }
+  .lt-doc strong { color: var(--lt-fg-strong); font-weight: 600; }
+
+  /* One code chip. This recipe was hand-written 94 times, and 57 further <code> elements
+     carried none of it and rendered as bare monospace. */
+  .lt-doc code {
+    background-color: var(--lt-surface-sunken); border: 1px solid var(--lt-border);
+    border-radius: .25rem; padding: .0625rem .25rem; font-size: .8125em; color: #93c5fd;
+  }
+  .lt-doc kbd {
+    display: inline-block; min-width: 1.25rem; text-align: center;
+    background-color: var(--lt-surface); border: 1px solid var(--lt-border-strong);
+    border-bottom-width: 2px; border-radius: .25rem; padding: 0 .3125rem;
+    font-family: inherit; font-size: .75em; color: var(--lt-fg-strong);
+  }
+
+  /* Every table scrolls inside itself. The viewport is pinned at 1024px, so a wide table
+     has nowhere to push the page to. */
+  .lt-doc table {
+    display: block; width: 100%; overflow-x: auto;
+    margin: 0 0 1rem; border-collapse: collapse; font-size: .8125rem;
+  }
+  .lt-doc th, .lt-doc td {
+    border: 1px solid var(--lt-border); padding: .375rem .625rem;
+    text-align: left; vertical-align: top;
+  }
+  .lt-doc th {
+    background-color: var(--lt-menu-bg); color: var(--lt-fg-muted); font-weight: 600;
+    font-size: .6875rem; text-transform: uppercase; letter-spacing: .03em; white-space: nowrap;
+  }
+
+  /* Three tones, so a warning cannot read as a footnote. */
+  .lt-doc-note, .lt-doc-tip, .lt-doc-warn {
+    margin: 0 0 1rem; padding: .75rem .875rem; border-radius: .5rem;
+    border: 1px solid var(--lt-border); background-color: var(--lt-surface-sunken);
+  }
+  .lt-doc-tip  { border-color: rgb(30 64 175 / .55); background-color: rgb(23 37 84 / .35); }
+  .lt-doc-warn { border-color: var(--lt-warn-border); background-color: var(--lt-warn-bg); }
+  .lt-doc-note > :last-child, .lt-doc-tip > :last-child, .lt-doc-warn > :last-child { margin-bottom: 0; }
+  .lt-doc-title { display: block; font-weight: 600; color: var(--lt-fg-strong); margin-bottom: .25rem; }
+  .lt-doc-tip  .lt-doc-title { color: #bfdbfe; }
+  .lt-doc-warn .lt-doc-title { color: var(--lt-warn-fg); }
+
+  /* Diagrams draw at natural size (useMaxWidth: false below) and scroll if they must,
+     so label text is never scaled down to fit the 896px column. */
+  .lt-doc-fig {
+    margin: 1.25rem 0; padding: 1rem; overflow-x: auto; text-align: center;
+    background-color: var(--lt-menu-bg); border: 1px solid var(--lt-border); border-radius: .5rem;
+  }
+  .lt-doc-fig pre.mermaid { margin: 0; }
+
+  .lt-doc details { margin: 0 0 1rem; }
+  .lt-doc summary { cursor: pointer; color: var(--lt-fg-strong); font-weight: 600; }
+  .lt-doc summary:hover { color: #fff; }
+  .lt-doc-badge {
+    margin-left: .5rem; padding: .0625rem .375rem; border-radius: .25rem;
+    background-color: var(--lt-surface); color: var(--lt-fg-muted);
+    font-size: .6875rem; font-weight: 400; vertical-align: middle;
+  }
+</style>
+
+<div class="flex gap-8 max-w-6xl mx-auto" x-data="{ activeSection: location.hash.slice(1) || 'what-is' }">
+
+  <!-- Sidebar nav -->
+  <aside class="w-56 shrink-0 sticky top-8 self-start">
+    <nav class="space-y-1 text-sm">
+      {% for key, label in doc_sections %}
+      <a href="#{{ key }}" @click="activeSection = '{{ key }}'"
+         :class="activeSection === '{{ key }}' ? 'text-blue-400 font-medium' : 'text-gray-500 hover:text-gray-300'"
+         class="block py-1 transition">{{ label | safe }}</a>
+      {% endfor %}
+    </nav>
+  </aside>
+
+  <!-- Content -->
+  <div class="flex-1 min-w-0 lt-doc">
+
+    <a href="/" class="text-gray-500 hover:text-gray-300 text-sm">&larr; Home</a>
+    <h1 class="text-3xl font-bold text-blue-400 mb-2 mt-2">LogsTotal — User Guide</h1>
+    <p class="text-gray-400 mb-10">Upload a security log, pick a detection workflow, and get a structured report.</p>
+
+    <!-- ── What is LogsTotal? ───────────────────────── -->
+    <section id="what-is">
+      <h2>What is LogsTotal?</h2>
+      <p>LogsTotal runs your log files through a panel of detection tools — Zircolite, Chainsaw, Hayabusa, ChopChopGo, and any others the operator has installed — and shows you what each one found. Read the <strong>detection score</strong> the way you&rsquo;d read a VirusTotal ratio: it tells you how many tools flagged the file, so you can judge a signal by how many independent detectors agreed.</p>
+      <p>You don&rsquo;t need an account to submit a log or read a public report. Logged-in users get private submissions and, at higher tiers, cross-job intelligence views.</p>
+
+      <h3>Your first analysis in three steps</h3>
+      <ol>
+        <li>Open the <a href="/">homepage</a> and drop log files onto the upload area (or click to browse). The page shows the selection limit, configurable by an admin and set to 50 files by default.</li>
+        <li>The log type is detected the moment you drop the file, and the workflow dropdown narrows to compatible workflows — the best match is preselected, so usually you just confirm it.</li>
+        <li>You land on the job page. It updates live as each tool finishes, with findings grouped by severity and a detection score at the top.</li>
+      </ol>
+
+      {#- Five nodes, not six: measured at 836px against the 862px the column leaves inside
+          a figure. A sixth rank pushes it to 929px. -#}
+      <div class="lt-doc-fig">
+        <pre class="mermaid">flowchart LR
+  Upload["Upload"] --> Detect["Detect type"]
+  Detect --> Workflow["Pick workflow"]
+  Workflow --> Running["Analysis runs"]
+  Running --> Report["Report"]</pre>
+      </div>
+
+    </section>
+
+    <!-- ── Submitting a log ─────────────────────────── -->
+    <section id="submitting">
+      <h2>Submitting a log</h2>
+
+      <h3>Supported log types</h3>
+      <p>The log type is detected from file structure, not the filename, as soon as you drop a file — the form shows the result immediately and filters the workflow list to match.</p>
+
+      <table>
+        <thead><tr><th>Type</th><th>What triggers the match</th></tr></thead>
+        <tbody>
+          <tr><td>EVTX (Windows Event Log)</td><td>Magic bytes <code>ElfFile\x00</code></td></tr>
+          <tr><td>JSON (Winlogbeat)</td><td>First JSON line contains <code>winlog</code> or <code>agent</code> keys</td></tr>
+          <tr><td>JSON (EVTX-exported)</td><td>First JSON line contains <code>EventID</code>, <code>Event</code> or <code>System</code> keys</td></tr>
+          <tr><td>Journald (JSON export)</td><td>First JSON line contains <code>__REALTIME_TIMESTAMP</code> / <code>__CURSOR</code> or journald metadata keys (<code>journalctl -o json</code> / <code>-o export</code>)</td></tr>
+          <tr><td>Windows Event XML</td><td>Starts with <code>&lt;Event&gt;</code> or <code>&lt;Events&gt;</code> in the Windows event namespace (<code>wevtutil qe /f:xml</code>, <code>Get-WinEvent … ToXml</code>); both layouts are read</td></tr>
+          <tr><td>Sysmon for Linux</td><td>Syslog-wrapped XML events carrying the <code>Linux-Sysmon</code> provider</td></tr>
+          <tr><td>Auditd</td><td>Lines starting with <code>type=SYSCALL</code> etc.</td></tr>
+          <tr><td>Syslog</td><td>Lines beginning with ISO / RFC3164 timestamps, with or without a <code>&lt;PRI&gt;</code> prefix</td></tr>
+          <tr><td>Unknown</td><td>Fallback — the workflow list narrows to &ldquo;any type&rdquo; workflows only</td></tr>
+        </tbody>
+      </table>
+
+      <p>If detection picks the wrong type, use the <em>change type</em> link beside the detected label before submitting; the workflow dropdown re-filters. A workflow that doesn&rsquo;t support the file&rsquo;s log type is rejected outright rather than silently producing an empty report.</p>
+
+      <h3>Private submissions</h3>
+      <p>Check <strong>Submit privately</strong> and the job is visible only to you and administrators. It stays out of the public job list, and a direct link returns 404 for everyone else. The checkbox appears only once you log in — an anonymous upload has no owner to pin the job to.</p>
+
+      <div class="lt-doc-warn">
+        <span class="lt-doc-title">Private is not confidential</span>
+        <p>Administrators can download the original file you uploaded, on any job, private or not. &ldquo;Private&rdquo; hides a submission from other <em>users</em>. Treat anything you upload as readable by the people who run the instance.</p>
+      </div>
+
+      <h3>Size and rate limits</h3>
+      <ul>
+        <li><strong>Maximum file size</strong> — 500&nbsp;MB by default. Files over the cap are rejected with a clear message.</li>
+        <li><strong>Submission rate per IP</strong> — if you hit it, wait a minute and retry.</li>
+      </ul>
+      <p>Both are operator-configured; ask yours to raise one if you run into it routinely.</p>
+
+      <h3>While a large file uploads</h3>
+      <p>Each file has its own type, workflow, progress and job. Two files upload at a time; analysis starts as each arrives. At 100% transferred, the server may still be hashing and queueing. Failed files can be retried individually, and rate limits pause uploads automatically. <strong>Stop uploads</strong> stops transfers; accepted analyses keep running.</p>
+      <p>Members and admins can choose an existing case or create one for the collection. Jobs link immediately; detected entities are imported explicitly after analysis. Keep the tab open until transfers finish: accepted jobs remain in Jobs and the case, but unsubmitted files must be selected again after leaving.</p>
+      <p>Automations can use <code>POST /api/v1/jobs</code> with a <code>job:submit</code> bearer token and one file per request. Use <code>job:read</code> for grouped status polling and <code>case:write</code> to create or attach to a case. An <code>Idempotency-Key</code> makes authenticated retries return the same job.</p>
+
+      <h3>Deduplication</h3>
+      <p>Re-uploading the same file can reuse a compatible existing job after the upload is hashed. Ownership, privacy, filename, workflow and log type must also match. To force a fresh run, use <strong>Force re-analyze</strong> on the duplicate banner you land on, or ask an operator to delete the old job.</p>
+    </section>
+
+    <!-- ── Reading a job ────────────────────────────── -->
+    <section id="reading">
+      <h2>Reading a job</h2>
+
+      <h3>Status and progress</h3>
+      <table>
+        <thead><tr><th>Status</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>Pending</td><td>Queued, waiting for a worker</td></tr>
+          <tr><td>Running</td><td>At least one tool is executing</td></tr>
+          <tr><td>Completed</td><td>Every tool ran successfully</td></tr>
+          <tr><td>Partial</td><td>One or more tools failed; others produced results</td></tr>
+          <tr><td>Failed</td><td>Every tool failed, or the job itself crashed</td></tr>
+          <tr><td>Cancelled</td><td>Stopped on request. Findings from tools that had already finished are kept</td></tr>
+        </tbody>
+      </table>
+      <p>The page updates itself while analysis runs, and each tool&rsquo;s result lands as soon as that tool finishes — you don&rsquo;t wait for the slowest one. Live refresh stops once the job is terminal.</p>
+      <p>While a job is pending or running, a <strong>Cancel</strong> button appears in the header for whoever submitted it, and for admins. Each tool also has its own <code>timeout</code> from the workflow, enforced by terminating the tool&rsquo;s whole process tree, so one runaway tool cannot block a job.</p>
+
+      <h3>Detection score</h3>
+      <p>The score at the top of the report is <code>tools-with-hits / tools-that-ran</code>.</p>
+      <ul>
+        <li><code>0/3</code> — every tool ran, none found anything. <em>Absence of evidence</em>, not evidence of absence; see the FAQ.</li>
+        <li><code>1/3</code> — one tool disagrees. Read what that tool said before concluding anything.</li>
+        <li><code>3/3</code> — unanimous. Higher confidence that something is going on.</li>
+      </ul>
+      <p>Tools that skipped the log because it is the wrong type aren&rsquo;t counted, so a three-tool workflow on a syslog file where two tools only handle EVTX may show <code>1/1</code>.</p>
+
+      <h3>Severity</h3>
+      <div class="flex flex-wrap gap-2 my-2">
+        <span class="px-2 py-0.5 text-xs rounded border severity-critical">Critical</span>
+        <span class="px-2 py-0.5 text-xs rounded border severity-high">High</span>
+        <span class="px-2 py-0.5 text-xs rounded border severity-medium">Medium</span>
+        <span class="px-2 py-0.5 text-xs rounded border severity-low">Low</span>
+        <span class="px-2 py-0.5 text-xs rounded border severity-info">Informational</span>
+      </div>
+      <p>Severity comes from the rule that fired, not from LogsTotal. Read &ldquo;high&rdquo; as &ldquo;the rule author thought this was usually bad&rdquo;, not as a verdict on your file.</p>
+
+      <h3>Findings list</h3>
+      <p>Each finding card shows the rule name, how many times it fired, tags (often including MITRE ATT&amp;CK technique IDs), and two expanders:</p>
+      <ul>
+        <li><strong>Show rule</strong> — the original detection rule, usually Sigma YAML, so you can judge what it was looking for.</li>
+        <li><strong>Show events</strong> — a sample of the matched events, loaded on demand, capped at 10 per rule by default. The fire count is exact; only the stored detail is sampled.</li>
+      </ul>
+
+      <h3>Analytics</h3>
+      <p>Below the findings list, the analytics panel pulls structure out of the matched events:</p>
+      <ul>
+        <li><strong>MITRE ATT&amp;CK heatmap</strong> — tactics in kill-chain order with event counts.</li>
+        <li><strong>Activity histogram</strong> — hourly buckets stacked by tactic, showing when activity happened. Each tool keeps its own timezone offset here.</li>
+        <li><strong>Events timeline</strong> — the individual alerts behind those bars, on a zoomable axis. Ctrl/&#8984;+scroll to zoom, drag to pan, hover a marker for its rule and severity, click to pin it. One lane per tactic, marker colour is severity, and dense bursts collapse into one marker that splits apart as you zoom in. Timestamps are normalised to <strong>UTC</strong>, so tools that disagree about timezone still line up.</li>
+        <li><strong>Entities</strong> — users, computers, IPs, hashes, executables, domains, command-line files, services and scheduled tasks, deduplicated across findings.</li>
+        <li><strong>Threat detection</strong> — behavioural flags (LOLBIN usage, command-line obfuscation, credential access) rolled up by severity.</li>
+        <li><strong>Process tree</strong> — parent&rarr;child lineage rebuilt from matched process-creation events (Sysmon Event&nbsp;ID&nbsp;1 / Security 4688, and auditd via pid&rarr;ppid), so a chain like <code>WmiPrvSE.exe &rarr; cmd.exe &rarr; whoami.exe</code> is obvious at a glance. <strong>HIT</strong> nodes matched a rule; <em>inferred</em> nodes are parents seen only inside a child&rsquo;s event. It is a lineage view of the suspicious processes, not the full host process tree.</li>
+      </ul>
+
+      <div class="lt-doc-note">
+        <span class="lt-doc-title">Where analytics come from, and what survives cleanup</span>
+        <p>Analytics are extracted from the tools&rsquo; <strong>raw output</strong> — up to 250,000 events per job — not from the sampled events in <em>Show events</em>. So an entity that appears only in un-sampled events still shows up here, and raising the <em>Settings</em> sample size does <strong>not</strong> deepen analytics.</p>
+        <p>Raw output is cleaned up on the operator&rsquo;s <code>JOB_OUTPUT_RETENTION_DAYS</code> schedule. After that, the <strong>events timeline</strong> keeps working — it is stored in the database — while the histogram and the process tree cannot be rebuilt. Already-computed analytics keep rendering; recalculating yields nothing.</p>
+      </div>
+
+      <h3>AI analysis</h3>
+      <p>Administrators configure separate <strong>Job max prompt size</strong> and <strong>Case max prompt size</strong> fields on <a href="/admin/ai">AI providers</a>, in characters. Blank fields use the instance default (60,000 characters unless configured otherwise). These limits bound the evidence brief; system prompts are separate. New providers default to <strong>20,000 max output tokens</strong>.</p>
+      <p>If your operator has configured it, the job page carries an <strong>AI&nbsp;Analysis</strong> tab. It sends this job&rsquo;s findings — rules, severities, counts, MITRE tactics, extracted entities and a few sample events — to a language model and shows you a verdict, the detections that matter, the likely false positives, and what to look at next. Nothing is sent automatically: one click, one job, one answer. The run happens in the background, so you can leave the page and come back.</p>
+      <p>Each run is kept rather than overwritten, so you can send the same job to two models and compare. The reply renders as Markdown, diagrams included.</p>
+      <table>
+        <thead><tr><th>Action</th><th>Who</th></tr></thead>
+        <tbody>
+          <tr><td>Read an existing analysis</td><td>Anyone who can see the job</td></tr>
+          <tr><td>Start a run</td><td>Member or admin</td></tr>
+          <tr><td>Stop a run — closes the connection to the model, so the work stops and nothing is saved</td><td>Whoever started it, or an admin</td></tr>
+          <tr><td>Delete a run — permanent; a run in progress must be stopped first</td><td>Whoever started it, or an admin</td></tr>
+        </tbody>
+      </table>
+      <div class="lt-doc-warn">
+        <span class="lt-doc-title">Treat it as a reading of the evidence, not a verdict</span>
+        <p>The model sees only the brief above — not the original log, and on a busy job not even every finding (it is told when its view was trimmed). It can be confidently wrong, so verify anything you act on against the findings themselves. If the configured model is a hosted service rather than one on your operator&rsquo;s hardware, that brief leaves the instance; ask which it is if your logs are sensitive.</p>
+      </div>
+
+      <h3>Discussions</h3>
+      <p>The job page splits into <strong>Results</strong> and <strong>Discussions</strong>, whose badge counts comments; analysis keeps streaming into Results while you read or write. Anyone with an account can post on a job they can already see — no Intel access needed — so triage notes stay with the report. Anonymous visitors don&rsquo;t see the panel, and a private job&rsquo;s thread is visible only to its submitter and admins. You can edit your own comments; the author or an admin can delete one, which removes the text permanently.</p>
+      <p>If the job belongs to any investigation cases you can see, they appear as chips in the header.</p>
+
+      <h3>Searching the jobs list</h3>
+      <p>The box above the list takes more than a filename. Terms are combined with <strong>AND</strong>, and any of them can be excluded with a leading <code>-</code>: <code>status:failed sev:critical -is:private</code> reads exactly as it looks. The <strong>?</strong> beside the box lists every term it understands.</p>
+      <table>
+        <thead><tr><th>Term</th><th>Matches</th></tr></thead>
+        <tbody>
+          <tr><td><code>report.evtx</code></td><td>Filename contains this</td></tr>
+          <tr><td><code>"my report"</code></td><td>…with spaces</td></tr>
+          <tr><td><code>srv01*</code></td><td>Filename wildcard</td></tr>
+          <tr><td><code>tag:apt29,c2</code></td><td>Carries any of these tags</td></tr>
+          <tr><td><code>status:failed</code></td><td>pending · running · completed · partial · failed · cancelled</td></tr>
+          <tr><td><code>type:evtx</code></td><td>Log type</td></tr>
+          <tr><td><code>workflow:windows</code></td><td>Workflow name contains this</td></tr>
+          <tr><td><code>sev:critical,high</code></td><td>Has a finding of this severity</td></tr>
+          <tr><td><code>tool:chainsaw</code></td><td>This tool ran on the job</td></tr>
+          <tr><td><code>findings:&gt;10</code></td><td>Also <code>=0</code>, <code>&lt;5</code>, <code>5..50</code></td></tr>
+          <tr><td><code>after:2026-08-01</code></td><td>Also <code>after:7d</code>, <code>before:…</code></td></tr>
+          <tr><td><code>id:42</code></td><td>Job number</td></tr>
+          <tr><td><code>sha256:9f2c</code></td><td>File hash, by prefix</td></tr>
+          <tr><td><code>is:watched</code></td><td>Also anonymous · clean · done · error · hits · mine · private · public · running</td></tr>
+          <tr><td><code>-tag:reviewed</code></td><td>Any term can be negated</td></tr>
+        </tbody>
+      </table>
+      <p>A term it cannot parse is named above the results rather than dropped, because a search that matched nothing and a search that was misunderstood look identical otherwise. The query lives in the URL, so you can bookmark it or paste it into a ticket.</p>
+      <p>The box completes as you type: a partial key offers the available keys, and accepting one (<kbd>Enter</kbd> or <kbd>Tab</kbd>) lists its values. Arrow keys move, <kbd>Esc</kbd> dismisses, and completion applies to the term under the caret, so you can fix one term of a long query without disturbing the rest. Job numbers and file hashes are never completed.</p>
+
+      <h3>Compact and roomy</h3>
+      <p>The switch above the list changes how much room a job gets. <strong>Compact</strong> is the table — one line each, up to three tag chips after the filename and the rest behind a <code>+N</code>. <strong>Roomy</strong> gives each job three lines and shows every tag. The choice is remembered, and <code>?view=roomy</code> links straight to it.</p>
+
+      <h3>Moving through a long list</h3>
+      <p>The line above the table says where you are (<em>121–140 of 359 jobs</em>) and has its own previous and next arrows, so you can turn the page without scrolling to the bottom. The pager under the table shows the first and last pages and the ones around yours; once there are more than nine pages, a <strong>Go to</strong> field jumps straight to a page number. <kbd>&larr;</kbd> and <kbd>&rarr;</kbd> turn the page whenever you are not typing in a field.</p>
+      <p><strong>Rows</strong> shows 20, 50 or 100 jobs a page. Switching keeps you on the page that holds the job you were reading, and the choice is remembered; <code>?per=50</code> links straight to it. Jobs submitted in the same second, as a multi-file upload makes them, are ordered by job number, so every job appears on exactly one page.</p>
+
+      <h3>Tagging and watching a job</h3>
+      <p>Members can tag a job from its header, using the same vocabulary as entities. Clicking a chip filters the jobs list; picking a second one <em>widens</em> the list rather than narrowing it, because a tag gathers related work rather than acting as a search term. Tick several jobs on the list to tag them in one go. Every tag field takes several tags at once — type or paste <code>apt29, c2, triage</code>, or pick them one after another; <kbd>Enter</kbd>, <kbd>Tab</kbd> and a comma each commit one, and <kbd>Backspace</kbd> on an empty box removes the last.</p>
+      <p><strong>Watch</strong> in the job header tells the bell in the top bar to notify you when someone comments on that job, tags it, or an AI analysis on it finishes. Commenting subscribes you automatically. Anyone with an account can watch a job they can see. You are not notified about your own comment or your own tag, but you <em>are</em> notified when an analysis you started finishes, since that happens in the background. Tagging many jobs at once notifies nobody.</p>
+
+      <h3>Exports and resubmission</h3>
+      <table>
+        <thead><tr><th>Action</th><th>What you get</th><th>Who can do it</th></tr></thead>
+        <tbody>
+          <tr><td>Export findings (JSON)</td><td>Every finding with tool, rule, severity, count, tags, sampled details, and a stable <code>rule_signature</code> for cross-job pivoting</td><td>Anyone with access to the job</td></tr>
+          <tr><td>Export MITRE layer</td><td>A JSON layer loadable in <a href="https://mitre-attack.github.io/attack-navigator/" target="_blank" rel="noopener">MITRE ATT&amp;CK Navigator</a> — one layer per job</td><td>Anyone with access to the job</td></tr>
+          <tr><td>Resubmit</td><td>A fresh job against the same file, with the same or a different workflow — useful when a new workflow has been added since your original run</td><td>Logged-in users, for a file they submitted; admins, any file</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ── Similarity & correlation ─────────────────── -->
+    <section id="similarity">
+      <h2>Similarity &amp; correlation</h2>
+
+      <h3>Similar files (the <span class="font-mono text-blue-400">≈</span> panel)</h3>
+      <p>After your job completes, LogsTotal computes a <a href="https://github.com/trendmicro/tlsh" target="_blank" rel="noopener">TLSH</a> locality-sensitive hash of the file. Files that share structure produce nearby hashes — useful for finding variants of the same export, repeat uploads from one sensor, or campaigns with near-identical telemetry. The <strong>Similar files</strong> panel scores other uploads by <em>distance</em>; smaller is more similar.</p>
+
+      <table>
+        <thead><tr><th>Distance</th><th>What it means</th><th>Badge</th></tr></thead>
+        <tbody>
+          <tr><td>0</td><td>Identical content</td><td><span class="px-2 py-0.5 text-xs rounded border severity-critical">Identical</span></td></tr>
+          <tr><td>&lt; 30</td><td>Very similar — same tool, minor variant</td><td><span class="px-2 py-0.5 text-xs rounded border severity-high">Very close</span></td></tr>
+          <tr><td>30 – 70</td><td>Same family or campaign</td><td><span class="px-2 py-0.5 text-xs rounded border severity-medium">Related</span></td></tr>
+          <tr><td>70 – 100</td><td>Loosely related</td><td><span class="px-2 py-0.5 text-xs rounded border severity-info">Loose</span></td></tr>
+          <tr><td>&gt; 100</td><td>Unrelated — the default threshold cuts off here</td><td>—</td></tr>
+        </tbody>
+      </table>
+
+      <p>Use the threshold selector (50 / 100 / 150 / 200) to widen or tighten the search. The panel only ever lists the ten closest files, and at wider thresholds some of those will be coincidental structural overlap rather than real relation.</p>
+
+      <div class="lt-doc-fig">
+        <pre class="mermaid">flowchart LR
+  File["Your upload"] --> TLSH["TLSH hash"]
+  TLSH --> Compare["Compare to 500<br/>recent hashes"]
+  Compare --> SimilarFiles["Similar files (≈)"]</pre>
+      </div>
+
+      <h3>See a rule in other jobs</h3>
+      <p>Every finding carries a stable <em>rule signature</em> built from the rule&rsquo;s identifier and severity, or from a slug of its name when the tool reports no identifier — so a rule that keeps its identifier still matches itself across jobs after a rename.</p>
+      <p>Click <strong>See in other jobs</strong> on any finding for up to 20 recent matches from jobs you are allowed to see. Use it to spot a rule that fires repeatedly across your uploads, to pivot from a suspicious match to other files carrying the same signal, or to gauge how common a detection actually is on your install.</p>
+
+      {#- One diagram per idea, under the heading that explains it. These were a single
+          two-subgraph figure, which mermaid lays out side by side at 1800px — half scale
+          in an 862px column. -#}
+      <div class="lt-doc-fig">
+        <pre class="mermaid">flowchart LR
+  FindingNode["Any finding"] --> RuleSig["Rule signature"]
+  RuleSig --> QueryNode["Look across<br/>all jobs"]
+  QueryNode --> Correlated["Other jobs, same rule"]</pre>
+      </div>
+    </section>
+
+    <!-- ── Intel: entities ──────────────────────────── -->
+    <section id="intel">
+      <h2>Intel: entities <span class="lt-doc-badge">member+</span></h2>
+      <p>The <a href="/intel">Intel</a> pages aggregate signals across <em>every</em> completed job on this install. You need a logged-in <strong>member</strong> or <strong>admin</strong> account to see them.</p>
+
+      <h3>Entity dashboard</h3>
+      <p>A filterable, sortable table of every observable pulled out of the analysed logs. One filter bar drives it: the search box, a <strong>type</strong> dropdown with per-type counts, and a <strong>Filters</strong> panel holding the <strong>Labels</strong> chips, <em>last seen since</em>, <em>seen in ≥ N jobs</em>, <em>Sort by</em>, <em>watched only</em>, and <em>show allowlisted</em>. The <strong>Export</strong> menu downloads the IOC feed and the aggregate MITRE layer, respecting the current filters.</p>
+
+      <table>
+        <thead><tr><th>Column</th><th>Shows</th><th>Click it to…</th></tr></thead>
+        <tbody>
+          <tr><td>★</td><td>Whether anyone is watching this entity — gold means you are</td><td>Sort by watch state</td></tr>
+          <tr><td>Entity</td><td>The value, its tags, and derived attribute chips (LOLBin, DGA, RFC1918, …)</td><td>Open the workbench; a chip filters by that label</td></tr>
+          <tr><td>Type</td><td>Entity type badge</td><td>Filter to that type</td></tr>
+          <tr><td>Jobs</td><td>How many jobs it appeared in</td><td>Filter to that entity&rsquo;s jobs</td></tr>
+          <tr><td>Last seen</td><td>Relative time; hover for the absolute</td><td>Sort by recency</td></tr>
+        </tbody>
+      </table>
+      <p>The header tick box selects every row currently in view — with a search active, that means the filtered rows, not the whole database. One more ordering (<em>first seen</em>) lives in the <strong>Sort by</strong> select.</p>
+
+      <table>
+        <thead><tr><th>Entity type</th><th>What it contains</th></tr></thead>
+        <tbody>
+          <tr><td>Users</td><td>Account names (SubjectUserName, TargetUserName, …)</td></tr>
+          <tr><td>Computers</td><td>Hostnames and workstation names</td></tr>
+          <tr><td>IP addresses</td><td>Source and destination IPs</td></tr>
+          <tr><td>Hashes</td><td>MD5, SHA-1, SHA-256 pulled from process events</td></tr>
+          <tr><td>Executables</td><td>Process image names and parent images</td></tr>
+          <tr><td>Domains</td><td>DNS query names and target domains</td></tr>
+          <tr><td>Cmdline files</td><td>File paths pulled from command-line arguments</td></tr>
+          <tr><td>Services</td><td>Windows service names</td></tr>
+          <tr><td>Scheduled tasks</td><td>Scheduled task names</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Entity workbench</h3>
+      <p>Click any entity to open its workbench, which opens on <strong>Overview</strong>.</p>
+      <ul>
+        <li><strong>Overview</strong> — the analyst note (Markdown, up to 8000 characters, editable by any member), first/last seen, job count, derived attribute chips, <strong>Associated entities</strong> (typed relationships curated per type — a hash&rsquo;s filenames, an executable&rsquo;s hashes and parent/child processes, an IP&rsquo;s domains), <strong>Threat context</strong>, co-occurring entities, and every job where the entity appeared.</li>
+        <li><strong>Findings</strong> — every Sigma rule that fired against this entity, with severity, source tool, event count and a link back to the job. <strong>Show events</strong> expands the matched events inline.</li>
+        <li><strong>Relationships</strong> — <em>typed, evidence-backed</em> links pulled from the events themselves: a hash <em>hashes&nbsp;to</em> its executable, a domain <em>resolves&nbsp;to</em> an IP, a parent process is <em>parent&nbsp;of</em> a child, a user <em>logs&nbsp;on&nbsp;from</em> an IP. Grouped by type and direction with an occurrence count — far more precise than &ldquo;appeared in the same job&rdquo;. <strong>Evidence</strong> on any row expands the jobs where both entities co-occur and a sample of the events behind the edge.</li>
+        <li><strong>MITRE</strong> — per-entity ATT&amp;CK coverage, plus a <strong>Download Navigator Layer</strong> button.</li>
+        <li><strong>Processes</strong> — the process chains from one job that mention this entity, with their ancestors above and everything they spawned below. Appears for computers, executables, command-line files, users and hashes.</li>
+        <li><strong>Graph</strong> — the entity and its neighbourhood. <strong>Needs a job selected</strong>: a neighbourhood spanning every job an entity ever appeared in is a hairball that answers nothing.</li>
+        <li><strong>Discussions</strong> — the comment thread, badge counting comments. Any member can post; you can edit your own, and the author or an admin can delete one.</li>
+      </ul>
+
+      <div class="lt-doc-tip">
+        <span class="lt-doc-title">Job scope</span>
+        <p>Above the tabs sits a <strong>Job scope</strong> selector. Leave it on <em>All jobs</em> for the global question — everything ever seen about this entity — or pick one job to narrow the page to what that job alone observed. The scope lives in the URL (<code>?job=42</code>), so it survives a reload and can be shared, and exports follow it. An entity seen in only one job is scoped to it automatically.</p>
+        <table>
+          <thead><tr><th>Tab</th><th>Narrowed by <code>?job=</code></th></tr></thead>
+          <tbody>
+            <tr><td>Overview</td><td>No — kept global so the page never loses its unscoped view</td></tr>
+            <tr><td>Findings, Relationships, MITRE, Processes</td><td>Yes, badges included</td></tr>
+            <tr><td>Graph</td><td>Yes, and it will not draw without one</td></tr>
+            <tr><td>Discussions</td><td>No — a thread is about the entity</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <h3>Header controls</h3>
+      <ul>
+        <li><strong>★ Watch</strong> — creates a <strong>personal watch rule</strong> for this exact value, owned by you. Any later job whose entities match raises an alert in the nav bell that only you see and only you can acknowledge. Un-starring deletes the rule. The star also sets a shared &ldquo;somebody is watching this&rdquo; flag on the entity, which drives the marker in the entity list, the <em>Watched only</em> filter and the graph highlight — that flag raises no alerts by itself.</li>
+        <li><strong>Allowlist</strong> — marks the entity known-benign. Allowlisted entities are suppressed from the IOC feed by default (<code>?include_allowlisted=1</code> overrides) and rendered muted on the dashboard. Independent of the watchlist.</li>
+        <li><strong>Add to case</strong> — attaches this entity to an investigation case.</li>
+        <li><strong>Tags</strong> — short lowercased labels, max 50 characters, from a palette of 12 colours. Every chip is a pivot: clicking one filters the dashboard to everything else carrying it. A tag name carries <strong>one colour instance-wide</strong>, so the same label always looks the same and re-adding it with a different colour recolours it everywhere. The picker suggests tags already in use, with counts, so you reuse <code>apt28</code> instead of coining <code>apt-28</code>.</li>
+        <li><strong>Enrichment links</strong> — one-click lookups in external services, seeded for IP addresses, domains, hashes and executable names. Admin-editable, so any entity type can be wired up.</li>
+      </ul>
+
+      <h3>Live enrichment</h3>
+      <p>Beyond the static links, an administrator can configure <strong>live API enrichment</strong>. The Overview tab then shows a per-service <em>Fetch</em>/<em>Refresh</em> button that calls the provider on demand and renders a compact summary — VirusTotal detection ratio, AbuseIPDB score, Shodan open ports. Results are cached for 24 hours by default. Outbound requests are SSRF-filtered and rate-limited, and stored API tokens are never displayed.</p>
+
+      <h3>Tags across jobs and entities</h3>
+      <p>Tags are one vocabulary spanning both, managed at <a href="/intel/tags">Tags</a>. Create them up front so a team can agree a vocabulary before labelling against it, or as you go. Tick rows on the dashboard to tag them in bulk. The manager lists every tag with its usage counts and offers instance-wide <em>rename</em>, <em>merge</em>, <em>recolour</em> and <em>delete</em>; renaming onto an existing tag merges into it. A tag marked <em>shared rule</em> cannot be merged either way &mdash; the rule would re-add it on the next matching job, leaving the tag split in two &mdash; so switch that rule off on <a href="/intel/rules">Rules</a> first.</p>
+
+      <h3>Search grammar</h3>
+      <p>The dashboard search box takes more than substring match. <strong>Terms separated by spaces are ANDed</strong>, and a leading <code>-</code> excludes.</p>
+      <table>
+        <thead><tr><th>Term</th><th>Matches</th></tr></thead>
+        <tbody>
+          <tr><td><code>label:lolbin</code></td><td>One vocabulary covering derived attributes and your own tags: <code>lolbin</code>, <code>gtfobin</code>, <code>dga</code>, <code>suspicious_tld</code>, <code>privileged</code>, <code>machine</code>, <code>private</code>, <code>public</code>, <code>rfc1918</code>, <code>cgnat</code>, <code>loopback</code>, <code>link_local</code>, <code>multicast</code>, <code>reserved</code>, <code>signed_path</code>, <code>md5</code>/<code>sha1</code>/<code>sha256</code>/<code>sha512</code> — anything else is treated as a tag. <code>attr:</code> and <code>tag:</code> stay available when you need to be explicit</td></tr>
+          <tr><td><code>type:ip_address</code></td><td>One entity type; <code>type:domain,user</code> matches any of several. <code>ip</code>, <code>exe</code> and <code>cmdline</code> are accepted shorthand. Same filter as the type dropdown, so setting both narrows to the intersection</td></tr>
+          <tr><td><code>job:42</code></td><td>Every entity observed in that job; <code>job:42,57</code> matches any. An id you cannot view matches nothing, without revealing whether the job exists</td></tr>
+          <tr><td><code>list:lolbas</code></td><td>Membership in a named list. The lists live under <strong>Rules &rarr; Lists</strong>, where you can read and edit them; they ship as <code>rules/lists.yml</code> and are separate from the detection pipeline&rsquo;s own sets in <code>config/threat_detection.yaml</code>. Resolved into SQL, so it works inside an <code>OR</code></td></tr>
+          <tr><td><code>in:(psexec.exe,wmic.exe)</code></td><td>A set too small to deserve a name &mdash; the same thing as a <code>list:</code>, spelled out. Matches the <em>whole</em> value, up to 20 of them. Also SQL, so it works inside an <code>OR</code>. When a set outgrows the condition, the rule offers to promote it to a real list</td></tr>
+          <tr><td><code>cidr:10.0.0.0/8,192.168.0.0/16</code></td><td>Any IP inside any of the networks (up to 16), IPv4 or IPv6</td></tr>
+          <tr><td><code>re:/^admin\..*/</code></td><td>Python regex, case-insensitive. Capped at 200 characters; pathological patterns rejected</td></tr>
+          <tr><td><code>prefix*</code></td><td>Wildcard, translated to SQL <code>LIKE</code></td></tr>
+          <tr><td><code>"quoted phrase"</code></td><td>A literal containing spaces. Quotes group words; they do not turn a prefix into text, so <code>"tag:x"</code> is still a tag search</td></tr>
+        </tbody>
+      </table>
+      <h4>AND, OR and grouping</h4>
+      <p>Spaces mean AND. Use <code>OR</code> for alternatives and parentheses to group: <code>tag:apt28 OR tag:lazarus</code>; <code>label:lolbin AND (job:7 OR job:9)</code>; <code>(tag:a OR tag:b) -tag:reviewed</code>. AND binds tighter than OR, so parentheses are how you widen a branch. Writing <code>AND</code> explicitly changes nothing.</p>
+      <p><strong>Operators must be uppercase</strong>, and parentheses only group in a query that already uses <code>key:</code> syntax — so <code>powershell (encoded)</code> and <code>foo or bar</code> remain ordinary phrase searches. A query with no <code>key:</code> prefix and no quotes is treated as a single phrase.</p>
+      <p><code>re:</code> and <code>cidr:</code> cannot appear inside an <code>OR</code>, and the box says so: they are matched outside the database over the rows the query fetched, so as an OR branch they would have to contribute rows nothing fetched. Use them with AND, or run the two searches separately.</p>
+      <p>The box completes as you type — a partial key offers the prefixes, and accepting one (<kbd>Enter</kbd> or <kbd>Tab</kbd>) lists its values. The <strong>Saved</strong> button stores any combination, sort order included, as a named filter; toggle <em>shared</em> to make it visible to all members.</p>
+
+      <h3 id="relationship-graph-detail">Relationship graph</h3>
+      <p>The <strong>Graph</strong> tab on an entity and the <strong>Graph</strong> view on a case draw the same picture: entities as nodes, three kinds of edge, and a toolbar for interrogating them. Nothing in the toolbar moves a node — filtering, searching and recolouring change what is emphasised, never where anything sits.</p>
+      <table>
+        <thead><tr><th>Edge kind</th><th>Means</th></tr></thead>
+        <tbody>
+          <tr><td>Same job <em>(thin grey)</em></td><td>The two entities were named in the same log file, and nothing more. It never carries a path, and it is <strong>hidden by default</strong> because it is the bulk of every graph</td></tr>
+          <tr><td>Same Sigma finding <em>(amber)</em></td><td>Both were named inside one rule match</td></tr>
+          <tr><td>Typed relationship <em>(sky blue, arrow, label)</em></td><td>Evidence-backed and directed. Each relationship type is its own edge, so two entities linked both ways show two arrows. Click one for the direction, the occurrence count, and whether the times are <em>observed in events</em> or <em>recorded</em> at ingest</td></tr>
+        </tbody>
+      </table>
+      <details>
+        <summary>Filtering, colouring, paths and export</summary>
+        <div class="mt-3">
+          <p><strong>Filtering and search.</strong> The search box takes the same query language as the dashboard and applies it as you type, with no round trip — only <code>re:/…/</code> and <code>job:</code> go back to the server. Non-matching nodes <em>dim</em> by default; switch to <em>hide</em> to remove them. A query that matches nothing says so and leaves the graph alone, offering to run the same search across all entities. The <strong>type</strong> chips are different: unticking one removes those nodes outright, and edge-kind chips do the same for edges. A <strong>severity floor</strong> narrows to nodes whose worst finding is at least that severe.</p>
+          <p><strong>Colour</strong> switches between entity type, worst finding severity, dominant MITRE tactic, enrichment verdict and community, and is always scoped to what you can see — a node is never painted critical because of a finding inside someone else&rsquo;s private job. The node <em>ring</em> is a separate channel in strict order: selection, focal, watchlisted, then a critical/high finding. Fourteen MITRE hues cannot be made colourblind-safe, so read the side panel rather than the hue.</p>
+          <p><strong>Paths.</strong> Right-click a node to set it as the start or end of a path; the panel lists every shortest route, and clicking one lights it on the canvas. Paths only traverse typed relationships — &ldquo;named in the same log file&rdquo; is not a connection. If only a shared-finding path exists, it is offered separately and labelled as such.</p>
+          <p><strong>Pivots and layouts.</strong> A <strong>Pivots</strong> panel ranks hubs by PageRank (the default, because raw degree is dominated by how big a log file happened to be) or degree. Louvain <strong>communities</strong> are computed on load: colour by them, or click one to isolate it. <em>Rings</em> places nodes by distance from the focal entity; <em>Clusters</em> packs each community into its own circle and is usually the most legible first look at a large case; <em>Force</em> runs a simulation with a progress bar and a Cancel button, and stops on a wall clock. Drag a node to pin it, and it stays put through a Force run.</p>
+          <p><strong>Growing the graph.</strong> Click a node and <strong>Expand neighbours</strong> — or right-click for a single relationship type — to merge its neighbourhood in. New nodes are placed around the one you expanded from; nothing already on screen moves. A breadcrumb records how the graph grew, with per-step <strong>Undo</strong> and a <strong>Reset</strong>.</p>
+          <p><strong>Time.</strong> On a case, zooming the events timeline narrows the graph to the entities active in that window. The chip says <em>a linked rule fired</em> in the window, which is not quite the same as <em>this entity appeared</em> — a finding aggregates every event a rule matched.</p>
+          <table>
+            <thead><tr><th>Limit</th><th>Behaviour</th></tr></thead>
+            <tbody>
+              <tr><td>Job scope</td><td>An entity graph draws only once you pick a job. A case graph is bounded to the case&rsquo;s member entities and needs no job, though an optional <strong>Job</strong> filter narrows it</td></tr>
+              <tr><td>Neighbours per hop</td><td>How far the traversal reaches from the focal entity</td></tr>
+              <tr><td>Allowlisted entities</td><td>Excluded until you tick <strong>Include allowlisted</strong></td></tr>
+              <tr><td>Hashes, on a case</td><td>Start unticked — a case usually pulls in one hash per file touched, and they crowd out the user/computer/IP structure</td></tr>
+              <tr><td>&ldquo;Same job&rdquo; edges, on a case</td><td>Not fetched unless you tick <strong>Fetch &ldquo;same job&rdquo; edges</strong>; they are the bulk of a large case</td></tr>
+              <tr><td>Node and edge caps</td><td>Both graphs are capped so the tab always renders. An amber banner reports what was kept and what could not be counted. Edges touching the focal entity have a reserved budget, so the centre never loses its connections. If one job touches hundreds of the entities on screen, its co-occurrence edges are excluded and the banner says how many</td></tr>
+            </tbody>
+          </table>
+          <p><strong>Room to work.</strong> <strong>Expand</strong> gives the graph the whole window, and <kbd>Esc</kbd> steps back out. The <strong>? Help</strong> panel beside the Legend covers the edge kinds and the keyboard and mouse actions; Legend, Help and Pivots share one slot.</p>
+          <p><strong>Export.</strong> <strong>PNG</strong> (&times;1 or &times;2) reproduces exactly what you have filtered on screen, with parallel typed edges collapsed to one line carrying both names. <strong>GraphML</strong> opens in yEd or Gephi, marks typed edges as directed, and exports the unfiltered graph under its own budget of 500 nodes and 25,000 edges. Without a usable WebGL context the graph is replaced by a sortable neighbour table with working links.</p>
+        </div>
+      </details>
+    </section>
+
+    <!-- ── Cases ────────────────────────────────────── -->
+    <section id="cases">
+      <h2>Cases <span class="lt-doc-badge">member+</span></h2>
+
+      <h3>Investigation cases</h3>
+      <p>A <strong>case</strong> bundles entities and jobs into a named investigation. It has a status (<em>open</em> / <em>monitoring</em> / <em>closed</em>), an optional severity, and can be marked shared so other members see it; the owner edits name, summary, severity and status from the case&rsquo;s <strong>Settings</strong> dialog.</p>
+      <p>Four ways to build one:</p>
+      <ul>
+        <li>From <a href="/intel/cases">Cases</a>, create it and add members later.</li>
+        <li>From an entity or job page, <strong>Add to case</strong> picks an existing case or quick-creates one by name. The job version offers to add that job&rsquo;s entities at the same time.</li>
+        <li>From the case page, <strong>+ Jobs</strong> and <strong>+ Entities</strong> work from any tab. The pickers list recent jobs and busiest entities as soon as you open them, take several selections, and add them in one submit. Adding jobs pulls in their entities by default, and each job row has a later one-click <strong>+ entities</strong>.</li>
+        <li>From the <a href="/jobs">Jobs</a> list, members get a checkbox per row and an <strong>Add selected to case</strong> bar.</li>
+      </ul>
+
+      <div class="lt-doc-warn">
+        <span class="lt-doc-title">Admins also get bulk delete on the jobs list</span>
+        <p>It removes the selected jobs, their findings and their stored output after a confirmation. There is no undo.</p>
+      </div>
+
+      <p>The case detail page is tabbed:</p>
+      <ul>
+        <li><strong>Overview</strong> — the summary, the investigation <strong>narrative</strong> (Markdown, up to 8000 characters, case owner only), a <strong>findings roll-up</strong> (severity totals, top rules, tactic distribution, and a severity derived from the findings beside any you set manually), and <strong>pivot suggestions</strong>: co-occurring entities, similar files and correlated findings that aren&rsquo;t members yet, each with a one-click <strong>Add</strong>.</li>
+        <li><strong>Timeline</strong> — an attack-time view built from log event timestamps, not upload time. The same tactic-stacked <strong>activity histogram</strong> as the job page, merged across every job in the case, plus a chronological <strong>key events</strong> list, filterable by job, severity or entity. If a job&rsquo;s raw output has been cleaned up, an amber notice reports how many jobs still contribute to the histogram; the key events list is unaffected, being rebuilt from stored findings. Below it, the same zoomable <strong>events timeline</strong> merges every case job&rsquo;s alerts onto one axis, and keeps your zoom level when you change the filters above it.</li>
+        <li><strong>Entities</strong> / <strong>Jobs</strong> — the member lists, each row showing who added it and when, plus an optional per-link note (&ldquo;why is this here&rdquo;, up to 500 characters) editable by whoever added the link or the case owner. Paged at 50 rows; the tab badge shows the true total. Entity filtering runs on the server, so it searches the whole case rather than the page you are looking at.</li>
+        <li><strong>Processes</strong> — pick one of the case&rsquo;s jobs and its full process tree is rebuilt, the same one the job page shows, searchable by image, path, command line, user, host, PID or hash. Optionally <strong>anchor</strong> on one of that job&rsquo;s entities — a host, binary, command-line file, user or hash — to narrow the tree to the chains that name it and bring up its typed relationships below. The tree says how the observable <em>ran</em>; the relationships say what it touched.</li>
+        <li><strong>Graph</strong> — as above, bounded to the case&rsquo;s member entities. Unlike the entity graph it draws unfiltered, because cross-job correlation is the point of a case.</li>
+        <li><strong>Discussions</strong> — the comment thread, badge counting comments. Comments are editable by their author and deletable by the author, the case owner or an admin.</li>
+      </ul>
+      <h3>Case AI analysis</h3>
+      <p>When AI analysis is enabled, the <strong>AI Analysis</strong> tab produces a case-wide assessment connecting linked job findings and entities, with the case summary, narrative and link notes as analyst context. Choose a provider and select <strong>Analyse this case</strong>. At least one completed or partial job, or one linked entity, is required. Running jobs, discussion comments and previous Job AI reports are excluded.</p>
+      <p>Reports include sampled evidence from up to 200 jobs and 200 linked entities, with up to 40 findings and three events per finding. The brief identifies omitted context. The model receives only jobs the requester can access. Reports are saved snapshots; use <strong>Run again</strong> after adding evidence or changing notes. Nothing runs automatically.</p>
+      <p>A shared case report is readable only by members who can access the case and every source job; admins can read all reports. If a source job becomes private or is deleted, members without source access can no longer read that report. Before evidence is captured, the run is visible only to its requester and admins. The requester or an admin can stop a run, or delete a finished run. Progress, provider selection and history work as on Jobs.</p>
+
+      <p>On the <a href="/intel/cases">Cases</a> list, each row shows a derived severity chip (outlined, to distinguish it from one you set manually), the entity, job and findings counts, and a relative last-activity time. Sort by last updated, last activity, severity, findings count or name.</p>
+
+      <h3>Saved searches</h3>
+      <p>The <strong>Saved</strong> button on the dashboard stores a filter combination — search text, chips, sort order — as a named search for one-click reuse. Mark one <em>shared</em> and every member sees it; otherwise it is yours.</p>
+    </section>
+
+    <!-- ── Rules ────────────────────────────────────── -->
+    <section id="rules">
+      <h2>Rules <span class="lt-doc-badge">member+</span></h2>
+
+      <div class="lt-doc-note">
+        <span class="lt-doc-title">Not the detection rules</span>
+        <p>LogsTotal runs SIGMA <em>detection rules</em> inside a workflow, and those decide what counts as a finding. <strong>Rules</strong> here are yours: they run after an analysis finishes and decide what happens next — tag it, tell you about it, tell another system about it.</p>
+      </div>
+
+      <h3>Shared rules and lists</h3>
+      <p><strong>LOLBin</strong>, <strong>Privileged</strong>, <strong>RFC1918</strong> and fourteen more labels are <em>shared rules</em>: the same for everyone, and rules like any other &mdash; you can read their condition, and an administrator can edit them or switch one off. Each is written in the search grammar above and adds a tag to what it matches: <code>list:lolbas</code> for the LOLBins, <code>cidr:10.0.0.0/8,172.16.0.0/12,192.168.0.0/16</code> for RFC1918, <code>re:/^[0-9a-f]{64}$/</code> for a SHA-256. Every condition is written in that grammar, so every shared rule can be changed on the page; the entropy-based DGA heuristic is not a rule but a computed attribute (<code>attr:dga</code>) you can search for or build your own rule on. They ship as <code>rules/builtin.yml</code>, are loaded at start, and apply as each analysis finishes.</p>
+      <p>Beside the labels, sixteen <em>analyst rules</em> and three job rules ship for triage: offensive tooling, remote-access and staging tools by file name; scripts and odd extensions on command lines; services and scheduled tasks from user-writable paths, running a script host, or carrying an encoded command; built-in accounts and anonymous logons; dynamic-DNS, tunnel and file-sharing domains; hosts named like domain controllers. The job rules tag an analysis <code>needs_triage</code>, <code>rerun</code> or <code>clean</code>. All are silent tags you can switch off or edit; <code>lookalike</code> ships switched off.</p>
+      <p><strong>Lists</strong> are the named sets a condition tests with <code>list:&lt;name&gt;</code> &mdash; the LOLBAS names, the GTFOBins names, the suspicious TLDs, and any set an administrator adds on the same page, one value per line. A list matches the whole value or a value that ends with an entry. They are the rules&rsquo; own copies, separate from the detection pipeline&rsquo;s configuration.</p>
+      <p>Loaded at start, edited here: a rule or list nobody touched takes the shipped file&rsquo;s newer version at the next start, one the file no longer ships is retired, and one an administrator edited is left alone either way. <strong>Download YAML</strong> gives you your rules (and an administrator the shared rules and lists) in that file&rsquo;s format; <strong>Import YAML</strong> reads the same document back, pasted or uploaded, all or nothing &mdash; one bad rule imports none, and the page says which line.</p>
+      <p>The derivation itself has not moved. The <strong>Attributes</strong> card on an entity&rsquo;s Overview tab reads it fresh on every view, as the <code>attr:</code> facts the engine computed, and <code>attr:</code> filters live. Where the card and the tags disagree, that gap is worth reading: usually it means an administrator has not yet run the one-time labels backfill, or somebody edited or turned off a rule.</p>
+
+      <h3 id="intel-watch-rules">Writing a rule</h3>
+      <p><a href="/intel/rules">Rules</a> are your personal detection layer. A rule is criteria in the search syntax above, evaluated against the entities of every job as it finishes — so instead of starring one entity you can say &ldquo;tell me whenever a new LOLBin turns up&rdquo;. The form shows how many entities the criteria match right now, and <strong>Test against recent jobs</strong> shows how many alerts it would have raised over the last 25 finished runs without writing any of them. The condition field is multi-line and a new line counts as a space, so a long one can be written a term to a line; a save that is refused keeps everything you typed and lists every reason above the buttons. The <strong>★ Watch</strong> button on an entity is the shortcut: it creates a rule for that one value, which then appears in the list and can be edited or broadened.</p>
+      <p>A rule is about <strong>entities</strong> or about <strong>jobs</strong>, and the selector at the top of the form decides which. An entity rule uses the entity search syntax above and matches each observable in a finished job — &ldquo;tell me whenever a new LOLBin turns up&rdquo;. A job rule uses the <a href="#reading">jobs list</a> syntax and matches the run itself — <code>sev:critical -tag:reviewed</code>, &ldquo;tell me when something serious lands that nobody has looked at&rdquo;. Each is evaluated by the same filter the corresponding list uses, so what you searched is what alerts, and each tags what it matched: an entity rule tags entities, a job rule tags the job.</p>
+      <p>A rule has three independent actions, and each works on its own. It can <strong>auto-tag</strong> its matches — the tag names join the shared vocabulary the moment you save, so you can agree a set of labels before anything carries them. It can <strong>raise an alert</strong> in your bell. And it can <strong>POST to a webhook</strong>: method, extra headers and a signing secret are all configurable, and <strong>Test</strong> sends a synthetic delivery through the real path so you can verify a receiver without waiting for a job. Untick the alert and a rule keeps tagging and delivering in the background — the row shows it as <em>silent</em>.</p>
+      <p>Rules, alerts and acknowledgements are yours alone, and a rule is only ever evaluated against jobs you could open yourself, so a private submission never reaches someone else&rsquo;s rule.</p>
+      <p>Two things tell you what a rule will do before you save it. The line under the criteria box updates as you type and counts what matches <em>right now</em>. <strong>Test against recent jobs</strong> runs the criteria over the last 25 finished jobs you can see and reports how many alerts it would have raised — writing nothing. That second one is the useful one: a rule matching six hundred entities across twenty-five jobs is one you want <em>silent</em>, tagging without filling your bell.</p>
+      <p>The <strong>Jobs you watch</strong> section lists your subscriptions beside your rules. A watch has no criteria — it just says &ldquo;tell me when something happens here&rdquo; — and it is on this page because watching is a feature of Rules rather than a separate idea with the same name. The Watching tab on the <a href="/jobs">Jobs</a> list shows the same thing, and stays, because anyone signed in can watch a job while Rules is member-only.</p>
+      <details>
+        <summary>Webhook signing and delivery</summary>
+        <p class="mt-2">With a signing secret set, each delivery carries <code>X-LogsTotal-Signature: sha256=…</code> — an HMAC-SHA256 over <code>timestamp.body</code> keyed by your secret — alongside <code>X-LogsTotal-Timestamp</code> so you can reject stale replays. LogsTotal&rsquo;s own headers always win over custom ones, so the signature cannot be spoofed. One delivery is sent per rule per job, carrying up to 50 entities; every attempt, failures included, is listed on the <strong>Deliveries</strong> tab.</p>
+      </details>
+    </section>
+
+    <!-- ── Exports & API ────────────────────────────── -->
+    <section id="exports">
+      <h2>Exports &amp; API <span class="lt-doc-badge">member+</span></h2>
+
+      <h3>IOC feed</h3>
+      <p>The <a href="/intel/ioc-feed">IOC feed</a> exports entities carrying threat context, or matching your filters, in four formats. Filter by entity type and last-seen date before exporting; allowlisted entities are always excluded unless you ask for them.</p>
+      <table>
+        <thead><tr><th>Format</th><th>Good for</th></tr></thead>
+        <tbody>
+          <tr><td>JSON</td><td>Ingestion into custom tooling and scripts</td></tr>
+          <tr><td>CSV</td><td>Spreadsheets, block-list imports, quick review</td></tr>
+          <tr><td>STIX 2.1</td><td>TIPs (OpenCTI, commercial platforms)</td></tr>
+          <tr><td>MISP</td><td>Direct import into a MISP instance — one Event, one Attribute per indicator</td></tr>
+        </tbody>
+      </table>
+      <p>Access needs either a member-or-above cookie session or a Bearer <strong>API token</strong> with the <code>ioc_feed:read</code> scope.</p>
+
+      <h3>STIX 2.1 bundles</h3>
+      <p>Every entity detail page has an <strong>Export</strong> menu — STIX 2.1 bundle, clipboard IOC pack, per-entity MITRE Navigator layer, graph as GraphML. The STIX bundle contains the focal entity as an <em>indicator</em>, its pattern built from the matching observable type (<code>ipv4-addr</code>, <code>domain-name</code>, <code>file:hashes</code>…); each job where it was seen as a <em>sighting</em>; and co-occurring entities as further indicators tied to the focal one by <em>relationship</em> objects. Drop the bundle into any STIX-aware TIP.</p>
+      <p>A case&rsquo;s <strong>Export</strong> menu offers the same shapes for its members — STIX bundle, MISP event, IOC pack, GraphML. Case exports are capped at <strong>200 member entities</strong>, the earliest linked, and the graph export has its own budget of 500 nodes and 25,000 edges.</p>
+
+      <h3>One job, from the Intel side</h3>
+      <p>Anywhere a job appears in Intel or Cases there is a <em>findings</em> link, which opens every finding in that job with chips for the entities it resolved to. It is deliberately thin — the job page remains the rich view, and is the first link in the header — and exists for the one thing that page cannot show you: where each finding lands in your entity graph. Filter by severity or entity, and expand any row for its matched events.</p>
+
+      <h3>API tokens</h3>
+      <p>Admins generate Bearer tokens at <a href="/admin/api-tokens">/admin/api-tokens</a> for scripted access. A token sees exactly what the user who created it sees, never more, and stops working while that account is deactivated or below member. Send it as <code>Authorization: Bearer &lt;token&gt;</code>.</p>
+      <table>
+        <thead><tr><th>Scope</th><th>Grants</th></tr></thead>
+        <tbody>
+          <tr><td><code>ioc_feed:read</code></td><td>The IOC feed, in any format</td></tr>
+          <tr><td><code>taxii:read</code></td><td>The read-only TAXII server, when <code>TAXII_ENABLED=true</code></td></tr>
+          <tr><td><code>case:read</code></td><td>The read-only case API: <code>/intel/cases/list.json</code>, <code>/intel/cases/{id}/detail.json</code>, <code>/entities.json</code>, <code>/stix</code>, <code>/misp</code>, <code>/ioc-pack</code></td></tr>
+          <tr><td><code>job:submit</code></td><td>Submit one file per request, list workflows, and look up submission receipts under <code>/api/v1</code></td></tr>
+          <tr><td><code>job:read</code></td><td>Read statuses for up to 50 visible jobs per request</td></tr>
+          <tr><td><code>case:write</code></td><td>Create cases and attach uploaded jobs to visible cases</td></tr>
+        </tbody>
+      </table>
+      <p>Tokens are stored as SHA-256 hashes only — the plaintext is shown <strong>once</strong> at creation and never again. Revoked tokens are hard-deleted 90 days after revocation.</p>
+
+      <h3>TAXII 2.1 server (opt-in)</h3>
+      <p>Started with <code>TAXII_ENABLED=true</code>, LogsTotal exposes a read-only TAXII 2.1 server at <code>/taxii2/</code>. Point any TAXII 2.1 client — MISP connector, OpenCTI, Anomali, your own script — at the discovery URL with a token holding <code>taxii:read</code>. A single collection, <code>live-iocs</code>, serves the current entity set as STIX 2.1 indicators.</p>
+
+      <h3>Copy as IOC pack</h3>
+      <p><strong>Copy IOC pack</strong> on an entity copies a compact JSON snapshot — focal indicator, top 10 neighbours, STIX patterns, analyst tags — to your clipboard, for pasting into a ticket or a chat thread. Cases have the same button.</p>
+
+      <h3>Aggregate MITRE layer</h3>
+      <p>Intel exports a MITRE ATT&amp;CK Navigator layer merging techniques across every finished job you can see — the overall coverage picture rather than one log. Load it into <a href="https://mitre-attack.github.io/attack-navigator/" target="_blank" rel="noopener">Navigator</a>. Per-job and per-entity layers are exported from their own pages.</p>
+    </section>
+
+    <!-- ── Roles & access ───────────────────────────── -->
+    <section id="roles">
+      <h2>Roles &amp; access</h2>
+      <p>LogsTotal has four tiers. Admins assign roles from the admin panel — if you need more access, ask whoever runs this install.</p>
+
+      <table>
+        <thead>
+          <tr><th>Capability</th><th>Anonymous</th><th>User</th><th>Member</th><th>Admin</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Upload, view public jobs, docs</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Export findings JSON / MITRE layer</td><td>yes</td><td>yes</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Private submissions</td><td>no</td><td>yes</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Resubmit a job</td><td>no</td><td>yes</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Comment on a job, watch a job</td><td>no</td><td>yes</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Intel, IOC feed, STIX export, cases, tags, AI runs</td><td>no</td><td>no</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Delete jobs, manage workflows, manage users, raw tool outputs</td><td>no</td><td>no</td><td>no</td><td>yes</td></tr>
+        </tbody>
+      </table>
+
+      <p><strong>Private jobs</strong> are visible only to the submitter and admins. Members can see their own private jobs, but not other members&rsquo;.</p>
+    </section>
+
+    <!-- ── Workflows ────────────────────────────────── -->
+    <section id="workflows">
+      <h2>Workflows</h2>
+      <p>A <strong>workflow</strong> is a named bundle of detection tools. When you upload you pick one of the workflows the operator has configured, and the tools in it are what the detection score counts.</p>
+
+      <h3>Why pick one workflow over another?</h3>
+      <ul>
+        <li>A three-tool workflow gives you three independent opinions, at the cost of runtime.</li>
+        <li>A single-tool workflow finishes faster, and is useful when you know which rule set matters.</li>
+        <li>Some workflows are restricted to specific log types. Incompatible ones are filtered out of the dropdown once the log type is known.</li>
+      </ul>
+      <p>Different workflows can return different scores for the same file. That is expected, and is the point of running multiple detectors.</p>
+
+      <h3>Built-in tools</h3>
+      <table>
+        <thead><tr><th>Tool</th><th>Supported log types</th><th>Notes</th></tr></thead>
+        <tbody>
+          <tr>
+            <td><a href="https://github.com/wagga40/Zircolite" target="_blank" rel="noopener">Zircolite</a></td>
+            <td>EVTX, JSON EVTX, Winlogbeat, Windows Event XML, Auditd, Sysmon for Linux, Journald</td>
+            <td>Sigma rules over SQL; wide log-type coverage</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/WithSecureLabs/chainsaw" target="_blank" rel="noopener">Chainsaw</a></td>
+            <td>EVTX</td>
+            <td>Fast Rust binary; curated EVTX rule sets</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/Yamato-Security/hayabusa" target="_blank" rel="noopener">Hayabusa</a></td>
+            <td>EVTX</td>
+            <td>Threat hunting / forensics timeline focus</td>
+          </tr>
+          <tr>
+            <td><a href="https://github.com/M00NLIG7/ChopChopGo" target="_blank" rel="noopener">ChopChopGo</a></td>
+            <td>Syslog, Auditd</td>
+            <td>Fast Go binary; primary engine for syslog</td>
+          </tr>
+        </tbody>
+      </table>
+      <p>Operators can add more. A tool that doesn&rsquo;t support the detected log type is skipped — you see the skip in the per-tool panel, and the detection score counts only tools that ran.</p>
+    </section>
+
+    <!-- ── For administrators ───────────────────────── -->
+    <section id="admins">
+      <h2>For administrators <span class="lt-doc-badge">admin</span></h2>
+      <p>A front door for whoever runs this install, not a replacement for the operator docs below.</p>
+
+      <h3>Dashboard</h3>
+      <p><a href="/admin">/admin</a> is a tabbed dashboard.</p>
+      <table>
+        <thead><tr><th>Tab</th><th>What it holds</th></tr></thead>
+        <tbody>
+          <tr><td>Overview</td><td>A deployment-readiness verdict (Ready / Ready with warnings / Not ready — the same checks as <code>./logstotal doctor</code>), fleet stats, a getting-started checklist, and links to the other admin pages</td></tr>
+          <tr><td>System</td><td>Live status checks — database, Redis, storage, migrations, capacity budgets, backup receipt, tool binaries — plus storage and worker-capacity readouts. The card stamps when it last ran; <strong>Re-run checks</strong> forces a fresh pass</td></tr>
+          <tr><td>Maintenance</td><td>The backfills and cleanup jobs you can queue on demand, with inline progress while they run</td></tr>
+        </tbody>
+      </table>
+
+      <h3>Workers</h3>
+      <p>The <a href="/admin/workers">Worker Fleet</a> page shows every connected worker live, with a per-host capacity control — pause a host, or cap how many jobs it runs at once — and current, pending and stuck job tables. A worker that dies mid-job is recovered automatically the next time the web process starts; <strong>Recover All</strong> triggers it on demand.</p>
+
+      <h3>Settings</h3>
+      <p><a href="/admin/settings">/admin/settings</a> changes analyst-facing behaviour without a restart: which analytics panels appear (MITRE heatmap, activity histogram, events timeline, entities, threat detection, process tree), whether the AI Analysis tab is offered and whether each run&rsquo;s prompt is kept, whether Markdown renders in notes and comments, whether activity is recorded and in which categories, plus parallel tool execution, demo mode, and the sample-size cap the FAQ below tells users to ask you about.</p>
+      <p>External services have their own pages: <a href="/admin/enrichment">/admin/enrichment</a> for lookup and live-enrichment providers, and <a href="/admin/api-tokens">/admin/api-tokens</a> for Bearer tokens.</p>
+
+      <h3>Markdown in notes and discussion</h3>
+      <p>Case notes, entity notes, comment threads and the AI analysis pane render as <strong>Markdown</strong> — headings, lists, links, <code>code</code> and fenced blocks, plus two that are easy to miss: <strong>tables</strong> and <strong>Mermaid diagrams</strong> from a <code>```mermaid</code> fence. The AI pane uses both heavily.</p>
+      <p>Raw HTML is always escaped and <code>javascript:</code> links are never produced, so pasting a suspicious payload into a note is safe to do and safe for colleagues to read. Bare domains are deliberately not auto-linked, since notes here are full of IOCs. Images are disabled. Turn the whole thing off in <a href="/admin/settings">Settings</a> if you prefer plain text — nothing stored changes, so you can switch back.</p>
+
+      <h3>Where the operator docs live</h3>
+      <p>The operator documentation — installation, configuration, upgrades, backups, security, troubleshooting — is at <a href="{{ docs_url() }}" target="_blank" rel="noopener">{{ docs_url() }}</a>. The same pages ship with every install, as Markdown in its <code>docs/</code> folder, for hosts with no internet access.</p>
+      <p>Every command runs from the install directory:</p>
+      <table>
+        <thead><tr><th>Command</th><th>Does</th></tr></thead>
+        <tbody>
+          <tr><td><code>./logstotal doctor:docker</code></td><td>Full deployment preflight, inside the web container</td></tr>
+          <tr><td><code>./logstotal backup</code></td><td>Verified database backup — dump, integrity check, receipt</td></tr>
+          <tr><td><code>./logstotal upgrade</code></td><td>Upgrade to the latest release, with a backup and a rollback point first</td></tr>
+          <tr><td><code>./logstotal recommend-scaling</code></td><td>Sizes worker and thread counts for the host</td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <!-- ── FAQ ──────────────────────────────────────── -->
+    <section id="faq">
+      <h2>FAQ</h2>
+
+      <h3>&ldquo;My score is 0/3 — does that mean the file is safe?&rdquo;</h3>
+      <p>No. It means none of the rule sets you ran flagged anything. Rule sets only catch behaviour they were written for, so stealthy or novel activity can pass cleanly. Read a clean score as &ldquo;no known-bad signatures&rdquo;, not &ldquo;verified clean&rdquo;.</p>
+
+      <h3>&ldquo;Why did one tool take much longer than another?&rdquo;</h3>
+      <p>Tools differ in architecture and rule-set size — Zircolite parses to an in-memory SQL database, while Chainsaw and Hayabusa are compiled binaries — and large rule sets over large event volumes compound the difference. The job page shows per-tool duration as each one finishes.</p>
+
+      <h3>&ldquo;I re-uploaded my file and got the old job back. Why?&rdquo;</h3>
+      <p>LogsTotal deduplicates on SHA-256 + workflow, so an unchanged input returns the existing report instead of paying for a re-run. To force a fresh run, use <strong>Force re-analyze</strong> on the duplicate-file banner — you have to be logged in, and you can pick the same workflow or a different one. Otherwise ask an admin to delete the old job.</p>
+
+      <h3>&ldquo;Can I export findings for my own tooling?&rdquo;</h3>
+      <p>Yes. Every job offers a JSON export with stable rule signatures, and a MITRE Navigator layer. Members get the cross-job IOC feed in JSON / CSV / STIX / MISP, and per-entity STIX bundles.</p>
+
+      <h3>&ldquo;Can I share a link to a job?&rdquo;</h3>
+      <p>Yes for public jobs — the URL is stable and anyone can open it. Private jobs reject everyone except the submitter and admins, so a link alone won&rsquo;t work.</p>
+
+      <h3>&ldquo;Why do I only see some of the matched events?&rdquo;</h3>
+      <p>The <em>Show events</em> panel shows a sample, 10 per rule by default. The fire count is exact; only the stored event detail is capped, to keep jobs fast and storage bounded. Ask your administrator to raise the sample size in <em>Settings</em> if you need more — but note that analytics are extracted separately, from raw output, and are not affected by that value.</p>
+
+      <h3>&ldquo;What happens to my uploads over time?&rdquo;</h3>
+      <p>Retention is up to whoever runs this install. By default, files and jobs are kept until an admin deletes them, while raw tool output is swept on a schedule. Ask your administrator for their policy.</p>
+    </section>
+
+  </div>
+</div>
+
+<!-- Mermaid.js for diagrams. Eager, unlike the app-wide lazy renderer: here diagrams are
+     the content. This init stays separate from app/static/mermaid-render.js, which is
+     stricter because it draws model output over untrusted log data. -->
+<script src="/static/vendor/mermaid.min.js?v={{ app_version }}"></script>
+<script>
+  (function () {
+    // One dark theme, so the diagram palette is unconditional.
+    mermaid.initialize({
+      startOnLoad: true,
+      theme: 'dark',
+      themeVariables: {
+        darkMode: true,
+        background: '#030712',
+        primaryColor: '#1e3a5f',
+        primaryTextColor: '#e5e7eb',
+        primaryBorderColor: '#374151',
+        lineColor: '#6b7280',
+        secondaryColor: '#1c1917',
+        tertiaryColor: '#111827',
+        fontFamily: 'ui-sans-serif, system-ui, sans-serif',
+        fontSize: '14px'
+      },
+      flowchart: {
+        curve: 'basis',
+        padding: 16,
+        htmlLabels: true,
+        nodeSpacing: 36,
+        rankSpacing: 40,
+        // The content column is a fixed 896px. With useMaxWidth the SVG is scaled down to
+        // fit it, which shrinks the label text; the wrapper scrolls instead.
+        useMaxWidth: false
+      }
+    });
+  })();
+</script>
+{% endblock %}

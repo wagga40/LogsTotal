@@ -1,0 +1,82 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}{% if workflow %}Edit{% else %}New{% endif %} Workflow – LogsTotal{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto">
+  {{ page_header(("Edit " ~ workflow.name) if workflow else "New workflow", "/workflows", "Workflows") }}
+
+  <form method="POST" action="{% if workflow %}/workflows/{{ workflow.id }}/edit{% else %}/workflows/new{% endif %}"
+        class="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-5">
+
+    <div>
+      <label class="block text-sm text-gray-400 mb-1">Name <span class="text-red-400">*</span></label>
+      <input name="name" type="text" required
+        value="{{ workflow.name if workflow else '' }}"
+        class="lt-field lt-field--lg w-full">
+    </div>
+
+    <div>
+      <label class="block text-sm text-gray-400 mb-1">Description</label>
+      <input name="description" type="text"
+        value="{{ workflow.description if workflow else '' }}"
+        class="lt-field lt-field--lg w-full">
+    </div>
+
+    <div>
+      <label class="block text-sm text-gray-400 mb-2">Applicable log types</label>
+      <div class="flex flex-wrap gap-3">
+        {% for lt in log_types %}
+        <label class="flex items-center gap-2 cursor-pointer">
+          <input type="checkbox" name="log_types" value="{{ lt }}"
+            {% if workflow and lt in wf_log_types %}checked{% endif %}
+            class="accent-blue-500">
+          <span class="text-sm">{{ lt }}</span>
+        </label>
+        {% endfor %}
+      </div>
+      <p class="text-xs text-gray-600 mt-1">Leave unchecked to apply to all types.</p>
+    </div>
+
+    <div>
+      <div class="flex items-center justify-between mb-2">
+        <label class="block text-sm text-gray-400">Tasks (YAML) <span class="text-red-400">*</span></label>
+        <button type="button" onclick="resetYaml()"
+          class="text-xs text-blue-400 hover:text-blue-300">Load default</button>
+      </div>
+      <textarea name="tasks_yaml" id="tasks_yaml" rows="18" required
+        class="w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm font-mono focus:outline-none focus:border-blue-500 resize-y">{{ workflow.tasks_yaml if workflow else default_yaml }}</textarea>
+    </div>
+
+    <div>
+      <div class="flex items-center gap-2">
+        <input type="checkbox" name="is_default" id="is_default"
+          {% if workflow and workflow.is_default %}checked{% endif %}
+          class="accent-blue-500">
+        <label for="is_default" class="text-sm text-gray-300">Set as default workflow</label>
+      </div>
+      <p class="text-xs text-gray-600 mt-1">
+        Pre-selected on the upload form. Only one workflow can be the default &mdash; checking this
+        clears it on the others. It only decides a tie: once a file is dropped the list is filtered
+        to the workflows that accept its log type, so the default has to be among them to win.
+      </p>
+    </div>
+
+    <div class="flex gap-3 pt-2">
+      <button type="submit"
+        class="lt-btn lt-btn--lg lt-btn--primary">
+        {% if workflow %}Save changes{% else %}Create workflow{% endif %}
+      </button>
+      <a href="/workflows" class="bg-gray-800 hover:bg-gray-700 rounded px-5 py-2 text-sm transition">Cancel</a>
+    </div>
+
+  </form>
+</div>
+
+<script>
+const DEFAULT_YAML = {{ default_yaml | tojson }};
+function resetYaml() {
+  document.getElementById('tasks_yaml').value = DEFAULT_YAML;
+}
+</script>
+{% endblock %}

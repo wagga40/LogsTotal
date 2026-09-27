@@ -1,0 +1,80 @@
+{% from "partials/_copy_button.html" import copy_button with context %}
+{% from "partials/_help_popover.html" import help_popover %}
+<div id="similar-files-panel" class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+  <div class="flex items-center justify-between mb-4 flex-wrap gap-3">
+    <h3 class="text-sm font-medium text-gray-400 flex items-center">Similar Files
+      {% call help_popover('How similarity is measured', cls='ml-1.5') %}
+          Files with structurally similar content, compared using <strong class="text-white">TLSH</strong> fuzzy hashing.
+          <strong class="text-white">Distance</strong> (the coloured number): 0 = identical · &lt;30 = very similar · 30–70 = likely same campaign · 70–100 = related.
+          <strong class="text-white">Threshold buttons</strong> set the search radius — lower = stricter match, higher = broader sweep.
+          The TLSH hash is computed in the background after the job completes.
+      {% endcall %}
+      <span class="text-gray-600 font-normal ml-1">· threshold {{ threshold }}</span>
+    </h3>
+    <div class="flex gap-1">
+      {% for t in [50, 100, 150, 200] %}
+      <button
+        hx-get="/jobs/{{ job_id }}/similar?threshold={{ t }}"
+        hx-target="#similar-files-panel"
+        hx-swap="outerHTML"
+        class="text-xs px-2 py-1 rounded border transition
+          {% if threshold == t %}border-purple-500 bg-purple-900/50 text-purple-300
+          {% else %}border-gray-600 bg-gray-800 text-gray-400 hover:border-gray-500 hover:text-gray-300{% endif %}"
+      >{{ t }}</button>
+      {% endfor %}
+      {% if threshold != 100 %}
+      <button
+        hx-get="/jobs/{{ job_id }}/similar?threshold=100"
+        hx-target="#similar-files-panel"
+        hx-swap="outerHTML"
+        class="text-xs px-2 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:border-gray-500 hover:text-white transition"
+        title="Reset threshold filter">
+        Clear
+      </button>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if tlsh_hash %}
+  {# The value sits in a <code> so the button can read it back out of the DOM, never
+     interpolated into a JS string literal — the shape
+     `test_entity_clipboard_avoids_js_interpolation` forbids one page over. #}
+  <p class="text-xs text-gray-600 font-mono mb-4 break-all inline-flex items-center gap-1.5 flex-wrap">
+    TLSH: <code>{{ tlsh_hash }}</code>
+    {{ copy_button(source='code', title='Copy TLSH', icon_cls='w-3 h-3') }}
+  </p>
+  {% endif %}
+
+  {% if similar_files %}
+  <div class="space-y-2">
+    {% for sf in similar_files %}
+    <div class="flex items-center gap-3 px-3 py-2 bg-gray-800/50 rounded-lg flex-wrap">
+      <span class="text-xs font-mono font-bold px-2 py-0.5 rounded flex-shrink-0
+        {% if sf.distance == 0 %}bg-red-900/50 text-red-300 border border-red-700/60
+        {% elif sf.distance < 30 %}bg-orange-900/50 text-orange-300 border border-orange-700/60
+        {% elif sf.distance < 70 %}bg-yellow-900/50 text-yellow-300 border border-yellow-700/60
+        {% else %}bg-gray-700/50 text-gray-300 border border-gray-600{% endif %}"
+        title="Distance {{ sf.distance }} (0=identical)">{{ sf.distance }}</span>
+
+      {% if sf.job_id %}
+      <a href="/jobs/{{ sf.job_id }}" class="text-sm text-blue-300 hover:text-blue-200 font-mono truncate flex-1 min-w-0">
+        {{ sf.original_filename }}
+      </a>
+      {% else %}
+      <span class="text-sm text-gray-400 font-mono truncate flex-1 min-w-0">{{ sf.original_filename }}</span>
+      {% endif %}
+
+      {% if sf.job_status %}
+      <span class="text-xs px-2 py-0.5 rounded flex-shrink-0
+        {% if sf.job_status == 'completed' %}bg-green-900/50 text-green-300
+        {% elif sf.job_status == 'failed' %}bg-red-900/50 text-red-300
+        {% elif sf.job_status == 'running' %}bg-blue-900/50 text-blue-300
+        {% else %}bg-gray-700/50 text-gray-400{% endif %}">{{ sf.job_status }}</span>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-sm text-gray-500 italic">No similar files found at this threshold.</p>
+  {% endif %}
+</div>

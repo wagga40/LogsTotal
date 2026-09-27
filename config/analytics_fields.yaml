@@ -1,0 +1,195 @@
+# Field names used for entity extraction in the job detail analytics view.
+# Keys are looked up in event payloads and in event.Details (case-sensitive).
+# Override path via env: ANALYTICS_FIELDS_PATH
+#
+# Sources: Chainsaw sigma-event-logs-all.yml, Hayabusa profiles,
+#          Zircolite config.yaml mappings + ECS/Winlogbeat aliases,
+#          common auditd / syslog field names.
+
+# --- Network: IP addresses ---
+ip_keys:
+  # Windows / Sysmon / EVTX
+  - IpAddress
+  - SourceIp
+  - DestinationIp
+  - SourceAddress
+  - DestAddress
+  - DestinationAddress
+  - DestinationIpAddress
+  - SourceIpAddress
+  - SourceNetworkAddress
+  - RemoteAddress
+  - RemoteIp
+  # Auditd / Linux
+  - addr
+
+# --- Hashes ---
+hash_keys:
+  # Sysmon "MD5=xx,SHA256=yy" composite field
+  - Hashes
+  - Hash
+  - MD5
+  - SHA1
+  - SHA256
+  - SHA512
+  - Imphash
+  # Sysmon config hash field
+  - ConfigurationFileHash
+  # Certificate thumbprint (Chainsaw / Defender)
+  - CertThumbprint
+
+# --- Executables / images (basename extracted) ---
+image_keys:
+  # Core process fields
+  - Image
+  - ParentImage
+  - OriginalFileName
+  - OriginalFilename
+  # Sysmon image-load / driver-load
+  - ImageLoaded
+  - ImagePath
+  - ImageFileName
+  # Process names
+  - ProcessName
+  - NewProcessName
+  # Injection / cross-process
+  - SourceImage
+  - TargetImage
+  # Caller info
+  - CallerProcessName
+  - CallingProcessName
+  # Auditd / Linux
+  - exe
+  - comm
+  # Auditd EXECVE argv[0]
+  - a0
+
+# --- Domains / hostnames ---
+domain_keys:
+  # DNS
+  - QueryName
+  - QNAME
+  - QueryResults
+  # Hostnames
+  - HostName
+  - Domain
+  - DestinationHostname
+  - DestinationDnsName
+  - SourceHostname
+  # Server / remote
+  - ServerName
+  - TargetServerName
+  - RemoteName
+  # Auth domain context
+  - SubjectDomainName
+  - TargetDomainName
+
+# --- Command lines ---
+cmdline_keys:
+  # Windows
+  - CommandLine
+  - Commandline
+  - ParentCommandLine
+  - ProcessCommandLine
+  - ServiceFileName
+  # PowerShell
+  - HostApplication
+  - ScriptBlockText
+  - ContextInfo
+  # Auditd / Linux (hex-decoded by Zircolite transforms)
+  - proctitle
+  - cmd
+  # Auditd EXECVE argv[1..3] + PATH record filename (extension-gated below)
+  - a1
+  - a2
+  - a3
+  - name
+
+# --- User accounts ---
+user_keys:
+  # Windows Security
+  - SubjectUserName
+  - TargetUserName
+  - SamAccountName
+  - User
+  - AccountName
+  - UserName
+  - UserPrincipalName
+  # Rename / change events
+  - NewTargetUserName
+  - OldTargetUserName
+  # Sysmon
+  - ParentUser
+  # Auditd / Linux (auid = login uid; numeric uids become user entities)
+  - acct
+  - auid
+  - uid
+  - euid
+
+# --- Windows services ---
+service_keys:
+  - ServiceName
+  - Service
+  - ServiceFileName
+  - ServiceType
+  - ServiceStartType
+  - ServicePrincipalNames
+  - ImagePath
+
+# --- Windows scheduled tasks ---
+task_keys:
+  - TaskName
+  - TaskContent
+  - TaskContentNew
+
+# --- Hostnames of the logging host (become `computer` entities) ---
+# `Computer` (EVTX) is always checked in code; these cover Linux sources.
+hostname_keys:
+  # Auditd multi-node prefix / syslog
+  - node
+  - hostname
+  - host
+  # Journald export
+  - _HOSTNAME
+
+# User values to ignore when building the "users" entity list (lowercased)
+noise_users:
+  - ""
+  - "-"
+  - "n/a"
+  - "system"
+  - "local service"
+  - "network service"
+  - "defaultaccount"
+  - "guest"
+  - "dwa"
+  # Auditd "no login uid" encodings
+  - "unset"
+  - "4294967295"
+  - "-1"
+
+# File extensions to extract from command-line tokens
+cmdline_exts:
+  # Windows
+  - .exe
+  - .dll
+  - .ps1
+  - .bat
+  - .cmd
+  - .vbs
+  - .js
+  - .hta
+  - .msi
+  - .wsf
+  - .scr
+  - .cpl
+  # Cross-platform / Linux
+  - .sh
+  - .py
+  - .rb
+  - .pl
+  - .jar
+  - .php
+  - .elf
+  - .so
+  - .cgi

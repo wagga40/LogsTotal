@@ -1,0 +1,76 @@
+{% from "intel/partials/_tag_chip.html" import tag_chip %}
+{% from "partials/_tab_badge.html" import tab_badge_oob %}
+{#
+  The jobs this user watches. Nothing else lists them: the bell shows only the newest
+  unacknowledged events, so a subscription that has been quiet is invisible there.
+
+  Root carries the region id and NO hx-trigger: the placeholder in jobs.html owns the
+  lazy `loadJobWatching from:body once`, and `resourceTabs.select()` re-dispatches that
+  event on *every* activation — `once` is per listener, so a swapped-in root that
+  re-declared the trigger would re-arm and refetch on every tab switch.
+#}
+<div id="jobs-watching-region">
+  {% if rows %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">#</th>
+          <th class="px-4 py-3 font-medium">File</th>
+          <th class="px-4 py-3 font-medium">Unread</th>
+          <th class="px-4 py-3 font-medium">Watching since</th>
+          <th class="px-4 py-3 font-medium"></th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for r in rows %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3 text-gray-500">{{ r.job.id }}</td>
+          <td class="px-4 py-3 font-mono text-blue-300 text-xs max-w-[420px]">
+            <a href="/jobs/{{ r.job.id }}" class="block truncate hover:text-blue-200" title="{{ r.job.filename }}">
+              {% if r.job.is_private %}<span class="text-gray-500 mr-1" title="Private submission">&#128274;</span>{% endif %}{{ r.job.filename }}
+            </a>
+          </td>
+          <td class="px-4 py-3">
+            {% if r.unread %}
+            <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-red-900/50 text-red-300 text-[11px] font-medium">{{ r.unread }}</span>
+            {% else %}
+            <span class="text-gray-600 text-xs">—</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-gray-500 text-xs">{{ r.since | time_ago if r.since else '—' }}</td>
+          <td class="px-4 py-3">
+            <span class="flex items-center justify-end gap-2">
+              {% if r.unread %}
+              <button hx-post="/jobs/watching/{{ r.job.id }}/ack"
+                      hx-target="#jobs-watching-region" hx-swap="outerHTML"
+                      class="lt-btn lt-btn--xs">Mark read</button>
+              {% endif %}
+              <button hx-post="/jobs/watching/{{ r.job.id }}/stop"
+                      hx-target="#jobs-watching-region" hx-swap="outerHTML"
+                      class="lt-btn lt-btn--xs lt-btn--ghost">Stop watching</button>
+            </span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="text-center py-16 text-gray-600">
+    <p class="text-lg mb-2">You are not watching any jobs.</p>
+    <p class="text-sm">Open a job and press <strong>Watch</strong> to be told when someone comments, tags it, or an AI analysis finishes.</p>
+  </div>
+  {% endif %}
+
+  {#
+    The tab badge is server-rendered once, but Stop watching changes the count while swapping
+    only this pane — so it would sit stale until a reload. Rendered even at zero (the macro's
+    `hidden` branch), because 1 -> 0 is exactly the case that needs a target to swap into.
+
+    It carries `watched`, the same number `_build_jobs_page_tabs` puts there. Sending
+    `unread` here instead is how the badge would come to mean two different things depending
+    on whether you had opened the pane.
+  #}
+  {{ tab_badge_oob('watching', watched) }}
+</div>

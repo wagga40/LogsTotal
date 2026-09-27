@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}Tags – LogsTotal{% endblock %}
+
+{% block content %}
+<div>
+  {{ page_header("Tags", "/", "Home") }}
+  {#
+    `page_header` has no `intro=` parameter on purpose — see the macro. This one needs a
+    pluralised count, so it is written out here.
+  #}
+  <p class="text-sm text-gray-400 mb-6">
+    {{ tag_total }} tag{{ '' if tag_total == 1 else 's' }} across {{ tagged_entities }} entit{{ 'y' if tagged_entities == 1 else 'ies' }}.
+    Rename, merge, recolour or remove a tag everywhere it appears.
+  </p>
+
+  {% include "intel/partials/_tag_manager_table.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,137 @@
+{% extends "base.html" %}
+{% from "partials/_pager.html" import pager %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}Users – LogsTotal{% endblock %}
+
+{% block content %}
+{{ page_header("Users", "/admin#manage", "Manage",
+               pills=[('%d user' % total_users if total_users == 1 else '%d users' % total_users,),
+                      ('%d admin' % total_admins if total_admins == 1 else '%d admins' % total_admins, 'blue')]) }}
+
+{% if error %}
+<div class="mb-4 p-3 rounded bg-red-900/50 border border-red-700 text-red-300 text-sm">{{ error }}</div>
+{% endif %}
+
+<!-- Create user -->
+<div x-data="{ open: false }" class="mb-6">
+  <button @click="open = !open"
+    class="lt-btn lt-btn--lg lt-btn--primary">
+    + Add User
+  </button>
+
+  <div x-show="open" x-cloak class="mt-4 bg-gray-900 border border-gray-800 rounded-xl p-5 max-w-lg">
+    <h2 class="font-semibold mb-4">Create User</h2>
+    <form method="POST" action="/admin/users/create" class="space-y-3">
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Email</label>
+        <input name="email" type="email" required
+          class="lt-field lt-field--lg w-full">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Display Name</label>
+        <input name="display_name" type="text"
+          class="lt-field lt-field--lg w-full">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Password</label>
+        <input name="password" type="password" required
+          class="lt-field lt-field--lg w-full">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Role</label>
+        <select name="role"
+          class="lt-field lt-field--lg w-full">
+          <option value="user">User</option>
+          <option value="member">Member</option>
+          <option value="admin">Admin</option>
+        </select>
+      </div>
+      <button type="submit"
+        class="lt-btn lt-btn--lg lt-btn--primary">
+        Create
+      </button>
+    </form>
+  </div>
+</div>
+
+<!-- Users table -->
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+  <table class="w-full text-sm">
+    <thead class="border-b border-gray-800">
+      <tr class="text-gray-400 text-left">
+        <th class="px-4 py-3 font-medium">Email</th>
+        <th class="px-4 py-3 font-medium">Name</th>
+        <th class="px-4 py-3 font-medium">Role</th>
+        <th class="px-4 py-3 font-medium">Status</th>
+        <th class="px-4 py-3 font-medium">Joined</th>
+        <th class="px-4 py-3 font-medium">Actions</th>
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-800">
+      {% for u in users %}
+      <tr class="hover:bg-gray-800/50 transition">
+        <td class="px-4 py-3">{{ u.email }}</td>
+        <td class="px-4 py-3 text-gray-400">{{ u.display_name or '—' }}</td>
+        <td class="px-4 py-3">
+          {% if u.is_superuser %}
+          <span class="text-xs bg-purple-900/50 text-purple-300 border border-purple-800 px-1.5 py-0.5 rounded">Admin</span>
+          {% elif u.role == 'member' %}
+          <span class="text-xs bg-blue-900/50 text-blue-300 border border-blue-800 px-1.5 py-0.5 rounded">Member</span>
+          {% else %}
+          <span class="text-xs bg-gray-800 text-gray-400 border border-gray-700 px-1.5 py-0.5 rounded">User</span>
+          {% endif %}
+          {% if u.id != user.id %}
+          <form method="POST" action="/admin/users/{{ u.id }}/change-role" class="inline ml-1">
+            <select name="role" onchange="this.form.submit()"
+              class="lt-field lt-field--sm">
+              <option value="user" {% if not u.is_superuser and u.role == 'user' %}selected{% endif %}>User</option>
+              <option value="member" {% if not u.is_superuser and u.role == 'member' %}selected{% endif %}>Member</option>
+              <option value="admin" {% if u.is_superuser %}selected{% endif %}>Admin</option>
+            </select>
+          </form>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3">
+          {% if u.is_active %}
+          <span class="text-xs text-green-400">Active</span>
+          {% else %}
+          <span class="text-xs text-red-400">Disabled</span>
+          {% endif %}
+        </td>
+        <td class="px-4 py-3 text-gray-500 text-xs">{{ u.created_at.strftime('%Y-%m-%d') }}</td>
+        <td class="px-4 py-3" x-data="{ pw: false }">
+          <div class="flex gap-2 items-center">
+            <button @click="pw = !pw" class="text-xs text-blue-400 hover:text-blue-300">Password</button>
+            {% if u.id != user.id %}
+            <form method="POST" action="/admin/users/{{ u.id }}/toggle-active">
+              <button class="text-xs text-yellow-400 hover:text-yellow-300">
+                {% if u.is_active %}Disable{% else %}Enable{% endif %}
+              </button>
+            </form>
+            <form method="POST" action="/admin/users/{{ u.id }}/delete"
+                  data-confirm-title="Delete user"
+                  data-confirm-message="Delete {{ u.email }}?"
+                  data-confirm-accept="Delete">
+              <button class="text-xs text-red-400 hover:text-red-300">Delete</button>
+            </form>
+            {% else %}
+            <span class="text-xs text-gray-600">you</span>
+            {% endif %}
+          </div>
+          <form x-show="pw" x-cloak method="POST" action="/admin/users/{{ u.id }}/set-password"
+                class="mt-2 flex items-center gap-2">
+            <input name="password" type="password" required minlength="8" autocomplete="new-password"
+              placeholder="New password (min 8 chars)"
+              class="lt-field lt-field--sm w-48">
+            <button type="submit"
+              class="lt-btn lt-btn--sm lt-btn--primary">Set</button>
+          </form>
+        </td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+
+{{ pager(page, total_pages, url='/admin/users') }}
+{% endblock %}

@@ -1,0 +1,30 @@
+{% if technique_total == 0 %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 text-sm text-gray-500">
+  No MITRE technique tags on findings linked to this entity{% if job %} in job #{{ job }}{% endif %}.
+</div>
+{% else %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+  <div class="flex flex-wrap items-center justify-between gap-3 mb-4">
+    <h2 class="text-sm font-medium text-gray-400">
+      MITRE ATT&amp;CK Coverage
+      <span class="text-gray-600 font-normal ml-1">· {{ technique_total }} technique{{ 's' if technique_total != 1 else '' }}, {{ event_total }} event{{ 's' if event_total != 1 else '' }}{% if job %} · job #{{ job }}{% endif %}</span>
+    </h2>
+    <a href="/intel/entities/{{ entity.id }}/mitre-layer{% if job %}?job={{ job }}{% endif %}" target="_blank"
+       class="lt-btn">
+      <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+      Download Navigator Layer
+    </a>
+  </div>
+
+  <div class="text-xs text-gray-500 mb-3">Top {{ techniques | length }} technique{{ 's' if techniques | length != 1 else '' }} by event count</div>
+  <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-2">
+    {% for tid, cnt in techniques %}
+    <a href="https://attack.mitre.org/techniques/{{ tid.replace('.', '/') }}/" target="_blank" rel="noopener"
+       class="flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-gray-700 bg-gray-800/40 hover:border-gray-500 transition">
+      <code class="text-xs text-blue-300 font-mono">{{ tid }}</code>
+      <span class="text-xs text-gray-400">{{ cnt }}</span>
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

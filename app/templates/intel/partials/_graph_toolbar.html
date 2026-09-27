@@ -1,0 +1,180 @@
+{% from "partials/_help_popover.html" import help_popover %}
+{# Relationship-graph toolbar: search, lenses, colour-by, layout, filters.
+
+   Every control here is *client-side* except the ones in the scope-specific shells
+   (neighbours per hop, allowlisted, job scope, job edges), which refetch. That split is the
+   point of the redesign: filtering emphasises, it never re-queries and never relayouts, so
+   the picture stays where the analyst left it.
+
+   **Layout rule:** every labelled control is a `.lt-ctl` — one flex row, caption and field
+   sharing a baseline, with an explicit width on each select. Mixing caption-above-field
+   blocks with `items-end`-nudged checkboxes is what left "Include allowlisted" sitting a
+   few pixels off its neighbours, and a select sized by its longest `<option>` is what made
+   "Severity ≥ informational" overflow its row.
+
+   Expects the parent Alpine root (graphComponent in /static/graph.js) to expose:
+     search / onSearchInput() / clearSearch()
+     counts / dimMode / setDimMode()
+     colorBy / setColorBy() / layout / setLayout() / layoutRunning / layoutProgress / cancelLayout()
+     nodeLabels / setNodeLabels() / edgeLabels / setEdgeLabels() / severityFloor / setSeverityFloor()
+     communityCount / communityFilter / filterCommunity()
+     typeChips() / kindChips() / relChips() / toggleType() / toggleKind() / toggleRel()
+     selectedTypes / hiddenKinds / hiddenRels / allTypesSelected() / toggleAllTypes()
+
+   Chip colours come from `schema.colors` via inline `style`, never a Tailwind class:
+   tailwind.config.js only scans app/templates/**/*.html, and a class assembled at runtime
+   in JS is invisible to the scanner in a production CSS build.
+#}
+
+<div class="space-y-2.5 pt-2.5 border-t border-gray-800">
+
+  <!-- Search -->
+  <div class="flex flex-wrap items-center gap-2">
+    <div class="flex-1 min-w-[18rem] flex items-center gap-1.5">
+      <input type="search" x-model="search" @input="onSearchInput()" @keydown.escape.stop="clearSearch()"
+             placeholder="Filter — label:lolbin, tag:apt28, type:user, 10.0.*, re:/^svc-/"
+             class="lt-field w-full">
+      <button type="button" x-show="search" x-cloak @click="clearSearch()" class="lt-btn lt-btn--xs">clear</button>
+      {# Same grammar as the dashboard, so the same panel, beside the box it describes. #}
+      {{ help_popover('Filter syntax', rows=entity_syntax_help, width='lg',
+                      intro='Terms are AND-ed. Prefix any with - to exclude. Applies as you type.',
+                      footnote='Filtering only emphasises — it never moves a node or refetches the graph.') }}
+    </div>
+
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Non-matching</span>
+      <select :value="dimMode" @change="setDimMode($event.target.value)" class="lt-field lt-field--sm w-24">
+        <option value="dim">dim</option>
+        <option value="hide">hide</option>
+      </select>
+    </div>
+
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Severity ≥</span>
+      <select :value="severityFloor" @change="setSeverityFloor($event.target.value)" class="lt-field lt-field--sm w-32">
+        <option value="">any</option>
+        <template x-for="s in schema.severities.filter(v => v !== 'unknown')" :key="s">
+          <option :value="s" x-text="s"></option>
+        </template>
+      </select>
+    </div>
+  </div>
+
+  {# The query-feedback and active-window messages live in the reserved status row in
+     `_graph_stats.html`, not here. Anything that appears and disappears during interaction
+     must not be able to change this card's height — that is what made the canvas jump. #}
+
+  <!-- Colour / layout / edge names -->
+  <div class="flex flex-wrap items-center gap-x-4 gap-y-2">
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Colour</span>
+      <div class="flex items-center gap-1">
+        <template x-for="mode in [
+            {key:'type', label:'Type'},
+            {key:'severity', label:'Severity'},
+            {key:'tactic', label:'Tactic'},
+            {key:'verdict', label:'Verdict'},
+            {key:'community', label:'Cluster'}]" :key="mode.key">
+          <button type="button" @click="setColorBy(mode.key)"
+                  class="lt-btn lt-btn--xs" :class="colorBy === mode.key ? 'lt-btn--active' : ''"
+                  x-text="mode.label"></button>
+        </template>
+      </div>
+    </div>
+
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Layout</span>
+      <div class="flex items-center gap-1">
+        <template x-for="l in [
+            {key:'rings', label:'Rings'},
+            {key:'communities', label:'Clusters'},
+            {key:'force', label:'Force'}]" :key="l.key">
+          <button type="button" @click="setLayout(l.key)"
+                  class="lt-btn lt-btn--xs" :class="layout === l.key ? 'lt-btn--active' : ''"
+                  x-text="l.label"></button>
+        </template>
+      </div>
+      <span x-show="layoutRunning" x-cloak class="flex items-center gap-1.5 text-xs text-amber-300">
+        <span class="inline-block w-16 h-1 rounded bg-gray-800 overflow-hidden">
+          <span class="block h-full bg-amber-400" :style="`width:${Math.round(layoutProgress*100)}%`"></span>
+        </span>
+        <button type="button" @click="cancelLayout()" class="text-gray-400 hover:text-white">cancel</button>
+      </span>
+    </div>
+
+    <div class="lt-ctl">
+      <span class="lt-ctl__label" title="Draw the entity name beside each node. 'auto' thins them by collision so a dense graph stays readable; 'always' draws every one and is slow on a large graph.">Names</span>
+      <select :value="nodeLabels" @change="setNodeLabels($event.target.value)" class="lt-field lt-field--sm w-24">
+        <option value="auto">auto</option>
+        <option value="always">always</option>
+        <option value="never">never</option>
+      </select>
+    </div>
+
+    <div class="lt-ctl">
+      <span class="lt-ctl__label" title="Draw the relationship name along typed edges.">Edge names</span>
+      <select :value="edgeLabels" @change="setEdgeLabels($event.target.value)" class="lt-field lt-field--sm w-24">
+        <option value="auto">auto</option>
+        <option value="always">always</option>
+        <option value="never">never</option>
+      </select>
+    </div>
+
+    <div class="lt-ctl" x-show="communityCount > 1" x-cloak>
+      <span class="lt-ctl__label">Clusters</span>
+      <span class="text-xs text-gray-400" x-text="communityCount"></span>
+      <button type="button" x-show="communityFilter !== null" x-cloak @click="filterCommunity(communityFilter)"
+              class="lt-btn lt-btn--xs">show all</button>
+    </div>
+  </div>
+
+  <!-- Entity type filter (structural: unticking removes, it does not dim) -->
+  <div class="flex flex-wrap items-center gap-1.5">
+    <span class="lt-ctl__label mr-0.5">Types</span>
+    <button type="button" @click="toggleAllTypes()" class="lt-btn lt-btn--xs"
+            x-text="allTypesSelected() ? 'None' : 'All'"></button>
+    <template x-for="t in typeChips()" :key="t.key">
+      <button type="button" @click="toggleType(t.key)"
+              class="text-[11px] px-2 py-0.5 rounded border transition flex items-center gap-1.5"
+              :class="selectedTypes.has(t.key) ? 'bg-gray-800 text-gray-200 border-gray-600' : 'bg-gray-900 text-gray-600 border-gray-800 hover:text-gray-400'">
+        <span class="w-2 h-2 rounded-full ring-1 ring-black/40" :style="`background:${t.color}`"
+              :class="selectedTypes.has(t.key) ? '' : 'opacity-40'"></span>
+        <span x-text="t.label"></span>
+      </button>
+    </template>
+  </div>
+
+  <!-- Edge kinds + relationship types -->
+  <div class="flex flex-wrap items-center gap-1.5">
+    <span class="lt-ctl__label mr-0.5">Edges</span>
+    <template x-for="k in kindChips()" :key="k.key">
+      <button type="button" @click="toggleKind(k.key)" :title="k.hint"
+              class="text-[11px] px-2 py-0.5 rounded border transition flex items-center gap-1.5"
+              :class="hiddenKinds.has(k.key) ? 'bg-gray-900 text-gray-600 border-gray-800 hover:text-gray-400' : 'bg-gray-800 text-gray-200 border-gray-600'">
+        <span class="block w-4 h-[2px] shrink-0" :style="`background:${k.color}`" :class="hiddenKinds.has(k.key) ? 'opacity-40' : ''"></span>
+        <span x-text="k.label"></span>
+      </button>
+    </template>
+    <template x-for="r in relChips()" :key="r.key">
+      <button type="button" @click="toggleRel(r.key)"
+              class="text-[11px] px-2 py-0.5 rounded border transition"
+              :class="hiddenRels.has(r.key) ? 'bg-gray-900 text-gray-600 border-gray-800 hover:text-gray-400' : 'bg-gray-800 text-gray-300 border-gray-700'"
+              x-text="r.label"></button>
+    </template>
+  </div>
+
+  {# One reserved row for the two notes that can toggle while the analyst works. Same rule
+     as the status row in `_graph_stats.html`: present from the start, usually empty, never
+     changing this card's height. #}
+  <div class="min-h-[1rem] text-[11px] text-gray-500">
+    <span x-show="hiddenKinds.has('job')" x-cloak>
+      “Same job” edges are hidden: they connect anything that appeared in the same log file, so they
+      crowd out the structure. Tick the chip to bring them back.
+    </span>
+    {# Measured: one Force iteration costs ~140 ms at ~1,000 nodes even with Barnes-Hut, so
+       the layout stops on a wall clock and says so rather than crawling for a minute. #}
+    <span x-show="!layoutRunning && layoutStoppedEarly" x-cloak>
+      Force stopped early — this graph is large. Try Clusters, or filter first.
+    </span>
+  </div>
+</div>

