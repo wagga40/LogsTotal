@@ -30,7 +30,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # actions/checkout v4.2.2
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.tag || github.ref }}
           # The reused CI job asserts `git tag --list v<version>` is non-empty, and skips
@@ -115,7 +115,7 @@ jobs:
 
       - name: Publish
         # softprops/action-gh-release v2.2.1 — SHA-pinned like every other action here.
-        uses: softprops/action-gh-release@c95fe1489396fe8a9eb87c0abf8aa5b2ef267fda
+        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           # The CHANGELOG is the release notes; generate_release_notes appends the commit

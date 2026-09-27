@@ -20,11 +20,11 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # actions/checkout v4.2.2 — SHA-pinned like every other action in this repository.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
 
       - name: Set up PDM (with Python)
         # pdm-project/setup-pdm v4.5
-        uses: pdm-project/setup-pdm@973541a5febeafcfdadf8a51211435be6ecfd90f
+        uses: pdm-project/setup-pdm@544d7237314ee09c256785bd360f6b30add38b37
         with:
           python-version: "3.14"
           cache: true

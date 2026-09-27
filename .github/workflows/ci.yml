@@ -46,13 +46,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # actions/checkout v4.2.2 — SHA-pinned like every other action here.
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.ref }}
 
       - name: Set up PDM (with Python)
         # pdm-project/setup-pdm v4.5 — third-party actions pinned to commit SHAs
-        uses: pdm-project/setup-pdm@973541a5febeafcfdadf8a51211435be6ecfd90f
+        uses: pdm-project/setup-pdm@544d7237314ee09c256785bd360f6b30add38b37
         with:
           # The version the image ships and the one this is developed on, so a lint that
           # passes here passes locally. Ruff's rules are version-independent; the reason to
@@ -106,7 +106,7 @@ jobs:
         python-version: ["3.11", "3.12", "3.14"]
 
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.ref }}
           # `test_the_declared_version_has_a_git_tag` asserts `git tag --list v<version>`
@@ -118,7 +118,7 @@ jobs:
           fetch-tags: true
 
       - name: Set up PDM (with Python)
-        uses: pdm-project/setup-pdm@973541a5febeafcfdadf8a51211435be6ecfd90f
+        uses: pdm-project/setup-pdm@544d7237314ee09c256785bd360f6b30add38b37
         with:
           python-version: "${{ matrix.python-version }}"
           cache: true
@@ -137,7 +137,7 @@ jobs:
   artifacts:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.ref }}
 
@@ -162,7 +162,7 @@ jobs:
   deploy-smoke:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.ref }}
 
@@ -176,7 +176,7 @@ jobs:
   dry-run:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ inputs.ref }}
 
