@@ -1,0 +1,105 @@
+# The documentation website, built with Zensical (https://zensical.org) from docs/.
+#
+#   ./logstotal docs:serve    preview at http://localhost:8001 while editing
+#   ./logstotal docs:build    what CI runs: warnings are errors (--strict)
+#
+# The format is mkdocs.yml on purpose. Zensical reads it natively, and so does Material for
+# MkDocs, so the site does not depend on one generator: Zensical is young, and if it ever
+# blocks a release, `mkdocs build` with mkdocs-material builds the same pages.
+#
+# The pages are plain Markdown that also reads correctly on GitHub: GitHub-style callouts
+# (`> [!NOTE]`) via markdown-callouts, and GitHub-style heading anchors via pymdownx.slugs,
+# because links between pages were written against GitHub's anchors.
+
+site_name: LogsTotal
+site_description: Install, run and upgrade a self-hosted LogsTotal instance.
+site_url: https://wagga40.github.io/LogsTotal/
+repo_url: https://github.com/wagga40/LogsTotal
+repo_name: wagga40/LogsTotal
+edit_uri: edit/main/docs/
+docs_dir: docs
+copyright: LogsTotal is MIT-licensed. Bundled detection tools and rules keep their own licences.
+
+theme:
+  name: material
+  logo: assets/logo.svg
+  favicon: assets/logo.svg
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.top
+    - navigation.footer
+    - navigation.indexes
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+
+extra_css:
+  - assets/extra.css
+
+markdown_extensions:
+  - admonition
+  - github-callouts
+  - attr_list
+  - md_in_html
+  - tables
+  - toc:
+      permalink: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.details
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+nav:
+  - Home: README.md
+  - Get started:
+      - install/prerequisites.md
+      - install/single-host.md
+      - install/https.md
+      - install/fleet.md
+      - install/fleet-manual.md
+      - install/offline.md
+  - Operate:
+      - runbooks/health-and-logs.md
+      - runbooks/configuration-changes.md
+      - runbooks/workers.md
+      - runbooks/storage.md
+      - runbooks/detection-tools.md
+      - runbooks/backup-and-restore.md
+      - runbooks/upgrading.md
+      - runbooks/migrations.md
+      - runbooks/sqlite-to-postgres.md
+      - runbooks/account-recovery.md
+      - troubleshooting.md
+  - Reference:
+      - reference/commands.md
+      - configuration.md
+      - reference/admin-ui.md
+      - reference/fleet.md
+      - reference/ingestion-api.md
+      - security.md
+      - scaling.md
+      - limitations.md
+  - Contribute:
+      - contribute/local-development.md
+      - contribute/development.md
+      - contribute/releasing.md

@@ -1,0 +1,50 @@
+{% from "partials/_markdown_help.html" import markdown_help, editor_placeholder %}
+{% from "partials/_rich_text.html" import rich_text %}
+{#
+  Analyst note for one entity — self-contained (display + edit form in one partial), the
+  same shape as intel/partials/_case_notes.html: this whole region is the HTMX swap target
+  for POST /intel/entities/{entity_id}/notes.
+
+  It lives on the Overview tab, beside the other things that describe the entity. It used
+  to share a "Notes" tab with the discussion thread, which put a single field about the
+  entity and a multi-party conversation behind one label.
+
+  Editing is not owner-gated, unlike a case: an entity has no owner, and every viewer who
+  can reach this page is already member-or-above.
+#}
+<div id="entity-notes-region" class="bg-gray-900 border border-gray-800 rounded-xl p-6" x-data="{ editing: false }">
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-sm font-medium text-gray-400 flex items-center gap-1.5">Analyst Note {{ markdown_help(site_settings) }}</h2>
+    <button type="button" x-show="!editing" @click="editing = true"
+            class="lt-btn">
+      Edit
+    </button>
+  </div>
+  <div x-show="!editing" class="text-sm text-gray-300">
+    {% if entity.notes %}
+    {{ rich_text(entity.notes, site_settings) }}
+    {% else %}
+    <div class="text-gray-500 italic">No analyst notes yet.</div>
+    {% endif %}
+  </div>
+  <form x-show="editing" x-cloak
+        hx-post="/intel/entities/{{ entity.id }}/notes"
+        hx-target="#entity-notes-region"
+        hx-swap="outerHTML"
+        class="space-y-3">
+    <textarea name="body" rows="8" maxlength="8000"
+              class="lt-field lt-field--lg w-full font-mono"
+              placeholder="{{ editor_placeholder(site_settings, 'Analyst notes.', 8000) }}">{{ entity.notes or '' }}</textarea>
+    <div class="flex gap-2">
+      <button type="submit" class="lt-btn lt-btn--primary">Save</button>
+      <button type="button" @click="editing = false"
+              class="lt-btn">Cancel</button>
+      <button type="button"
+              hx-post="/intel/entities/{{ entity.id }}/notes"
+              hx-vals='{"body":""}'
+              hx-target="#entity-notes-region"
+              hx-swap="outerHTML"
+              class="ml-auto px-3 py-1.5 rounded text-xs text-red-400 hover:text-red-300">Clear</button>
+    </div>
+  </form>
+</div>

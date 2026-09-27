@@ -1,0 +1,38 @@
+{% from "partials/_pager.html" import pager %}
+{% from "intel/partials/_finding_row.html" import finding_row %}
+
+{% if total == 0 %}
+<div class="text-center py-12 text-gray-500 text-sm">
+  {% if job %}
+  No findings link to this entity in job #{{ job }}.
+  {% else %}
+  No findings link to this entity. Try the Admin → "Rebuild Finding-Entity Links" backfill if you have older jobs.
+  {% endif %}
+</div>
+{% else %}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-3">
+  <div class="text-xs text-gray-500">
+    {{ total }} finding{{ 's' if total != 1 else '' }} touch{{ '' if total != 1 else 'es' }} this entity
+    {% if job %} · job #{{ job }}{% endif %}
+    {% if total_pages > 1 %} · page {{ page }} of {{ total_pages }}{% endif %}
+  </div>
+  {% if job %}
+  <a href="/intel/jobs/{{ job }}/findings" class="text-xs text-blue-400 hover:text-blue-300 transition">All findings in job #{{ job }} &rarr;</a>
+  {% endif %}
+</div>
+{# The card keeps `overflow-hidden` (rounded-corner clipping); the list scrolls in a
+   child. The two must never share an element — see the .lt-scroll note in base.html. #}
+<div class="border border-gray-800 rounded-lg overflow-hidden">
+  <div class="divide-y divide-gray-800 lt-scroll lt-scroll--lg">
+  {# No entity chips here: the entity *is* the page. #}
+  {% for f in findings %}{{ finding_row(f) }}{% endfor %}
+  </div>
+</div>
+
+{# The pager sits OUTSIDE the scroll box on purpose — inside it you would scroll
+   fifty rows to reach "Next". #}
+{% if total_pages > 1 %}
+{{ pager(page, total_pages, url='/intel/entities/' ~ entity.id ~ '/findings-partial',
+         qs=('job=' ~ job if job else ''), target='#entity-findings-region') }}
+{% endif %}
+{% endif %}

@@ -1,0 +1,136 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}Cases – Intel – LogsTotal{% endblock %}
+
+{% from "partials/_severity_macros.html" import sev_pill, sev_solid %}
+{% set status_meta = {
+  'open': {'label': 'Open', 'classes': 'bg-blue-900/50 text-blue-300 border-blue-700/40'},
+  'monitoring': {'label': 'Monitoring', 'classes': 'bg-amber-900/50 text-amber-300 border-amber-700/40'},
+  'closed': {'label': 'Closed', 'classes': 'bg-gray-800 text-gray-400 border-gray-700/40'},
+} %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+  {% call page_header("Investigation Cases", "/", "Home") %}
+<button onclick="document.getElementById('case-create-dialog').showModal()"
+            class="lt-btn lt-btn--lg lt-btn--primary">
+      + New case
+    </button>
+{% endcall %}
+<p class="text-sm text-gray-500 mt-1">Group entities and jobs into named investigations. Export as STIX 2.1 bundles.</p>
+
+  <!-- Filter bar -->
+  <div x-data='{{ {"status": current_status, "q": current_q, "sort": current_sort} | tojson }}'
+       class="bg-gray-900 border border-gray-800 rounded-xl p-4 mb-6">
+    <form method="GET" action="/intel/cases" class="flex flex-wrap items-center gap-3">
+      <div class="flex gap-1">
+        <a href="/intel/cases" class="text-xs px-3 py-1.5 rounded border {% if not current_status %}border-blue-600 bg-blue-900/30 text-blue-300{% else %}border-gray-700 bg-gray-800 text-gray-400 hover:text-gray-200{% endif %} transition">All</a>
+        {% for s, meta in status_meta.items() %}
+        <a href="/intel/cases?status={{ s }}" class="text-xs px-3 py-1.5 rounded border {% if current_status == s %}{{ meta.classes }}{% else %}border-gray-700 bg-gray-800 text-gray-400 hover:text-gray-200{% endif %} transition">
+          {{ meta.label }} {% if counts.get(s) %}<span class="opacity-60">({{ counts[s] }})</span>{% endif %}
+        </a>
+        {% endfor %}
+      </div>
+      <input type="text" name="q" value="{{ current_q }}" placeholder="Search by name…"
+             class="lt-field flex-1 min-w-[200px]">
+      <input type="hidden" name="status" value="{{ current_status }}">
+      <select name="sort" onchange="this.form.submit()"
+              class="lt-field">
+        <option value="updated" {% if current_sort == 'updated' %}selected{% endif %}>Sort: Last updated</option>
+        <option value="activity" {% if current_sort == 'activity' %}selected{% endif %}>Sort: Last activity</option>
+        <option value="severity" {% if current_sort == 'severity' %}selected{% endif %}>Sort: Severity</option>
+        <option value="findings" {% if current_sort == 'findings' %}selected{% endif %}>Sort: Findings</option>
+        <option value="name" {% if current_sort == 'name' %}selected{% endif %}>Sort: Name</option>
+      </select>
+      <button type="submit" class="lt-btn">Filter</button>
+    </form>
+  </div>
+
+  {% if rows %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    {% for row in rows %}
+    {% set case = row.case %}
+    <a href="/intel/cases/{{ case.id }}"
+       class="flex items-center gap-4 px-5 py-4 border-b border-gray-800/50 hover:bg-gray-800/50 transition group">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-2 mb-1">
+          <span class="text-base font-medium text-white group-hover:text-blue-300 transition truncate">{{ case.name }}</span>
+          {% if case.is_shared %}
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300 border border-emerald-700/40" title="Shared with all members">SHARED</span>
+          {% endif %}
+        </div>
+        {% if case.summary %}
+        <p class="text-sm text-gray-500 line-clamp-1">{{ case.summary }}</p>
+        {% endif %}
+        <div class="flex items-center gap-2 flex-wrap text-xs text-gray-600 mt-1">
+          <span>{{ entity_counts.get(case.id, 0) }} entit{{ 'y' if entity_counts.get(case.id, 0) == 1 else 'ies' }}</span>
+          <span>{{ job_counts.get(case.id, 0) }} job{{ '' if job_counts.get(case.id, 0) == 1 else 's' }}</span>
+          {% if row.findings_total > 0 %}
+          <span>{{ row.findings_total }} finding{{ '' if row.findings_total == 1 else 's' }}</span>
+          {% endif %}
+          {% if row.last_activity %}
+          <span title="{{ row.last_activity.strftime('%Y-%m-%d %H:%M UTC') }}">active {{ row.last_activity | time_ago }}</span>
+          {% endif %}
+          {% if case.severity %}
+          <span class="text-[10px] px-2 py-0.5 rounded font-medium uppercase tracking-wider {{ sev_solid(case.severity) }}">{{ case.severity }}</span>
+          {% endif %}
+          {% if row.derived_severity %}
+          <span class="text-[10px] px-2 py-0.5 rounded border font-medium uppercase tracking-wider {{ sev_pill(row.derived_severity) }}"
+                title="Derived from findings across this case's jobs">
+            {{ row.derived_severity }}
+          </span>
+          {% endif %}
+        </div>
+      </div>
+      <span class="text-xs px-2 py-1 rounded-full border font-medium {{ status_meta.get(case.status, status_meta.open).classes }}">
+        {{ status_meta.get(case.status, {'label': case.status}).label }}
+      </span>
+    </a>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
+    <p class="text-gray-500">No cases yet.</p>
+    <p class="text-xs text-gray-600 mt-2">Create a case to group entities and jobs into a named investigation.</p>
+  </div>
+  {% endif %}
+</div>
+
+<dialog id="case-create-dialog" class="rounded-xl bg-gray-900 border border-gray-800 p-0 backdrop:bg-gray-950/70">
+  <form method="POST" action="/intel/cases" class="w-[28rem] max-w-[95vw] p-6 space-y-4">
+    <h2 class="text-lg font-semibold text-white">New investigation case</h2>
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Name</label>
+      <input type="text" name="name" required maxlength="200" autofocus
+             class="lt-field lt-field--lg w-full">
+    </div>
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Summary (optional)</label>
+      <textarea name="summary" rows="3" maxlength="8000"
+                class="lt-field lt-field--lg w-full"></textarea>
+    </div>
+    <div class="flex gap-3">
+      <div class="flex-1">
+        <label class="block text-xs text-gray-400 mb-1">Severity</label>
+        <select name="severity" class="lt-field lt-field--lg w-full">
+          <option value="">—</option>
+          <option value="critical">Critical</option>
+          <option value="high">High</option>
+          <option value="medium">Medium</option>
+          <option value="low">Low</option>
+          <option value="informational">Informational</option>
+        </select>
+      </div>
+      <label class="flex items-end gap-2 text-sm text-gray-300 pb-2">
+        <input type="checkbox" name="is_shared" value="1" class="lt-check">
+        Shared with all members
+      </label>
+    </div>
+    <div class="flex justify-end gap-2 pt-2">
+      <button type="button" onclick="document.getElementById('case-create-dialog').close()"
+              class="lt-btn lt-btn--lg">Cancel</button>
+      <button type="submit" class="lt-btn lt-btn--lg lt-btn--primary">Create</button>
+    </div>
+  </form>
+</dialog>
+{% endblock %}

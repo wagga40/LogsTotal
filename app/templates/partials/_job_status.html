@@ -1,0 +1,414 @@
+{% from "partials/_severity_macros.html" import sev_dot, sev_card_border, sev_heading %}
+{# expects parent to set `s` and `is_terminal` (job.html / _job_status_poll.html)
+
+   `hx-swap="morph"` — exactly that, no `:outerHTML` suffix. This said `morph:outerHTML` for
+   a long time and was therefore never morphing at all: the alpine-morph extension matches
+   the bare string, declines anything else, and htmx then falls back to
+   `htmx.config.defaultSwapStyle` (innerHTML). That rebuilt every child of this region on
+   each 3s poll, which is why an open task log flickered and lost its scroll position, and
+   why `Alpine.store('openLogs')` had to exist to keep the disclosures open at all. See the
+   long note in `_ai_analysis.html`; the spelling is pinned by a test. #}
+<div id="job-status-region"
+  {% if not is_terminal %}
+  hx-get="/jobs/{{ job.id }}/status-partial"
+  hx-trigger="every 3s"
+  hx-swap="morph"
+  hx-ext="alpine-morph"
+  {% endif %}
+>
+
+  <!-- Score card -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6 border-l-4
+    {% if summary.total > 0 %}border-l-red-500{% elif s == 'cancelled' %}border-l-gray-500{% elif s in ('failed', 'partial') %}border-l-amber-500{% elif is_terminal %}border-l-green-500{% else %}border-l-blue-500{% endif %}">
+    <div class="flex items-start justify-between mb-4">
+      <div>
+        <h2 class="text-sm font-medium text-gray-400 mb-1">Detection Score</h2>
+        <div class="text-4xl font-bold font-mono
+          {% if summary.total > 0 %}text-red-400{% elif s == 'cancelled' %}text-gray-400{% elif s in ('failed', 'partial') %}text-amber-400{% elif is_terminal %}text-green-400{% else %}text-gray-400{% endif %}">
+          {{ summary.ratio }}
+          <span class="text-base font-normal text-gray-500 ml-1">tools detected</span>
+        </div>
+      </div>
+      <div>{% include "partials/_status_badge.html" %}</div>
+    </div>
+
+    <!-- Severity bar -->
+    {% if summary.total > 0 or is_terminal %}
+    <div class="flex gap-4 flex-wrap mt-4 items-center">
+      {% if summary.critical > 0 %}
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-red-500"></span>
+        <span class="text-sm">Critical <strong class="text-red-400">{{ summary.critical }}</strong></span>
+      </div>
+      {% endif %}
+      {% if summary.high > 0 %}
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-orange-500"></span>
+        <span class="text-sm">High <strong class="text-orange-400">{{ summary.high }}</strong></span>
+      </div>
+      {% endif %}
+      {% if summary.medium > 0 %}
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-yellow-500"></span>
+        <span class="text-sm">Medium <strong class="text-yellow-400">{{ summary.medium }}</strong></span>
+      </div>
+      {% endif %}
+      {% if summary.low > 0 %}
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-blue-500"></span>
+        <span class="text-sm">Low <strong class="text-blue-400">{{ summary.low }}</strong></span>
+      </div>
+      {% endif %}
+      {% if summary.informational > 0 %}
+      <div class="flex items-center gap-2">
+        <span class="w-3 h-3 rounded-full bg-gray-500"></span>
+        <span class="text-sm">Info <strong class="text-gray-400">{{ summary.informational }}</strong></span>
+      </div>
+      {% endif %}
+      {% if summary.total == 0 and is_terminal %}
+      {% if s == 'cancelled' %}
+      <span class="text-gray-400 text-sm font-medium">Analysis cancelled</span>
+      {% elif s == 'failed' %}
+      <span class="text-red-400 text-sm font-medium">Analysis failed</span>
+      {% elif s == 'partial' %}
+      <span class="text-amber-400 text-sm font-medium">No matches in the tools that finished</span>
+      {% else %}
+      <span class="text-green-400 text-sm font-medium">No threats detected</span>
+      {% endif %}
+      {% endif %}
+      {% if not is_terminal %}
+      <span class="text-blue-400 text-xs animate-pulse ml-2">updating...</span>
+      {% endif %}
+    </div>
+    {% elif not is_terminal %}
+    <p class="text-gray-500 text-sm mt-2">Analysis running...</p>
+    {% endif %}
+  </div>
+
+  <!-- Job-level error (details: admin only) -->
+  {% if job.error_message and is_terminal %}
+  <div class="{% if s != 'cancelled' and user and user.is_superuser %}bg-red-950/50 border border-red-800{% else %}bg-gray-900 border border-gray-700{% endif %} rounded-xl p-4 mb-6">
+    <div class="flex items-start justify-between gap-4">
+      <div>
+        {% if s == 'cancelled' %}
+        <p class="text-sm text-gray-300">{{ job.error_message | e }} — results from tools that finished before cancellation are kept below.</p>
+        {% elif user and user.is_superuser %}
+        <p class="text-sm font-medium text-red-300 mb-1">Error</p>
+        <p class="text-sm text-red-200 font-mono whitespace-pre-wrap break-words">{{ job.error_message | e }}</p>
+        {% else %}
+        <p class="text-sm text-gray-300">The analysis did not complete successfully.</p>
+        {% endif %}
+      </div>
+      {% if can_resubmit %}
+      <form method="POST" action="/jobs/resubmit" class="flex-shrink-0">
+        <input type="hidden" name="file_id" value="{{ job.file_id }}">
+        <input type="hidden" name="workflow_id" value="{{ job.workflow_id }}">
+        <button type="submit"
+          class="bg-blue-700 hover:bg-blue-600 rounded px-3 py-1.5 text-xs font-semibold transition whitespace-nowrap">
+          Resubmit
+        </button>
+      </form>
+      {% endif %}
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Tool results -->
+  {% if job.task_results %}
+  <div class="space-y-2 mb-6">
+    {% for tr in job.task_results %}
+    {% set ts = tr.status.value if tr.status.value is defined else tr.status %}
+    <div class="bg-gray-900 border border-gray-800 rounded-lg" x-data="{}">
+      <!-- Summary row -->
+      <div class="flex items-center gap-4 px-4 py-3 flex-wrap">
+        <div class="flex-shrink-0 w-5 text-center">
+          {% if ts == 'completed' %}<span class="text-green-400 text-sm">&#10003;</span>
+          {% elif ts == 'running' %}<span class="text-blue-400 text-sm animate-pulse">&#9679;</span>
+          {% elif ts == 'failed' %}<span class="text-red-400 text-sm">&#10007;</span>
+          {% elif ts == 'skipped' %}
+          <span class="text-yellow-400 text-sm">&#8211;</span>
+          {% elif ts == 'cancelled' %}<span class="text-gray-400 text-sm">&#8856;</span>
+          {% else %}<span class="text-gray-600 text-sm">&#9675;</span>{% endif %}
+        </div>
+        <span class="font-semibold text-sm capitalize {% if tr.tool_name in ['Computing analytics', 'File similarity'] %}min-w-[11rem]{% else %}w-28{% endif %} flex-shrink-0">{{ tr.tool_name }}</span>
+        {% if tr.tool_name in ['Computing analytics', 'File similarity'] %}
+        <span class="text-sm text-gray-500">—</span>
+        {% else %}
+        <span class="font-mono font-bold text-sm
+          {% if tr.findings_count > 0 %}text-red-400{% else %}text-gray-500{% endif %}">
+          {{ tr.findings_count }} rule{% if tr.findings_count != 1 %}s{% endif %} matched
+        </span>
+        {% endif %}
+        {% if ts == 'running' and tr.started_at %}
+        <span class="text-xs text-blue-400 animate-pulse" title="Running since {{ tr.started_at }}">running...</span>
+        {% elif tr.duration_ms is not none and tr.duration_ms > 0 %}
+        <span class="text-xs text-gray-500" title="Execution time for this tool">{{ (tr.duration_ms / 1000) | round(2) }}s</span>
+        {% endif %}
+        {% if user and user.is_superuser and is_terminal %}
+        <button type="button"
+          @click="$store.openLogs[{{ tr.id }}] = !($store.openLogs[{{ tr.id }}] || false)"
+          hx-get="/jobs/task-results/{{ tr.id }}/log"
+          hx-trigger="click once"
+          hx-target="#task-log-{{ tr.id }}"
+          hx-swap="innerHTML"
+          class="ml-auto text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
+          :class="($store.openLogs[{{ tr.id }}] || false) ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
+          <span x-text="($store.openLogs[{{ tr.id }}] || false) ? 'Hide logs' : 'Show logs'"></span>
+        </button>
+        {% endif %}
+      </div>
+      {% if ts == 'failed' %}
+      {% if user and user.is_superuser %}
+      <div class="border-t border-gray-800 px-4 py-3 bg-red-950/20">
+        <p class="text-sm font-medium text-red-300 mb-1">Error</p>
+        <p class="text-sm text-red-200 font-mono whitespace-pre-wrap break-words">{{ tr.error_message | e }}</p>
+        {% if tr.log_output %}
+        <details class="mt-3">
+          <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-300">Tool output (stdout/stderr)</summary>
+          <pre class="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words bg-gray-950 rounded p-3 mt-2 max-h-64 overflow-y-auto">{{ tr.log_output | e }}</pre>
+        </details>
+        {% endif %}
+      </div>
+      {% else %}
+      <!-- The reason can carry paths and internals, so it stays admin-only — but a
+           non-admin still needs to know the "0 rules matched" above is not a clean
+           result. Without this the tool row is indistinguishable from a successful one. -->
+      <div class="border-t border-gray-800 px-4 py-3 bg-red-950/20">
+        <p class="text-sm text-red-200">This tool failed to run — the findings below are incomplete. Ask an administrator to check the job, or resubmit it.</p>
+      </div>
+      {% endif %}
+      {% endif %}
+      {% if tr.error_message and ts == 'skipped' %}
+      <div class="border-t border-gray-800 px-4 py-3 bg-yellow-950/30 border-l-4 border-l-yellow-600">
+        <p class="text-sm font-medium text-yellow-400 mb-1">Skipped</p>
+        <p class="text-sm text-yellow-200 font-mono whitespace-pre-wrap break-words">{{ tr.error_message | e }}</p>
+      </div>
+      {% endif %}
+      {% if tr.error_message and ts == 'cancelled' %}
+      <div class="border-t border-gray-800 px-4 py-3 bg-gray-800/30 border-l-4 border-l-gray-600">
+        <p class="text-sm font-medium text-gray-300 mb-1">Cancelled</p>
+        <p class="text-sm text-gray-400 font-mono whitespace-pre-wrap break-words">{{ tr.error_message | e }}</p>
+      </div>
+      {% endif %}
+      {% if user and user.is_superuser and is_terminal %}
+      <div x-show="$store.openLogs[{{ tr.id }}] || false" x-cloak class="border-t border-gray-800 px-4 py-3" id="task-log-{{ tr.id }}">
+      </div>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% endif %}
+
+  <!-- Progress message while running -->
+  {% if not is_terminal %}
+  <div class="text-center py-6 text-gray-500 text-sm space-y-1">
+    {% if queue_position and queue_position > 0 %}
+    <p class="text-yellow-400">Position {{ queue_position }} in queue</p>
+    {% endif %}
+    {% if estimated_remaining %}
+    <p>Estimated: ~{{ (estimated_remaining // 60) }}m {{ estimated_remaining % 60 }}s remaining</p>
+    {% endif %}
+    <p>Findings will appear as tools complete.</p>
+  </div>
+  {% endif %}
+
+  <!-- Findings grouped by severity -->
+  {% if summary.total > 0 and is_terminal %}
+  <div x-data="{}" class="space-y-4 mb-6">
+    <div class="flex justify-end gap-2">
+      <button type="button"
+        @click="$dispatch('toggle-all-findings', { open: true })"
+        class="text-xs px-2.5 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500 transition">
+        Expand all</button>
+      <button type="button"
+        @click="$dispatch('toggle-all-findings', { open: false })"
+        class="text-xs px-2.5 py-1 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500 transition">
+        Collapse all</button>
+    </div>
+    {% for severity in ['critical', 'high', 'medium', 'low', 'informational'] %}
+    {% set items = findings_by_severity[severity] %}
+    {% if items %}
+    {% set tools_in_group = items | map(attribute='tool_name') | unique | list %}
+    <div x-data="{ open: false, toolFilter: '' }"
+         @toggle-all-findings.window="open = $event.detail.open"
+         class="bg-gray-900 border rounded-xl overflow-hidden
+           {{ sev_card_border(severity) }}">
+      <div class="w-full flex items-center justify-between gap-4 px-5 py-3 hover:bg-gray-800/50 transition">
+        <div class="flex items-center gap-3 min-w-0">
+          <span class="w-2.5 h-2.5 rounded-full
+            {{ sev_dot(severity) }}"></span>
+          <span class="font-semibold capitalize
+            {{ sev_heading(severity) }}">
+            {{ severity | capitalize }}
+          </span>
+          <span class="text-sm text-gray-500">{{ items | length }} rule{% if items|length != 1 %}s{% endif %},
+            {{ items | sum(attribute='finding.count') }} hits</span>
+        </div>
+        <button type="button" @click="open = !open" :aria-expanded="open"
+          class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition flex items-center gap-1.5"
+          :class="open ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
+          <span x-text="open ? 'Hide' : 'Show'"></span>
+          <svg class="w-3 h-3 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+        </button>
+      </div>
+
+      <div x-show="open" x-cloak>
+        {% if tools_in_group | length > 1 %}
+        <div class="flex gap-1 flex-wrap px-5 py-2 border-b border-gray-800 bg-gray-900/50">
+          <button @click="toolFilter = ''"
+            class="text-xs px-2 py-0.5 rounded border transition"
+            :class="toolFilter === '' ? 'bg-gray-700 text-white border-gray-500' : 'bg-gray-800/50 text-gray-500 border-gray-700 hover:text-gray-300'">All</button>
+          {% for tool in tools_in_group %}
+          <button @click="toolFilter = toolFilter === '{{ tool }}' ? '' : '{{ tool }}'"
+            class="text-xs px-2 py-0.5 rounded border transition capitalize"
+            :class="toolFilter === '{{ tool }}' ? 'bg-gray-700 text-white border-gray-500' : 'bg-gray-800/50 text-gray-500 border-gray-700 hover:text-gray-300'">{{ tool }}</button>
+          {% endfor %}
+        </div>
+        {% endif %}
+        <div class="divide-y divide-gray-800">
+        {% for item in items %}
+        <div x-data="{ showDetails: false, showRule: false }" x-show="toolFilter === '' || toolFilter === '{{ item.tool_name }}'" class="px-5 py-3">
+          <div class="flex items-start justify-between gap-4">
+            <div class="flex-1 min-w-0">
+              <div class="flex items-center gap-2 flex-wrap">
+                <span class="font-medium text-sm">{{ item.finding.rule_name }}</span>
+                <span class="text-xs text-gray-500 font-mono bg-gray-800 px-1.5 py-0.5 rounded">
+                  {{ item.tool_name }}
+                </span>
+                <span class="text-xs text-gray-500">{{ item.finding.count }} hit{% if item.finding.count != 1 %}s{% endif %}</span>
+              </div>
+              {% if item.tags %}
+              <div class="flex flex-wrap gap-1 mt-1">
+                {% for tag in item.tags %}
+                <span class="text-xs bg-gray-800 text-gray-400 px-1.5 py-0.5 rounded">{{ tag }}</span>
+                {% endfor %}
+              </div>
+              {% endif %}
+            </div>
+            <div class="flex gap-3 flex-shrink-0">
+              {% if item.has_details %}
+              <button @click="showDetails = !showDetails"
+                hx-get="/jobs/findings/{{ item.finding.id }}/events"
+                hx-trigger="click once"
+                hx-target="#events-{{ item.finding.id }}"
+                hx-swap="innerHTML"
+                class="text-xs text-blue-400 hover:text-blue-300 whitespace-nowrap">
+                <span x-text="showDetails ? 'Hide events' : 'Show events'"></span>
+              </button>
+              {% endif %}
+              <button
+                @click="showRule = !showRule"
+                hx-get="/jobs/findings/{{ item.finding.id }}/rule"
+                hx-trigger="click once"
+                hx-target="#rule-{{ item.finding.id }}"
+                hx-swap="innerHTML"
+                class="text-xs text-yellow-400 hover:text-yellow-300 whitespace-nowrap">
+                <span x-text="showRule ? 'Hide rule' : 'Show rule'"></span>
+              </button>
+            </div>
+          </div>
+
+          {% if item.has_details %}
+          <div x-show="showDetails" x-cloak class="mt-3" id="events-{{ item.finding.id }}">
+          </div>
+          {% endif %}
+
+          <div x-show="showRule" id="rule-{{ item.finding.id }}" class="mt-2" style="display:none">
+          </div>
+
+          {% if item.finding.rule_signature %}
+          <div x-data="{ open: false }" class="mt-2">
+            <button
+              @click="open = !open"
+              hx-get="/jobs/{{ job.id }}/correlated?rule_signature={{ item.finding.rule_signature }}"
+              hx-trigger="click once"
+              hx-target="#corr-{{ item.finding.id }}"
+              hx-swap="innerHTML"
+              class="text-xs text-purple-400 hover:text-purple-300 transition"
+            ><span x-text="open ? '↑ Hide' : '≈ See in other jobs'"></span></button>
+            <div x-show="open" id="corr-{{ item.finding.id }}"
+                 class="mt-2 bg-gray-950/40 rounded-lg p-3 border border-gray-800" style="display:none">
+            </div>
+          </div>
+          {% endif %}
+        </div>
+        {% endfor %}
+        </div>
+      </div>
+    </div>
+    {% endif %}
+    {% endfor %}
+  </div>
+  {% elif is_terminal %}
+  {% if s == 'cancelled' %}
+  <div class="text-center py-8 text-gray-400">
+    <p class="text-xl font-semibold">Analysis cancelled</p>
+    <p class="text-sm text-gray-500 mt-1">No findings were recorded before cancellation.</p>
+  </div>
+  {# Zero findings is a clean verdict only when every tool ran. A failed or partial job
+     wore the green "No threats detected" too, which is the one line an analyst acts on
+     without reading the tool rows underneath it. #}
+  {% elif s == 'failed' %}
+  <div class="text-center py-8 text-red-400">
+    <p class="text-xl font-semibold">Analysis failed</p>
+    <p class="text-sm text-gray-500 mt-1">No tool produced results, so there is no verdict on this file.</p>
+  </div>
+  {% elif s == 'partial' %}
+  <div class="text-center py-8 text-amber-400">
+    <p class="text-xl font-semibold">No rules matched in the tools that finished</p>
+    <p class="text-sm text-gray-500 mt-1">At least one tool failed, so this is not a clean verdict.</p>
+  </div>
+  {% else %}
+  <div class="text-center py-8 text-green-400">
+    <p class="text-xl font-semibold">No threats detected</p>
+    <p class="text-sm text-gray-500 mt-1">All tools completed with 0 rules matched.</p>
+  </div>
+  {% endif %}
+  {% endif %}
+
+  <!-- Analytics (lazy-loaded via HTMX) -->
+  {% if is_terminal and summary.total > 0 %}
+  <div hx-get="/jobs/{{ job.id }}/analytics" hx-trigger="load" hx-swap="innerHTML">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6 animate-pulse">
+      <div class="h-4 bg-gray-800 rounded w-40 mb-4"></div>
+      <div class="grid grid-cols-7 gap-2">
+        {% for _ in range(7) %}
+        <div class="h-16 bg-gray-800 rounded-lg"></div>
+        {% endfor %}
+      </div>
+      <div class="mt-6 space-y-2">
+        <div class="h-3 bg-gray-800 rounded w-32"></div>
+        <div class="h-20 bg-gray-800 rounded"></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Process Tree panel (process lineage from matched events, lazy-loaded) -->
+  {% if is_terminal and summary.total > 0 and (not site_settings or site_settings.show_process_tree) %}
+  <div hx-get="/jobs/{{ job.id }}/process-tree" hx-trigger="load" hx-swap="innerHTML">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6 animate-pulse">
+      <div class="h-4 bg-gray-800 rounded w-32 mb-4"></div>
+      <div class="space-y-2">
+        <div class="h-6 bg-gray-800 rounded w-2/3"></div>
+        <div class="h-6 bg-gray-800 rounded w-1/2 ml-6"></div>
+        <div class="h-6 bg-gray-800 rounded w-1/3 ml-12"></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  <!-- Similar Files panel (TLSH-based, loaded once after job completes) -->
+  {% if is_terminal and tlsh_hash %}
+  <div hx-get="/jobs/{{ job.id }}/similar" hx-trigger="load" hx-swap="outerHTML" class="mb-6">
+    <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 animate-pulse">
+      <div class="h-4 bg-gray-800 rounded w-32 mb-4"></div>
+      <div class="space-y-2">
+        <div class="h-10 bg-gray-800 rounded-lg"></div>
+        <div class="h-10 bg-gray-800 rounded-lg"></div>
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+</div>

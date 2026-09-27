@@ -1,0 +1,919 @@
+# Contributor tasks — everything you need a checkout for.
+#
+# Included by ./Taskfile.yml with `flatten: true`, so no task carries a `dev:` prefix:
+# `task test`. Run them from the repo root.
+#
+# The seam is the AUDIENCE, not the technology. An operator installs from a release archive
+# and never runs anything here; a contributor has this half and the other one. Anything both
+# use — doctor, backup, quickstart, docker:*, health:remote — lives in taskfiles/ops.yml,
+# because the operator is the one who cannot go and get the other file.
+
+version: '3'
+
+# No `dotenv:` here — go-task refuses one in an included file outright: "Included
+# Taskfiles can't have dotenv declarations". The root's declaration covers these
+# tasks, with its mustache-versus-shell asymmetry: a {{.KEY}} template prefers the .env
+# value while the shell prefers the process environment. That is the trap the `env:`
+# bridges are written around.
+
+
+
+# ── Shared preconditions ─────────────────────────────────────────────────────
+# Not a task namespace — go-task ignores unknown top-level keys, and this one is
+# never reached by `task --list`. Every key carries its anchor *after* the colon
+# deliberately: two tests scan the raw file for a bare 2-space-indented
+# `name:` line, and a bare key here would register as a phantom task that then
+# needed a desc: and a docs mention.
+#
+# Preconditions run before a task's first command, fire through `cmds: - task: x`
+# calls, and are evaluated under --dry. What they buy is the difference between
+# mvdan/sh's `"pdm": executable file not found in $PATH` and a sentence naming the
+# thing to install.
+#
+# The pdm check is the binary only, not `[ -d .venv ]`. The venv's location is a
+# PDM configuration detail, and CI installs through an action rather than into a
+# checked-in .venv — betting on the layout would guard a fresh clone and break the
+# build. (The four stdlib-only python tasks still branch on .venv themselves, via
+# lib/common.sh::run_py, because they have somewhere to fall back to.)
+x-preconditions:
+  pdm: &needs-pdm
+    sh: command -v pdm >/dev/null 2>&1
+    msg: "ERROR: pdm not found. Install it: https://pdm-project.org/en/latest/#installation (macOS: brew install pdm). Then: ./logstotal setup"
+  docker: &needs-docker
+    # Binary only. `docker info` would catch a stopped daemon too, but it blocks for
+    # up to 10s, and every docker:* task would pay that on every invocation.
+    sh: command -v docker >/dev/null 2>&1
+    msg: "ERROR: docker not found. Install Docker Desktop (macOS) or docker.io + docker-compose-plugin (Linux)."
+  sqlite3: &needs-sqlite3
+    sh: command -v sqlite3 >/dev/null 2>&1
+    msg: "ERROR: sqlite3 not found. Install: brew install sqlite (macOS) or apt install sqlite3 (Linux)."
+  redis: &needs-redis
+    sh: command -v redis-server >/dev/null 2>&1
+    msg: "ERROR: redis-server not found. Install: brew install redis (macOS) or apt install redis-server (Linux) — or run it in Docker: ./logstotal redis:docker"
+  curl: &needs-curl
+    sh: command -v curl >/dev/null 2>&1
+    msg: "ERROR: curl not found. Install: apt install curl (Linux); macOS ships it."
+  perl: &needs-perl
+    sh: command -v perl >/dev/null 2>&1
+    msg: "ERROR: perl not found — ./logstotal css:prod and ./logstotal css:dev rewrite base.html with it."
+  shellcheck: &needs-shellcheck
+    sh: command -v shellcheck >/dev/null 2>&1
+    msg: "ERROR: shellcheck not found. Install: brew install shellcheck (macOS) or apt install shellcheck (Linux)."
+
+tasks:
+  setup:
+    desc: "Bootstrap a fresh dev environment: install all deps (including dev), create .env, init DB"
+    summary: |
+      One-command bootstrap for a fresh checkout:
+        1. pdm install (full deps including dev: ruff, pytest, watchdog)
+        2. Copy .env.example → .env and generate a real SECRET_KEY + ADMIN_PASSWORD
+           (the admin password prints ONCE; skipped if .env exists)
+        3. mkdir -p uploads
+        4. python3 init_db.py (create tables, load workflows, create admin)
+      Use ./logstotal docker:up for actual production deployment.
+    cmds:
+      # The inline guard stays even though `install` carries the *needs-pdm
+      # precondition: tests/test_scripts_robustness.py::test_setup_tasks_guard_missing_pdm
+      # extracts this task's RAW body and requires `command -v pdm`, `pdm not found`
+      # and `exit 1` inside it, and an anchored precondition is invisible to that scan.
+      - |
+        command -v pdm >/dev/null 2>&1 || { echo "ERROR: pdm not found. Install it first: https://pdm-project.org/en/latest/#installation (macOS: brew install pdm)"; exit 1; }
+      # Deliberately does NOT run vendor:update. All 15 files in app/static/vendor/ are
+      # committed, so a fresh clone already has them — fetching them again would make
+      # `task setup` fail on an egress-restricted host for no gain. Run vendor:update by
+      # hand when bumping a pinned version.
+      - task: install
+      - bash scripts/env-bootstrap.sh
+      - task: init
+
+  install:
+    desc: Install all dependencies (including dev) via PDM
+    summary: |
+      Installs all dependency groups (runtime + dev: ruff, pytest, watchdog).
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm install
+
+  lock:
+    desc: Resolve deps → pdm.lock + requirements.txt (commit both)
+    summary: |
+      Runs pdm lock to pin all versions into pdm.lock, then exports a
+      plain requirements.txt for Docker (no PDM needed in the image).
+      Hashes are intentionally omitted (--without-hashes) for compatibility;
+      use --with-hashes manually if you need reproducible builds.
+      Commit both files after running this.
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm lock
+      - pdm export --prod --without-hashes -o requirements.txt
+
+  init:
+    desc: Bootstrap database, load default workflows, create admin user
+    summary: |
+      Creates DB tables, imports workflow YAMLs from workflows/, and creates
+      the first admin user. Respects ADMIN_EMAIL and ADMIN_PASSWORD env vars.
+      Safe to re-run (idempotent); existing workflows are updated from file.
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- python3 init_db.py
+
+  sync-workflows:
+    desc: Re-sync workflow YAMLs from workflows/ into the database
+    summary: |
+      After editing .yml files in workflows/, run this to reload them into the DB.
+      Use ./logstotal init for a full bootstrap (tables + admin + workflows).
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- python3 sync_workflows.py
+
+  sync-rules:
+    desc: Load the shared rules and lists from rules/*.yml into the database
+    summary: |
+      Creates what rules/*.yml ships that the database does not have, and updates what
+      nobody edited: a rule or list still equal to what it was seeded with takes the file's
+      newer version; one an admin edited on the Rules page is left alone. Idempotent.
+      A file that does not parse exits 1.
+
+      The app also does this on startup, so this is for a deployment that boots with the
+      database unreachable, or for putting things right after a rule was deleted.
+
+      It does NOT label existing entities. For that, run the Built-in labels backfill from
+      the admin Maintenance tab once.
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- python3 sync_rules.py
+
+  # ── Development ─────────────────────────────────────────────────────────────
+
+  dev:
+    desc: Start FastAPI dev server with live reload (port 8000)
+    summary: |
+      Prints the admin login (ADMIN_EMAIL / ADMIN_PASSWORD from .env — the password
+      ./logstotal setup generated) so you don't have to dig it out of .env, then starts
+      uvicorn with live reload on port 8000. If the admin password was later changed
+      in the app, the app's value wins over the .env one shown here.
+    preconditions: [*needs-pdm]
+    cmds:
+      - |
+        if [ -n "$ADMIN_PASSWORD" ] && [ "$ADMIN_PASSWORD" != "changeme123" ]; then
+          echo "Admin login (from .env): ${ADMIN_EMAIL:-admin@example.com} / $ADMIN_PASSWORD  →  http://localhost:8000/auth/login"
+        elif [ "$ADMIN_PASSWORD" = "changeme123" ]; then
+          echo "NOTE: ADMIN_PASSWORD is still the default (changeme123) — no admin login shown; see ./logstotal validate-env."
+        fi
+      - pdm run -- uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+
+  dev:check:
+    desc: Validate environment then start dev server
+    summary: |
+      Runs validate-env first, then starts the FastAPI dev server.
+      Use instead of ./logstotal dev to catch .env issues before startup.
+    cmds:
+      - task: validate-env
+      - task: dev
+
+  worker:
+    desc: "Start Huey worker (threads: HUEY_WORKERS, default 2)"
+    summary: |
+      Runs the Huey consumer with HUEY_WORKERS threads (default 2). Each thread runs one task at a time;
+      analysis jobs and admin backfills share the same pool. Use ./logstotal worker:watch during development
+      so code changes take effect without manual restart.
+    preconditions: [*needs-pdm]
+    cmds:
+      # "${HUEY_WORKERS:-2}", not {{.HUEY_WORKERS}}: a go-task template prefers a
+      # dotenv value over the process environment, so with HUEY_WORKERS=2 in .env the
+      # documented `HUEY_WORKERS=8 task worker` would silently start 2 threads. In the
+      # shell the precedence is the other way round, which is the one operators expect.
+      - pdm run -- huey_consumer app.workers.huey_app.huey -w "${HUEY_WORKERS:-2}" -k thread
+
+  worker:watch:
+    desc: Start Huey worker with auto-restart on code changes (watches app/**/*.py)
+    summary: |
+      Runs the worker under watchdog; when any Python file under app/ changes,
+      the worker process is stopped and restarted. Use during development
+      instead of ./logstotal worker so code changes take effect without manual restart.
+    preconditions: [*needs-pdm]
+    cmds:
+      # Shell expansion, for the reason spelled out on `worker`.
+      - pdm run -- watchmedo auto-restart -d app -p '*.py' -R -- huey_consumer app.workers.huey_app.huey -w "${HUEY_WORKERS:-2}" -k thread
+
+  redis:
+    desc: "Start a local Redis server (foreground — blocks terminal)"
+    summary: |
+      Runs redis-server in the foreground. Use this when you want to see Redis
+      logs directly. For background operation, use ./logstotal redis:bg instead.
+      Requires Redis installed (e.g. brew install redis on macOS).
+      Honors REDIS_PASSWORD from .env (matches what the app connects with).
+    preconditions: [*needs-redis]
+    cmds:
+      - |
+        if [ -n "${REDIS_PASSWORD:-}" ]; then exec redis-server --requirepass "$REDIS_PASSWORD"; else exec redis-server; fi
+
+  redis:bg:
+    desc: "Start Redis as a background daemon (background — returns immediately)"
+    summary: |
+      Runs redis-server as a daemon. Use this when you want Redis running but
+      don't need to see its logs. For foreground operation, use ./logstotal redis.
+      Requires Redis installed (e.g. brew install redis on macOS).
+      Honors REDIS_PASSWORD from .env (matches what the app connects with).
+    preconditions: [*needs-redis]
+    cmds:
+      - |
+        if [ -n "${REDIS_PASSWORD:-}" ]; then redis-server --daemonize yes --requirepass "$REDIS_PASSWORD"; else redis-server --daemonize yes; fi
+
+  redis:docker:
+    desc: Start Redis in Docker (no local Redis install needed; honors REDIS_PASSWORD from .env)
+    preconditions: [*needs-docker]
+    cmds:
+      - |
+        # 127.0.0.1:6379, not 0.0.0.0:6379. This is a local development convenience,
+        # and with .env absent or REDIS_PASSWORD at its empty default it starts with
+        # no auth at all — protected-mode refuses non-loopback commands in that state,
+        # but there is no reason to be listening for them.
+        if [ -n "${REDIS_PASSWORD:-}" ]; then
+          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:7-alpine redis-server --requirepass "$REDIS_PASSWORD"
+        else
+          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:7-alpine
+        fi
+
+  release:prepare:
+    desc: "Prepare a release: bump the three declared versions, move the CHANGELOG, sweep the docs"
+    summary: |
+      Step 1 of two. Edits and STOPS, so the changelog prose gets read before it becomes an
+      immutable tag and the published release notes.
+
+        ./logstotal release:prepare VERSION=X.Y.Z
+
+      Refuses a dirty tree, a non-increase, an existing tag (local or on origin), and an
+      empty `## [Unreleased]` section — every check before any write, so a refusal never
+      leaves the tree half-bumped.
+
+      Rewrites app/config.py, pyproject.toml and VERSION together (a test asserts all three
+      agree), moves the CHANGELOG section and both of its link definitions, and rewrites the
+      version strings on the doc lines that carry an operator-actionable one. Prose that
+      names an old version deliberately — "the default changed in 0.9.1" — is left alone.
+
+      Then review `git diff` and run `./logstotal release:finish VERSION=X.Y.Z`.
+    # env: bridge — see the note on health:remote for why this is not a shell line.
+    env:
+      VERSION: '{{.VERSION}}'
+    cmds:
+      - . scripts/lib/common.sh && run_py scripts/release.py prepare --version "${VERSION:?VERSION=X.Y.Z is required}" {{.CLI_ARGS}}
+
+  release:finish:
+    desc: "Finish a release: commit, tag, and run the quality gate (does not push)"
+    prompt: "Commit and tag this release?"
+    summary: |
+      Step 2 of two, and the ordering is the whole reason it exists:
+
+        1. verify the three declared versions agree and the CHANGELOG is complete
+        2. git commit
+        3. git tag -a vX.Y.Z  — AFTER the commit, so the tag points AT the release commit.
+           A tag placed first names the parent, which is exactly how the retired VERSION
+           manifest came to record the wrong sha at every release.
+        4. ./logstotal check && ./logstotal test — AFTER the tag, because
+           test_the_declared_version_has_a_git_tag cannot pass without it. A failed gate
+           deletes the tag and keeps the commit, so you can fix and amend.
+
+      It never pushes. `git push origin vX.Y.Z` fires .github/workflows/release.yml and
+      publishes a PUBLIC GitHub Release — not a side effect a task should take unattended.
+    env:
+      VERSION: '{{.VERSION}}'
+    cmds:
+      - . scripts/lib/common.sh && run_py scripts/release.py finish --version "${VERSION:?VERSION=X.Y.Z is required}"
+
+  open:
+    desc: Open the app in the default browser (macOS/Linux)
+    summary: |
+      Reads the host port out of WEB_PORT in .env, which may be a bare port (8000),
+      a mapping (8000:8000) or an address mapping (127.0.0.1:8000:8000 — what
+      ./logstotal proxy:enable writes). Defaults to 8000 when the key is absent.
+    cmds:
+      - |
+        PORT=$(grep -E '^WEB_PORT=' .env 2>/dev/null | head -1 | cut -d'=' -f2-); PORT="${PORT:-8000}"
+        case "$PORT" in *:*) PORT=$(echo "$PORT" | awk -F: '{print $(NF-1)}');; esac
+        URL="http://localhost:${PORT}"
+        if command -v open >/dev/null 2>&1; then
+          open "$URL"
+        elif command -v xdg-open >/dev/null 2>&1; then
+          xdg-open "$URL"
+        else
+          echo "Cannot open browser — visit $URL"
+        fi
+
+  # ── Code quality ─────────────────────────────────────────────────────────────
+
+  lint:
+    desc: Lint with ruff
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- ruff check {{.LINT_PATHS}}
+
+  fmt:
+    desc: Format with ruff
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- ruff format {{.LINT_PATHS}}
+
+  fmt:check:
+    desc: Check formatting without modifying files
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- ruff format --check {{.LINT_PATHS}}
+
+  lint:shell:
+    desc: "Shellcheck all shell scripts under scripts/, the Docker entrypoints and ./logstotal"
+    preconditions: [*needs-shellcheck]
+    cmds:
+      # Every scripts/ file plus every repo-root entrypoint, all at full strength. The one
+      # exemption is docker-caddy-entrypoint.sh's info-level SC1001 — a literal '-' in an
+      # input-validation bracket, not worth touching that regex for.
+      - |
+        for f in scripts/*.sh scripts/lib/*.sh; do
+          shellcheck -x "$f"
+        done
+        shellcheck -x docker-entrypoint.sh garage-entrypoint.sh logstotal
+        shellcheck -x -e SC1001 docker-caddy-entrypoint.sh
+
+  check:
+    desc: Run lint + format check + shellcheck together
+    aliases: [c]
+    cmds:
+      - task: lint
+      - task: fmt:check
+      - task: lint:shell
+
+  # ── Testing ──────────────────────────────────────────────────────────────────
+
+  test:
+    desc: Run test suite with pytest (args after `--`, e.g. `./logstotal test -- tests/test_foo.py -k bar`)
+    aliases: [t]
+    summary: |
+      Runs in parallel across every core. Measured on a 10-core laptop: 4m12s serial before
+      this, 1m56s after the fixture work, ~40s with -n auto.
+
+      `--dist loadfile` rather than the default `load`: it keeps every test in a file on
+      one worker. Two files carry module-level generators (test_case_pivots.py,
+      test_case_timeline.py) whose values depend on call order within the file, and
+      deploy-env-push's staging path is process-global. Splitting a file across workers
+      would break both; splitting *between* files was verified safe by running two disjoint
+      halves of the suite concurrently.
+
+      The flags come BEFORE {{.CLI_ARGS}} on purpose, so an override wins:
+        ./logstotal test -- -n0 tests/test_foo.py -k bar     # serial, live output, for debugging
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- pytest -n auto --dist loadfile {{.CLI_ARGS | default "tests/"}}
+
+  test:pg:
+    desc: Run the PostgreSQL-only SQL checks against a throwaway container (needs Docker)
+    summary: |
+      Every other test runs on SQLite, which is permissive in exactly the places PostgreSQL
+      is strict — so a whole class of bug is structurally invisible to the rest of the suite.
+      One of them shipped: `severity_rank_sql()` compared an enum column to VARCHAR binds,
+      which SQLite accepts and PostgreSQL rejects, and it was a 500 on the entity Findings
+      tab, the entity graph and the case roll-up.
+
+      A compile-only test cannot catch that — both dialects render identical SQL text and the
+      difference is the bind parameter's type. The statements have to actually execute.
+
+      Starts postgres:16-alpine on a spare port, runs tests/test_postgres_sql_compat.py
+      against it, also exercises backup/restore in a separate disposable database,
+      and removes the containers afterwards whatever happens. Point at your own server with
+      POSTGRES_TEST_URL and the container is skipped.
+    preconditions: [*needs-pdm]
+    cmds:
+      - |
+        set -euo pipefail
+        if [ -n "${POSTGRES_TEST_URL:-}" ]; then
+          echo "Using POSTGRES_TEST_URL"
+          pdm run -- pytest tests/test_postgres_sql_compat.py -v
+          exit 0
+        fi
+        command -v docker >/dev/null 2>&1 || { echo "ERROR: Docker not found, and POSTGRES_TEST_URL is not set."; exit 1; }
+        NAME="logstotal-pgtest-$$"
+        PORT="${PG_TEST_PORT:-55432}"
+        # `trap`, not a trailing `docker rm`: a failing test must still tear the container
+        # down, or the next run collides on the port and reports a connection error instead.
+        trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
+        docker run -d --rm --name "$NAME" -e POSTGRES_PASSWORD=pgtest -e POSTGRES_USER=pgtest -e POSTGRES_DB=pgtest -p "${PORT}:5432" postgres:16-alpine >/dev/null
+        echo -n "Waiting for PostgreSQL on :${PORT}"
+        for _ in $(seq 1 40); do
+          if docker exec "$NAME" pg_isready -U pgtest -q 2>/dev/null; then echo " ready"; break; fi
+          sleep 0.5; echo -n "."
+        done
+        docker exec "$NAME" pg_isready -U pgtest -q || { echo " timeout"; exit 1; }
+        LOGSTOTAL_TEST_DOCKER=1 POSTGRES_TEST_URL="postgresql+psycopg2://pgtest:pgtest@127.0.0.1:${PORT}/pgtest" pdm run -- pytest tests/test_postgres_sql_compat.py tests/test_postgres_backup_restore.py -v
+
+  docs:build:
+    desc: Build the documentation website into site/ — warnings (a broken link or anchor) are errors
+    summary: |
+      Builds docs/ with Zensical (mkdocs.yml) exactly as the release workflow publishes it,
+      in strict mode, so a dead link or anchor fails here rather than on the site. Needs the
+      docs dependency group: pdm install -G docs.
+        ./logstotal docs:build
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- zensical build --strict
+
+  docs:serve:
+    desc: Preview the documentation website at http://localhost:8001, rebuilding on every save
+    summary: |
+      Port 8001, so it runs beside ./logstotal dev on 8000.
+        ./logstotal docs:serve
+    preconditions: [*needs-pdm]
+    interactive: true
+    cmds:
+      - pdm run -- zensical serve --dev-addr localhost:8001
+
+  test:js:
+    desc: Run the relationship-graph JS unit tests (node --test; skipped when node is absent)
+    summary: |
+      The graph's emphasis precedence table, its query engine and its columnar payload merge
+      are pure JavaScript that no Python grep can reach — and every trap they guard produces
+      a working-looking server response with a broken frame. `node --test` is in the
+      standard Node toolchain, so this needs no package.json and no npm install.
+
+      Skips cleanly when node is not installed, so `./logstotal test` still passes on a
+      Python-only box. The Python suite pins the fixture schema against
+      graph_payload.client_schema(), so the two cannot drift.
+    cmds:
+      - |
+        if command -v node >/dev/null 2>&1; then
+          node --test "tests/js/*.test.mjs"
+        else
+          echo "SKIP: node not installed — the graph JS unit tests did not run."
+        fi
+
+  test:cov:
+    desc: Run tests with coverage report
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- pytest -n auto --dist loadfile {{.CLI_ARGS | default "tests/"}} --cov=app --cov-report=term-missing
+
+  # ── CI entry points ──────────────────────────────────────────────────────────
+  #
+  # One task per CI job. Both .github/workflows/ci.yml and .forgejo/workflows/ci.yml call
+  # exactly these, so a workflow file describes only how to *provision* a runner and never
+  # what to check — two workflows that each decide what to check drift apart, and a
+  # comment saying "keep these in step" is not a mechanism.
+  #
+  # The other half of the point: every red CI job is reproducible locally with one command,
+  # instead of by pushing and waiting.
+  #
+  # tests/test_ci_workflows.py asserts both workflows invoke the same set of these.
+
+  ci:test:
+    desc: "CI: the whole test suite, in one pytest process"
+    summary: |
+      One process, deliberately. The PostgreSQL checks used to be a second `pytest` run so
+      that the log showed whether they had executed — which cost ~11s, 10 of it interpreter
+      startup and app import. They are folded back in here, and
+      tests/test_postgres_sql_compat.py now *fails* rather than skips when CI is set, which
+      is a stronger guarantee than a step name: it proves the tests ran, not the step.
+
+      POSTGRES_TEST_URL is passed through from the environment; without it this is a
+      SQLite-only run, which is what a developer wants.
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- pytest -n auto --dist loadfile tests/ -q --durations=15
+      - task: test:js
+
+  ci:artifacts:
+    desc: "CI: compose files parse, the image builds, the archive builds, neither ships a secret"
+    summary: |
+      Everything a release hands to an operator. None of it was exercised before this job
+      existed, which is how .dockerignore came to ship credentials and a database dump
+      inside every image.
+
+      `./logstotal tailwind:install` runs first so package.sh builds production CSS. Without it
+      package.sh warns and ships development CSS — so the archive CI verified was never the
+      archive a release published.
+    preconditions: [*needs-docker]
+    cmds:
+      - bash scripts/ci-artifacts.sh
+
+  ci:deploy:
+    desc: "CI: boot the Docker stack for real, smoke it, and analyse a log end to end"
+    summary: |
+      The layer nothing else covers. `ci:artifacts` proves the image builds and carries the
+      right files; this proves it *runs* — docker-entrypoint.sh's real path, init_db.py,
+      migrations in a container, a worker registering in Redis, and a log going in and
+      findings coming out.
+
+      Set KEEP_STACK=yes to leave the stack up afterwards for inspection.
+    preconditions: [*needs-docker]
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+    cmds:
+      - bash scripts/ci-deploy-smoke.sh
+
+  ci:dry-run:
+    desc: "CI: shellcheck every script, then run the whole 8-step deploy chain against no hosts"
+    summary: |
+      The dry-run seam in lib/common.sh makes the deploy chain runnable with no fleet. What
+      this proves: the chain completes, in order, touching no network. What it cannot:
+      anything about a real remote shell — the fish regression tests need a machine with
+      fish on it, which a real multi-host rehearsal owns.
+
+      The .invalid TLD cannot resolve, so any connection error in the log means a dry run
+      made a real request. That has happened: deploy-smoke.sh ignored DEPLOY_DRY_RUN and
+      fired four HTTP requests at the first host.
+    cmds:
+      - task: lint:shell
+      - bash scripts/ci-deploy-dry-run.sh
+
+  # ── Database ─────────────────────────────────────────────────────────────────
+
+  db:reset:
+    desc: "DESTRUCTIVE — delete logstotal.db and re-initialise from scratch"
+    summary: |
+      SQLite only — deletes the logstotal.db file and re-runs init_db.py.
+      For PostgreSQL, drop/recreate the database manually then run: ./logstotal init
+    prompt: "This will delete logstotal.db and all data. Are you sure?"
+    cmds:
+      # The -wal/-shm sidecars go too. Deleting only the main file leaves a WAL that
+      # SQLite replays into the "fresh" database, so the reset silently isn't one.
+      # `clean` removes all three too.
+      - rm -f logstotal.db logstotal.db-shm logstotal.db-wal
+      - task: init
+
+  db:shell:
+    desc: Open SQLite shell on logstotal.db
+    summary: |
+      Opens an interactive SQLite3 session. Prefers data/logstotal.db (where the
+      Docker stack keeps it — compose bind-mounts ./data) and falls back to
+      ./logstotal.db (local dev), printing which one it opened.
+      SQLite only — for PostgreSQL use psql or your preferred client.
+    preconditions: [*needs-sqlite3]
+    # Hands the terminal to sqlite3's REPL — Task must not capture stdin/stdout.
+    interactive: true
+    cmds:
+      # Path resolution, not a bare `sqlite3 logstotal.db`: on a Docker deployment the
+      # live database is ./data/logstotal.db, and opening the missing ./logstotal.db
+      # silently CREATES an empty one and drops you into a shell with no tables.
+      - |
+        if [ -f data/logstotal.db ]; then DB=data/logstotal.db
+        elif [ -f logstotal.db ]; then DB=logstotal.db
+        else
+          echo "ERROR: no SQLite database found (looked for data/logstotal.db and ./logstotal.db)."
+          echo "       Fresh checkout? Run: ./logstotal init    PostgreSQL deployment? Use psql."
+          exit 1
+        fi
+        echo "Opening $DB"
+        sqlite3 "$DB"
+
+  db:migrate:
+    desc: "Run pending Alembic migrations (upgrade to head)"
+    summary: |
+      Applies all pending Alembic migrations against the configured database.
+      For fresh databases, use './logstotal init' instead (it runs create_all + seed data).
+      For existing databases, run this after pulling new code that includes migration revisions.
+    preconditions: [*needs-pdm]
+    cmds:
+      - pdm run -- python3 -m alembic upgrade head
+
+  db:revision:
+    desc: "Auto-generate a new Alembic migration from model changes"
+    summary: |
+      Compares current SQLAlchemy models against the database schema and generates
+      a new migration revision under alembic/versions/. Review the generated file
+      before committing — autogenerate may miss some changes (e.g. data migrations).
+    preconditions:
+      - *needs-pdm
+      # Its two siblings db:stamp and db:to-postgres both guard this; without it a bare
+      # `task db:revision` runs `alembic revision --autogenerate -m` with no message.
+      - sh: 'test -n "{{.CLI_ARGS}}"'
+        msg: 'ERROR: a revision message is required. Usage: ./logstotal db:revision -- "add a column"'
+    cmds:
+      # {{.CLI_ARGS}} unquoted: go-task shell-quotes each argument as it interpolates,
+      # so wrapping it in "..." here would produce `-m "'add a column'"` and alembic would
+      # write the quotes into the revision message. Unquoted, a multi-word message arrives
+      # as a single argv entry, which is what alembic wants.
+      - pdm run -- python3 -m alembic revision --autogenerate -m {{.CLI_ARGS}}
+
+  db:stamp:
+    desc: "Stamp the Alembic version table without running migrations"
+    summary: |
+      Sets the alembic_version table to a specific revision without actually running
+      any upgrade/downgrade steps. Use this on existing databases that were created
+      via create_all (init_db.py) and already have the correct schema:
+        ./logstotal db:stamp -- head
+      This tells Alembic "the DB is already at this revision" so future migrations
+      apply cleanly.
+    preconditions:
+      - *needs-pdm
+      - sh: 'test -n "{{.CLI_ARGS}}"'
+        msg: "Usage: ./logstotal db:stamp -- head   (or a specific revision id)"
+    cmds:
+      - pdm run -- python3 -m alembic stamp {{.CLI_ARGS}}
+
+  db:to-postgres:
+    desc: "Copy an existing SQLite database into PostgreSQL (row-by-row, through the ORM)"
+    summary: |
+      Moves the data when a single-host SQLite deployment outgrows it. The target must
+      already have the schema (run `python3 -m app.migrations` against it first) and
+      must hold no rows — this refuses to merge into a populated database.
+
+      Stop the app first: it is a copy of a moving target otherwise.
+
+        ./logstotal db:to-postgres -- \
+          --sqlite-url sqlite:///logstotal.db \
+          --postgres-url postgresql+psycopg2://logstotal:PASS@localhost:5432/logstotal
+
+      A `sqlite3 .dump | psql` recipe does NOT work here — GUID columns and booleans
+      change representation with the dialect. See docs/runbooks/sqlite-to-postgres.md
+      for the full procedure, including the .env changes after.
+    preconditions:
+      - *needs-pdm
+      - sh: 'test -n "{{.CLI_ARGS}}"'
+        msg: "Usage: ./logstotal db:to-postgres -- --postgres-url postgresql+psycopg2://user:PASS@host:5432/logstotal"
+    cmds:
+      - pdm run -- python3 scripts/sqlite_to_postgres.py {{.CLI_ARGS}}
+
+  # ── Uploads ───────────────────────────────────────────────────────────────────
+
+  uploads:clean:
+    desc: "Remove all files in uploads/ (stored log files)"
+    summary: |
+      Deletes every file under uploads/. Safe to run if uploads/ is empty.
+      Recreates the directory so the app can write to it again.
+    prompt: "This will delete all uploaded log files. Are you sure?"
+    cmds:
+      - rm -rf uploads/*
+      - mkdir -p uploads
+
+  # ── Backup / Restore ──────────────────────────────────────────────────────────
+
+  clean:
+    desc: "Remove local runtime state (DB, uploads, caches) — keeps .env and .venv"
+    summary: |
+      Deletes, in this order:
+        logstotal.db*        the local-development SQLite database
+        data/                the DOCKER database — docker-compose.yml mounts it as ./data
+        uploads/             every stored log file
+        __pycache__, *.pyc, .pytest_cache, .ruff_cache, logstotal-*.7z
+
+      data/ is on that list because leaving it off made the description a lie on a
+      Docker box: the file named logstotal.db in the repo root is the dev one, and
+      the deployment's database is the one under data/.
+      Stop the stack first (./logstotal docker:down) — this deletes a live SQLite file
+      out from under it otherwise.
+    prompt: "Delete logstotal.db*, data/ (the Docker database), uploads/, packages and all caches? .env and .venv are kept"
+    cmds:
+      - rm -f logstotal.db logstotal.db-shm logstotal.db-wal
+      - rm -rf data
+      - rm -rf uploads && mkdir -p uploads
+      - find . -path ./.venv -prune -o -type d -name __pycache__ -print -exec rm -rf {} + 2>/dev/null || true
+      - find . -path ./.venv -prune -o -name "*.pyc" -print -delete 2>/dev/null || true
+      - rm -rf .pytest_cache .ruff_cache
+      - rm -rf logstotal-*.7z
+
+  clean:all:
+    desc: "Full wipe — removes .env and .venv in addition to runtime state"
+    summary: |
+      Everything ./logstotal clean removes, plus .env, .venv and certs/ (PROXY_TLS=custom
+      keys). A fresh `./logstotal setup` or `./logstotal quickstart` afterwards starts from nothing.
+    prompt: "This will delete .env, .venv, certs/, logstotal.db*, data/, uploads/ and all caches. Are you sure?"
+    cmds:
+      - task: clean
+      - rm -f .env
+      - rm -rf .venv
+      - rm -rf certs && mkdir -p certs && touch certs/.gitkeep
+
+  # ── Docker ───────────────────────────────────────────────────────────────────
+
+  package:
+    desc: "Create a deployment archive (logstotal-<version>.7z) — no dev data, secrets, or venv"
+    summary: |
+      Produces a clean .7z archive in the current directory containing only the files
+      needed to deploy on another server.
+
+      Excluded, secrets and live data first — these are the ones worth checking, and
+      every one of them is gitignored, so they never show up in a diff:
+        .env and its variants, deploy.env, deploy-envs/, backups/, testkit/,
+        *.db, uploads/, data/
+      Excluded, build and editor detritus:
+        .venv/, logs/, __pycache__, *.pyc, .coverage, htmlcov/, macOS metadata,
+        .pdm-python, .vscode/, .cursor/, .claude/, .superpowers/, .git/, .gitignore,
+        .github/, .forgejo/, tests/, tools/tailwind/, CLAUDE.md
+      .env.example is deliberately NOT excluded — it is the template the steps below
+      tell you to copy, and a `.env.*` glob once swallowed it.
+
+      Note this task WRITES one tracked file as it runs: app/templates/base.html
+      (css:build or css:prod, restored by css:dev from an EXIT trap — so a failed archive
+      leaves the tree in dev mode too). It does NOT touch VERSION — that is written only by
+      ./logstotal release:prepare, so a package build leaves the tree clean.
+
+      With no Tailwind CLI it does NOT flip base.html: the archive serves the Play CDN
+      bundle, which is correct but compiles in the browser. `PACKAGE_USE_COMMITTED_CSS=true
+      ./logstotal package` ships the committed app/static/vendor/tailwind-built.css instead —
+      an explicit choice, because nothing without the CLI can prove that file matches
+      these templates.
+
+      Prerequisites:
+        - 7z must be installed (brew install p7zip on macOS, apt install p7zip-full on Linux)
+        - requirements.txt must exist (run `./logstotal lock` first if missing)
+
+      On the target server:
+        7z x logstotal-<version>.7z -o/opt/logstotal
+        cd /opt/logstotal
+        cp .env.example .env   # then edit — set SECRET_KEY, credentials
+        ./logstotal docker:up
+    cmds:
+      - bash scripts/package.sh
+
+  verify:artifacts:
+    desc: "Check a release archive (or built image) the way CI does"
+    summary: |
+      The same gate the release pipeline runs, available before you push. Verifies that
+      an artifact does not ship what it must not — no .env, no database, no uploads —
+      and that it does ship what a deploy needs.
+
+        ./logstotal verify:artifacts                          # newest logstotal-*.7z
+        ./logstotal verify:artifacts -- archive path/to.7z    # a specific archive
+        ./logstotal verify:artifacts -- image logstotal:ci    # a built image instead
+
+      CI calls scripts/verify-artifacts.sh directly, so this task cannot drift from it.
+    cmds:
+      - bash scripts/verify-artifacts.sh {{.CLI_ARGS | default "archive"}}
+
+  # ── Detection tools (Zircolite / Chainsaw / Hayabusa / ChopChopGo) ───────────
+
+  tools:check:
+    desc: Are the detection tools and rule sets current?
+    summary: |
+      Compares the vendored Chainsaw/Hayabusa/ChopChopGo binaries and the pinned
+      Zircolite image against each upstream's latest release, then compares rule
+      snapshot commits and verifies the recorded binary/rule checksums.
+
+      Read-only where it matters: it never touches the repo, the vendored binaries or
+      the rule sets. A major version difference is flagged
+      as BREAKING rather than as an update, because a major release can rename the
+      subcommands the tool adapters build: taking it is a porting task, not an
+      upgrade.
+
+      Exits 0 even when updates exist, so it is safe in a pipeline. Pass --strict
+      to make pending updates, unknown versions, or failed checks fail the task.
+    cmds:
+      - bash scripts/tools.sh check {{.CLI_ARGS}}
+
+  tools:update:
+    desc: "Update detection-tool binaries and rules (usage: ./logstotal tools:update -- chainsaw)"
+    # Overwrites the vendored binaries every Windows/Linux job executes, in place.
+    prompt: "Update the named detection tools and rules, retaining the previous files in backups/?"
+    summary: |
+      Stages the latest release binaries, matching configurations, and upstream
+      rules for each named tool. Verifies release SHA-256 checksums and every
+      executable architecture before installing under tools/<tool>/, keeping the
+      filenames the workflows reference. Retains previous files in backups/.
+
+      Names at least one tool — there is no "update everything", because each one
+      needs its own verification run afterwards.
+
+      Refuses a major or unknown version change without --allow-major. Zircolite updates its
+      compiled rules only; its container digest must be changed and tested separately.
+    preconditions:
+      # The script requires a tool name — there is deliberately no "update
+      # everything", since each one needs its own verification run afterwards.
+      # Without this the prompt fires first and the refusal comes second.
+      - sh: 'test -n "{{.CLI_ARGS}}"'
+        msg: "Usage: ./logstotal tools:update -- chainsaw   (name at least one of: chainsaw, hayabusa, chopchopgo, zircolite)"
+    cmds:
+      - bash scripts/tools.sh update {{.CLI_ARGS}}
+
+  # ── Vendor assets (front-end JS/CSS) ─────────────────────────────────────────
+
+  vendor:update:
+    desc: Download all vendor JS/CSS assets to app/static/vendor/
+    summary: |
+      Downloads pinned versions of Tailwind, HTMX, Alpine.js, Prism, Mermaid, and the
+      relationship-graph stack (graphology + graphology-library + Sigma.js)
+      to app/static/vendor/ for offline/local serving. Committed to the repo so
+      only needed when updating versions.
+    preconditions: [*needs-curl]
+    vars:
+      # `filename url`, one per line. A list here rather than fourteen near-identical
+      # curl blocks — and a task-level var rather than a literal `for:` list, because
+      # {{.X_VERSION}} is NOT expanded inside a literal loop item but IS expanded in a
+      # vars: entry. `|-` and not `|`: a plain block scalar leaves a trailing empty
+      # line, which the loop would then try to download.
+      VENDOR_ASSETS: |-
+        tailwind.js https://cdn.tailwindcss.com/{{.TAILWIND_VERSION}}
+        htmx.min.js https://unpkg.com/htmx.org@{{.HTMX_VERSION}}/dist/htmx.min.js
+        htmx-ext-alpine-morph.js https://unpkg.com/htmx-ext-alpine-morph@{{.HTMX_ALPINE_MORPH_VERSION}}/alpine-morph.js
+        alpine-morph.min.js https://unpkg.com/@alpinejs/morph@{{.ALPINE_MORPH_VERSION}}/dist/cdn.min.js
+        alpine.min.js https://unpkg.com/alpinejs@{{.ALPINE_VERSION}}/dist/cdn.min.js
+        prism-tomorrow.min.css https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/themes/prism-tomorrow.min.css
+        prism.min.js https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/prism.min.js
+        prism-yaml.min.js https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/components/prism-yaml.min.js
+        prism-json.min.js https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/components/prism-json.min.js
+        prism-sql.min.js https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/components/prism-sql.min.js
+        mermaid.min.js https://cdn.jsdelivr.net/npm/mermaid@{{.MERMAID_VERSION}}/dist/mermaid.min.js
+        graphology.umd.min.js https://unpkg.com/graphology@{{.GRAPHOLOGY_VERSION}}/dist/graphology.umd.min.js
+        graphology-library.min.js https://unpkg.com/graphology-library@{{.GRAPHOLOGY_LIBRARY_VERSION}}/dist/graphology-library.min.js
+        sigma.min.js https://unpkg.com/sigma@{{.SIGMA_VERSION}}/dist/sigma.min.js
+    cmds:
+      - mkdir -p app/static/vendor
+      - for: {var: VENDOR_ASSETS, split: "\n", as: ASSET}
+        cmd: |
+          set -- {{.ASSET}}
+          curl -fsSL "$2" -o "app/static/vendor/$1" || { echo "ERROR: download failed: $2"; exit 1; }
+      - echo "Vendor assets downloaded to app/static/vendor/"
+
+  # ── Tailwind CSS build ───────────────────────────────────────────────────────
+
+  tailwind:install:
+    desc: Download the Tailwind CSS standalone CLI binary to tools/tailwind/
+    summary: |
+      Downloads the platform-specific Tailwind standalone CLI binary.
+      Required for ./logstotal css:build (production CSS compilation).
+      The binary is gitignored — run this once per machine.
+    preconditions: [*needs-curl]
+    cmds:
+      - mkdir -p tools/tailwind
+      - |
+        OS=$(uname -s | tr '[:upper:]' '[:lower:]')
+        case "$OS" in
+          darwin) OS="macos" ;;   # Tailwind releases use "macos", not "darwin"
+        esac
+        ARCH=$(uname -m)
+        case "$ARCH" in
+          x86_64) ARCH="x64" ;;
+          aarch64|arm64) ARCH="arm64" ;;
+        esac
+        URL="https://github.com/tailwindlabs/tailwindcss/releases/download/v{{.TAILWIND_VERSION}}/tailwindcss-${OS}-${ARCH}"
+        echo "Downloading Tailwind CLI from: $URL"
+        curl -fsSL "$URL" -o tools/tailwind/tailwindcss || { echo "ERROR: download failed: $URL"; exit 1; }
+        chmod +x tools/tailwind/tailwindcss
+        echo "Installed: tools/tailwind/tailwindcss"
+
+  css:build:
+    desc: Compile Tailwind CSS from templates (production mode)
+    summary: |
+      Scans all HTML templates and generates a pre-compiled CSS file at
+      app/static/vendor/tailwind-built.css using the Tailwind standalone CLI.
+      Then patches base.html to use the compiled CSS instead of the play CDN JS.
+      Requires: ./logstotal tailwind:install first.
+
+      Compile-then-point: the pointing half is `./logstotal css:prod`, which is also usable on
+      its own when the stylesheet in the tree is already the right one.
+    preconditions: [*needs-perl]
+    cmds:
+      - |
+        if [ ! -x tools/tailwind/tailwindcss ]; then
+          echo "ERROR: Tailwind CLI not found. Run: ./logstotal tailwind:install"
+          exit 1
+        fi
+      - tools/tailwind/tailwindcss -i app/static/tailwind-input.css -o app/static/vendor/tailwind-built.css --content "app/templates/**/*.html" --minify
+      - task: css:prod
+
+  css:prod:
+    desc: Point base.html at the compiled stylesheet (no recompile)
+    summary: |
+      The second half of task css:build: rewrites base.html's TAILWIND block to
+      <link rel="stylesheet" href="/static/vendor/tailwind-built.css"> and leaves
+      app/static/vendor/tailwind-built.css exactly as it found it.
+
+      Split out so there is ONE copy of the substitution rather than one per caller —
+      scripts/package.sh needs the pointing half without the CLI (see
+      PACKAGE_USE_COMMITTED_CSS there), and a fourth hand-written copy of this perl is
+      how the dev/prod swap stops being reversible.
+
+      It cannot tell a current stylesheet from a stale one: Tailwind emits only the
+      classes it found in the templates when it ran, so a class added since renders
+      unstyled with no error. ./logstotal css:build is the one that cannot be stale.
+
+      Reverse it with ./logstotal css:dev.
+    preconditions: [*needs-perl]
+    cmds:
+      - |
+        # The END marker is re-emitted literally rather than captured. Capturing it as
+        # `(\s*<!-- TAILWIND:END -->)` and prefixing the replacement with `\n  ` leaves two
+        # more blank lines behind on each build→dev round trip, so `task package` — which
+        # runs both — would dirty a tracked template every time. Emitting the marker makes
+        # the substitution idempotent by construction.
+        perl -i -0777 -pe '
+          s{(<!-- TAILWIND:START -->\n).*?<!-- TAILWIND:END -->}
+           {$1  <link rel="stylesheet" href="/static/vendor/tailwind-built.css">\n  <!-- TAILWIND:END -->}s
+        ' app/templates/base.html
+        echo "Switched base.html to compiled CSS"
+
+  css:dev:
+    desc: Restore base.html to use Tailwind play CDN JS (dev mode)
+    summary: |
+      Reverses ./logstotal css:build — restores the play CDN script + inline config
+      in base.html so Tailwind works without a build step during development.
+      Must stay in sync with tailwind.config.js (gray palette is mapped to
+      --ui-gray-* CSS vars for theming).
+    preconditions: [*needs-perl]
+    cmds:
+      - |
+        perl -i -0777 -pe '
+          my $dev = qq{  <script src="/static/vendor/tailwind.js"></script>\n  <script>\n    // Dev mode (Play CDN). Mirror the palette in tailwind.config.js so\n    // gray-* utilities resolve through the theme CSS vars.\n    tailwind.config = {\n      theme: {\n        extend: {\n          colors: {\n            brand: { 500: \x27#3b82f6\x27, 600: \x27#2563eb\x27 },\n            gray: {\n              50:  \x27rgb(var(--ui-gray-50)  / <alpha-value>)\x27,\n              100: \x27rgb(var(--ui-gray-100) / <alpha-value>)\x27,\n              200: \x27rgb(var(--ui-gray-200) / <alpha-value>)\x27,\n              300: \x27rgb(var(--ui-gray-300) / <alpha-value>)\x27,\n              400: \x27rgb(var(--ui-gray-400) / <alpha-value>)\x27,\n              500: \x27rgb(var(--ui-gray-500) / <alpha-value>)\x27,\n              600: \x27rgb(var(--ui-gray-600) / <alpha-value>)\x27,\n              700: \x27rgb(var(--ui-gray-700) / <alpha-value>)\x27,\n              800: \x27rgb(var(--ui-gray-800) / <alpha-value>)\x27,\n              900: \x27rgb(var(--ui-gray-900) / <alpha-value>)\x27,\n              950: \x27rgb(var(--ui-gray-950) / <alpha-value>)\x27,\n            }\n          }\n        }\n      }\n    }\n  </script>\n  };
+          s{(<!-- TAILWIND:START -->\n).*?<!-- TAILWIND:END -->}
+           {$1$dev<!-- TAILWIND:END -->}s
+        ' app/templates/base.html
+        echo "Restored base.html to dev mode (Tailwind play CDN)"
+
+  # ── Shortcuts ────────────────────────────────────────────────────────────────

@@ -1,0 +1,40 @@
+{% from "partials/_icons.html" import icon with context %}
+{#
+  The one copy button.
+
+  Naming the source, two ways:
+    * `target="<id>"`     — `data-copy-target`, resolved with getElementById.
+    * `source="<css>"`    — `data-copy-from`, resolved among the button's *siblings*
+                            (app.js scopes it to `btn.parentElement`). This exists for
+                            `_process_tree.html`, whose buttons are rendered per node by a
+                            macro and so have nothing unique to hang an id on.
+  Exactly one of the two; `target` wins if both are given.
+
+  `sprite=true` draws the icons from the `<symbol>`s `_process_tree.html` emits once per
+  tree instead of inlining them. That partial renders up to 2,000 nodes and the measured
+  cost of inlining was 5.2 <svg> elements and 40.8% of its bytes, so it is the one call
+  site that does not use the `icon()` dictionary.
+
+  Geometry classes are LITERALS in an if-chain, never `lt-copy--{{ variant }}`: the
+  production build scans templates for complete class names, and both `.lt-*` guards in
+  tests/test_control_primitives.py read them out of a `class="…"` attribute.
+
+  The marker classes go on the <svg> itself and never beside a display utility — `hidden`
+  and `inline-flex` are both display rules and which wins is stylesheet-order dependent
+  (tests/test_ai_routes.py::test_the_copy_icons_never_stack_two_display_utilities).
+#}
+{% macro copy_button(target=none, source=none, title="Copy", label="", variant="inline", sprite=false, extra="", icon_cls="w-3.5 h-3.5") -%}
+<button type="button"
+        class="logstotal-copy-btn{% if variant == 'overlay' %} lt-copy lt-copy--overlay{% elif variant == 'tight' %} lt-copy lt-copy--tight{% elif variant == 'bare' %} lt-copy lt-copy--bare{% elif variant != 'plain' %} lt-copy{% endif %}{% if extra %} {{ extra }}{% endif %}"
+        {% if target %}data-copy-target="{{ target }}"{% elif source %}data-copy-from="{{ source }}"{% endif %}
+        title="{{ title }}" aria-label="{{ title }}">
+  {%- if sprite %}
+  <svg class="logstotal-copy-icon-default {{ icon_cls }}" aria-hidden="true"><use href="#lt-i-copy"/></svg>
+  <svg class="logstotal-copy-icon-done hidden {{ icon_cls }} text-green-400" aria-hidden="true"><use href="#lt-i-check"/></svg>
+  {%- else %}
+  {{ icon('copy', 'logstotal-copy-icon-default ' ~ icon_cls) }}
+  {{ icon('check', 'logstotal-copy-icon-done hidden ' ~ icon_cls ~ ' text-green-400') }}
+  {%- endif %}
+  {%- if label %}<span>{{ label }}</span>{% endif %}
+</button>
+{%- endmacro %}

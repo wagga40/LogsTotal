@@ -1,0 +1,106 @@
+{% from "partials/_markdown_help.html" import markdown_help, editor_placeholder %}
+{% from "partials/_rich_text.html" import rich_text %}
+{% from "partials/_tab_badge.html" import tab_badge_oob %}
+{#
+  Discussion thread — one partial serving case, entity and job targets.
+
+  Context: target_type, target_id, rows ([{c, can_edit, can_delete}], oldest first),
+  total, shown, comment_max, user.
+
+  Self-contained: this whole region is the HTMX swap target for every POST below
+  (hx-swap="outerHTML"), the same idiom as intel/partials/_case_notes.html. Bodies are
+  rendered by Jinja and so auto-escaped — nothing here is JS-built.
+
+  On the job page this partial MUST stay outside #job-status-region: that region
+  morph-swaps every 3s while a job runs and would wipe a half-typed comment.
+
+  The Discussions tab badge is server-rendered once, at page load, and this swap only
+  replaces the thread, so posting alone would leave it stale until a reload. The out-of-band
+  span at the foot carries the fresh total up to the tab strip. It rides on every render
+  of this partial, so edits and deletes correct the count too.
+#}
+<div id="comment-thread-{{ target_type }}-{{ target_id }}" x-data="{ editingId: null }">
+
+  <div class="flex items-center justify-between mb-3">
+    <h2 class="text-sm font-medium text-gray-400 flex items-center gap-1.5">
+      Discussions
+      {% if total %}<span class="text-gray-600">({{ total }})</span>{% endif %}
+      {{ markdown_help(site_settings) }}
+    </h2>
+    {% if total > shown %}
+    <span class="text-xs text-gray-500">showing the latest {{ shown }} of {{ total }}</span>
+    {% endif %}
+  </div>
+
+  {% if rows %}
+  <div class="space-y-3 mb-4">
+    {% for row in rows %}
+    {% set c = row.c %}
+    <div class="bg-gray-950/60 border border-gray-800 rounded-lg px-4 py-3">
+      <div class="flex items-baseline gap-2 mb-1.5">
+        <span class="text-sm font-medium text-gray-200">{% if c.author %}{{ c.author.display_name or c.author.email }}{% else %}unknown{% endif %}</span>
+        <span class="text-xs text-gray-500" {% if c.created_at %}title="{{ c.created_at.strftime('%Y-%m-%d %H:%M UTC') }}"{% endif %}>{{ c.created_at | time_ago }}</span>
+        {% if c.edited_at %}
+        <span class="text-xs text-gray-600" title="{{ c.edited_at.strftime('%Y-%m-%d %H:%M UTC') }}">· edited</span>
+        {% endif %}
+        <span class="ml-auto flex items-center gap-2">
+          {% if row.can_edit %}
+          <button type="button" @click="editingId = (editingId === {{ c.id }} ? null : {{ c.id }})"
+                  class="text-xs text-gray-500 hover:text-gray-300 transition" title="Edit">Edit</button>
+          {% endif %}
+          {% if row.can_delete %}
+          <button type="button"
+                  hx-post="/comments/{{ c.id }}/delete"
+                  hx-target="#comment-thread-{{ target_type }}-{{ target_id }}"
+                  hx-swap="outerHTML"
+                  data-confirm-title="Delete comment"
+                  data-confirm-message="Delete this comment? The text is removed permanently."
+                  data-confirm-accept="Delete"
+                  class="text-xs text-red-400/70 hover:text-red-300 transition" title="Delete">Delete</button>
+          {% endif %}
+        </span>
+      </div>
+
+      <div x-show="editingId !== {{ c.id }}" class="text-sm text-gray-300">{{ rich_text(c.body, site_settings) }}</div>
+
+      {% if row.can_edit %}
+      <form x-show="editingId === {{ c.id }}" x-cloak
+            hx-post="/comments/{{ c.id }}/edit"
+            hx-target="#comment-thread-{{ target_type }}-{{ target_id }}"
+            hx-swap="outerHTML"
+            class="space-y-2 mt-1">
+        <textarea name="body" rows="3" maxlength="{{ comment_max }}"
+                  class="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">{{ c.body }}</textarea>
+        <div class="flex gap-2">
+          <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary">Save</button>
+          <button type="button" @click="editingId = null" class="px-3 py-1 rounded text-xs border border-gray-700 bg-gray-800 text-gray-300 hover:text-white">Cancel</button>
+        </div>
+      </form>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  {% else %}
+  <p class="text-sm text-gray-500 italic mb-4">No comments yet.</p>
+  {% endif %}
+
+  <form hx-post="/comments/{{ target_type }}/{{ target_id }}"
+        hx-target="#comment-thread-{{ target_type }}-{{ target_id }}"
+        hx-swap="outerHTML"
+        hx-on::after-request="if (event.detail.successful) this.reset()"
+        class="space-y-2">
+    <textarea name="body" rows="3" maxlength="{{ comment_max }}"
+              placeholder="{{ editor_placeholder(site_settings, 'Write a comment…', comment_max) }}"
+              class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"></textarea>
+    <div class="flex justify-end">
+      <button type="submit" class="lt-btn lt-btn--primary">Post</button>
+    </div>
+  </form>
+</div>
+
+{#
+  Out-of-band: not part of this swap's target, htmx routes it to #tab-badge-discussion.
+  Harmless on a surface that has no such element (htmx just drops it), which is what
+  keeps this partial usable anywhere.
+#}
+{{ tab_badge_oob('discussion', total) }}

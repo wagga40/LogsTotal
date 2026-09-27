@@ -1,0 +1,16 @@
+{#
+  The On/Off button, on its own because `POST /intel/rules/{id}/toggle` returns exactly this
+  and nothing else. Swapping the whole `#rules-region` would rebuild 1.29 MB and 9,227 nodes
+  to flip one word — and, worse, destroy every open edit form on the page along with
+  anything typed into them. Enabling a rule changes this button and nothing else on the
+  page, so this is all there is to send.
+
+  `hx-target="this"` so the button replaces itself wherever it is rendered; the route does
+  not have to know where the row sits. `type="button"`, because there is no form around it
+  — htmx posts it.
+#}
+{% macro rule_toggle_button(r) -%}
+<button type="button" class="lt-btn lt-btn--sm {% if r.enabled %}lt-btn--active{% endif %}"
+        hx-post="/intel/rules/{{ r.id }}/toggle" hx-target="this" hx-swap="outerHTML"
+        aria-pressed="{{ 'true' if r.enabled else 'false' }}">{{ 'On' if r.enabled else 'Off' }}</button>
+{%- endmacro %}

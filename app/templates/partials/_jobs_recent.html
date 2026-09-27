@@ -1,0 +1,36 @@
+<div id="recent-jobs-region"
+  {% if has_running %}
+  hx-get="/jobs/recent-partial"
+  hx-trigger="every 5s"
+  hx-swap="outerHTML"
+  {% endif %}
+>
+{% if jobs %}
+<div class="space-y-2">
+  {% for job in jobs %}
+  <a href="/jobs/{{ job.id }}"
+     class="flex items-center gap-3 px-4 py-2.5 bg-gray-900 hover:bg-gray-800 border border-gray-800 rounded-lg transition text-sm">
+    <span class="text-gray-600 font-mono w-8 flex-shrink-0">#{{ job.id }}</span>
+    <span class="font-mono text-blue-300 truncate flex-1 text-xs">{{ job.filename }}</span>
+    <span class="text-gray-500 text-xs flex-shrink-0">{{ job.workflow.name }}</span>
+    {% if job.score_ratio %}
+    <span class="font-mono font-bold text-xs flex-shrink-0
+      {% if job.total_findings and job.total_findings > 0 %}text-red-400{% elif (job.status.value if job.status.value is defined else job.status) in ('failed', 'partial') %}text-amber-400{% else %}text-green-400{% endif %}">
+      {{ job.score_ratio }}
+    </span>
+    {% endif %}
+    <span class="flex-shrink-0">
+      {% set s = job.status.value if job.status.value is defined else job.status %}
+      {% if s == 'completed' %}<span class="text-xs text-green-500">●</span>
+      {% elif s == 'running' %}<span class="text-xs text-blue-400 animate-pulse">●</span>
+      {% elif s == 'failed' %}<span class="text-xs text-red-500">●</span>
+      {% elif s == 'partial' %}<span class="text-xs text-yellow-500">●</span>
+      {% else %}<span class="text-xs text-gray-600">●</span>{% endif %}
+    </span>
+  </a>
+  {% endfor %}
+</div>
+{% else %}
+<p class="text-gray-600 text-sm">No analyses yet. Submit your first log file above.</p>
+{% endif %}
+</div>

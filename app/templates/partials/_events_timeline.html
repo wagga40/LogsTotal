@@ -1,0 +1,149 @@
+{# Zoomable events timeline — individual matched alerts as pannable/zoomable markers.
+
+   Shared verbatim by the job analytics page and the case Timeline tab, like
+   _timeline_chart.html above it. Complements the hourly MITRE histogram (which answers
+   "when was it busy") rather than replacing it: this answers "what fired, exactly when".
+
+   Callers pass:
+     tl_url       — the events-timeline endpoint for this surface
+     tl_state_key — namespaces the zoom in the `timelineRange` store ("job:12" / "case:3")
+
+   The x-data lives on this root element, so every binding inside has an ancestor even when
+   the partial is fetched standalone. Single-quoted because the JSON interpolation contains
+   double quotes. There is deliberately no x-init self-call and no explicit destroy hook —
+   Alpine 3 invokes init() and destroy() on the x-data object automatically, and doubling
+   init() would mount two canvases over the same container. #}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6"
+     x-data='eventTimeline({{ {"url": tl_url, "stateKey": tl_state_key} | tojson }})'>
+
+  <div class="flex items-center justify-between gap-3 flex-wrap mb-4">
+    <h3 class="text-sm font-medium text-gray-400">
+      Events timeline
+      {# The wheel only zooms with a modifier, so say so — a bare wheel scrolls the page. #}
+      <span class="text-xs text-gray-600 font-normal ml-1">ctrl/&#8984;+scroll to zoom &middot; drag to pan &middot; times are UTC</span>
+    </h3>
+    <div class="flex items-center gap-3 text-xs">
+      <template x-if="stats && !indexMissing">
+        <span class="text-gray-500">
+          <span class="font-mono text-gray-400" x-text="stats.shown"></span> marker<span x-show="stats.shown !== 1">s</span>
+          <span x-show="stats.discarded > 0" class="text-gray-600">
+            (+<span class="font-mono" x-text="stats.discarded"></span> collapsed)
+          </span>
+          &middot; <span class="font-mono" x-text="resolutionLabel()"></span>
+          <span x-show="atFullDetail()" class="text-emerald-500/80">full detail</span>
+        </span>
+      </template>
+      {# Buttons, not just the wheel: zooming must not depend on knowing about the modifier. #}
+      <div class="flex items-center gap-1" x-show="canZoom()" x-cloak>
+        <button type="button" @click="zoom(-1)" aria-label="Zoom in"
+                class="w-6 h-6 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-600 transition leading-none">+</button>
+        <button type="button" @click="zoom(1)" aria-label="Zoom out"
+                class="w-6 h-6 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-600 transition leading-none">&minus;</button>
+      </div>
+      <button type="button" @click="resetZoom()" x-show="ready"
+              class="px-2 py-1 rounded border border-gray-700 text-gray-400 hover:text-white hover:border-gray-600 transition">
+        Reset zoom
+      </button>
+    </div>
+  </div>
+
+  {# The renderer paints into this box; ResizeObserver handles the lazy-load sizing race. #}
+  <div x-ref="canvas" class="w-full rounded-lg bg-gray-950/40 border border-gray-800/60 overflow-hidden"
+       x-show="ready && !indexMissing" x-cloak></div>
+
+  <div x-show="loading && !ready" class="py-8 text-center text-xs text-gray-500">Loading events…</div>
+
+  <div x-show="error" x-cloak
+       class="flex items-start gap-2 px-4 py-3 rounded-lg border border-red-800/40 bg-red-900/20 text-red-300 text-xs">
+    <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+    <span x-text="error"></span>
+  </div>
+
+  {# Not an error: pre-upgrade jobs and jobs whose analytics never ran have no index. #}
+  <div x-show="indexMissing && !error" x-cloak class="py-6 text-center text-xs text-gray-500">
+    No event index for this data yet.
+    <span class="text-gray-600">An admin can build one with <span class="font-mono">Recalculate analytics</span> on the job, or the Analytics backfill.</span>
+  </div>
+
+  <div x-show="stats && stats.jobsWithoutIndex > 0 && !indexMissing" x-cloak class="mt-3 text-xs text-amber-500/80">
+    <span class="font-mono" x-text="stats && stats.jobsWithoutIndex"></span> job(s) in this case have no event index yet and are not shown.
+  </div>
+
+  <div x-show="stats && stats.truncated" x-cloak class="mt-3 text-xs text-amber-500/80">
+    Too many alerts to draw at this zoom — showing the densest markers. Zoom in for the rest.
+  </div>
+
+  {# Hover readout and click-to-pin.
+
+     Always rendered, with a reserved height, even when nothing is hovered. Showing it only
+     on hover made the row appear and disappear under the cursor, shifting everything below
+     it on the page — and on the job page that means the whole analytics column jumps every
+     time the pointer crosses a marker. A fixed slot costs one empty line and removes the
+     reflow entirely. #}
+  <div x-show="ready" x-cloak class="mt-3 pt-3 border-t border-gray-800 text-xs min-h-[2.25rem]">
+    <div x-show="!hover && !selected" class="text-gray-600">
+      Hover a marker for details &middot; click to pin it
+    </div>
+    <template x-for="it in [selected || hover].filter(Boolean)" :key="it.id">
+      <div>
+        <div class="flex items-start gap-3 flex-wrap">
+          <span class="font-mono text-gray-500" x-text="markerWhen(it)"></span>
+          <span class="text-gray-200 font-medium" x-text="it.label"></span>
+          {# Colour comes from the API payload, not a template dict: one palette, shared with
+             the canvas and with partials/_severity_macros.html. #}
+          <span class="px-1.5 py-0.5 rounded text-[10px] uppercase tracking-wide text-white"
+                :style="'background-color:' + severityColor(it.category)"
+                x-text="it.category"></span>
+          <span class="text-gray-500" x-text="tacticLabel(it.grouping)"></span>
+          <span class="text-gray-600" x-show="it.meta.events > 1">
+            <span class="font-mono" x-text="it.meta.events"></span> events in this window
+          </span>
+          <button type="button" x-show="selected" @click="clearSelection()"
+                  class="ml-auto text-gray-600 hover:text-gray-300">clear</button>
+        </div>
+
+        {# The rest only on a pinned marker: on hover it would be a wall of text chasing the
+           cursor, and the lazy panels below must not fire a request per mouse-over. #}
+        <div x-show="selected" x-cloak class="mt-2 space-y-2">
+          <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-gray-500">
+            <dt>Host</dt><dd class="text-gray-300 font-mono" x-text="it.meta.computer || '—'"></dd>
+            <dt>Tool</dt><dd class="text-gray-300" x-text="it.meta.tool || '—'"></dd>
+            <dt>Rule ID</dt><dd class="text-gray-300 font-mono break-all" x-text="it.meta.rule_id || '—'"></dd>
+            <template x-if="it.meta.job_id">
+              <dt>Job</dt>
+            </template>
+            <template x-if="it.meta.job_id">
+              <dd><a :href="'/jobs/' + it.meta.job_id" class="text-blue-400 hover:underline">#<span x-text="it.meta.job_id"></span></a></dd>
+            </template>
+          </dl>
+
+          {# Deep-link into the per-finding partials the job page already uses, so the rule
+             text and real sample events come from one implementation rather than a second
+             copy embedded in the index. #}
+          <div class="flex items-center gap-2" x-show="it.meta.finding_id">
+            <button type="button" @click="showDetail(it, 'events')"
+                    class="px-2 py-1 rounded border transition"
+                    :class="detailKind === 'events' ? 'border-blue-600 text-blue-300' : 'border-gray-700 text-gray-400 hover:text-white hover:border-gray-600'">
+              Sample events
+            </button>
+            <button type="button" @click="showDetail(it, 'rule')"
+                    class="px-2 py-1 rounded border transition"
+                    :class="detailKind === 'rule' ? 'border-blue-600 text-blue-300' : 'border-gray-700 text-gray-400 hover:text-white hover:border-gray-600'">
+              Sigma rule
+            </button>
+            <span x-show="detailLoading" class="text-gray-600">loading&hellip;</span>
+            <button type="button" x-show="detailKind" @click="hideDetail()"
+                    class="text-gray-600 hover:text-gray-300">close</button>
+          </div>
+          <p x-show="!it.meta.finding_id" class="text-gray-600">
+            This marker predates per-finding linking &mdash; recalculate the job's analytics to enable it.
+          </p>
+
+          {# Server-rendered partial, injected via htmx.ajax so any htmx attributes inside it
+             (the events panel has them) are processed as usual. #}
+          <div x-ref="detail" x-show="detailKind" class="rounded-lg border border-gray-800 bg-gray-950/40 p-3 overflow-x-auto"></div>
+        </div>
+      </div>
+    </template>
+  </div>
+</div>

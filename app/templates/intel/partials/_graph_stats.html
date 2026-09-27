@@ -1,0 +1,146 @@
+{#
+  Counts + the reserved status line for the relationship graph (entity and case scope).
+
+  **Nothing here may change the height of the block during interaction.** Every transient
+  message — an error, a query complaint, an active window, the dimmed count — renders into
+  one fixed-height row that is present from the start and simply empty most of the time.
+  A message in its own `x-show` block would push the canvas down as it appears, and the
+  graph would jump under the cursor — once per hover, if a hover toggles a line such as
+  "dimmed by your filters". The layout must not depend on getting any count right.
+
+  The truncation and fanout banners are deliberately *outside* the reserved row: they are
+  decided once when the payload lands and never toggle afterwards, so they cannot cause a
+  jump, and reserving multi-line space for prose that is usually absent would waste more
+  room than the graph gains.
+
+  Expects the parent Alpine root (graphComponent in /static/graph.js) to expose:
+    loading, error, fatal, stats, counts, scope, queryError, matchesPartial,
+    timeState, isolateWindow, clearTimeWindow(), clearIsolate(), formatRange(),
+    searchAllUrl(), nodesCapped(), edgesCapped(), nodeTotalKnown(), totalEdgesLabel()
+
+  The counts read *visible of present* and keep two facts apart, because they answer two
+  different questions: the server capping what it sent, and the analyst hiding what they did
+  not want to see. Merging them is how "showing a bounded slice" gets read as a statement
+  about the data.
+
+  `stats.total_nodes` is `int | null`. The entity traversal never learns the true node
+  total, so it emits **null** rather than mirroring the emitted count and calling it a
+  total.
+#}
+<div class="text-xs text-gray-500 mb-2">
+  <div class="flex items-start justify-between gap-4 flex-wrap">
+    <div class="flex-1 min-w-0">
+      <span x-show="loading" x-cloak>Loading graph…</span>
+      <span x-show="!loading && stats">
+        <span x-text="counts.visibleNodes.toLocaleString()"></span> of <span x-text="counts.totalNodes.toLocaleString()"></span> nodes ·
+        <span x-text="counts.visibleEdges.toLocaleString()"></span> of <span x-text="counts.totalEdges.toLocaleString()"></span> edges
+      </span>
+    </div>
+    {# Outside the reserved row on purpose, like the truncation banners: decided once when
+       the payload lands and never toggling, so it cannot move the canvas.
+
+       Note the counts line above is *visible of loaded* (`counts.totalNodes` is
+       `decoded.nodes.length`) and is unaffected by the job scope. What the scope changes is
+       `stats.total_nodes`, which goes from null to exact — and that only ever surfaces in
+       the truncation banner below, via `nodeTotalKnown()`: a capped job-scoped graph can
+       say "top 1,500 of 3,900 nodes" where an unscoped one can only say "top 1,500". #}
+    {# Both bindings guard `stats` themselves. `x-show` is NOT a guard: it toggles
+       `display`, and Alpine still evaluates every directive in the subtree on the init
+       walk — while `stats` is null, which is how it starts and what a failed reload resets
+       it to. Only `<template x-if>` defers a subtree, and the reserved-height contract at
+       the top of this file rules that out here. Unguarded, this threw twice per graph mount
+       on both the entity and the case Graph tab (the href self-heals once the payload lands,
+       so the only symptom was console noise — which is exactly what hides a real error). #}
+    <span x-show="stats && stats.job_scoped" x-cloak class="flex-shrink-0">
+      <a :href="stats ? '/intel/jobs/' + stats.job_id + '/findings' : null"
+         class="lt-chip lt-chip--square lt-chip--btn bg-blue-900/40 text-blue-300 border-blue-700/40"
+         title="Every finding in this job">scoped to job #<span x-text="stats?.job_id"></span></a>
+    </span>
+    <span class="text-gray-600 flex-shrink-0">Click a node or edge for details · drag a node to pin it · right-click for actions</span>
+  </div>
+
+  {# The reserved row. `min-h` is one control's worth, so an empty status and a one-message
+     status are the same height and the canvas below never moves. #}
+  <div class="min-h-[1.5rem] mt-1 flex flex-wrap items-center gap-2">
+    {# A failed *expand* leaves a perfectly good graph on screen, and only a failed *reload*
+       clears `stats` — so this sits beside the counts, not instead of them. #}
+    <span x-show="!loading && error" x-cloak
+          class="px-2 py-0.5 rounded bg-red-900/30 border border-red-700/40 text-red-300" x-text="error"></span>
+
+    <span x-show="fatal" x-cloak
+          class="px-2 py-0.5 rounded bg-red-900/30 border border-red-700/40 text-red-300" x-text="fatal"></span>
+
+    <span x-show="queryError" x-cloak
+          class="px-2 py-0.5 rounded bg-red-900/30 border border-red-700/40 text-red-300" x-text="queryError"></span>
+
+    <span x-show="counts.zeroMatches" x-cloak class="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-300">
+      0 matches in this graph — showing everything.
+      <a :href="searchAllUrl()" class="text-blue-400 hover:text-blue-300 underline">Search all entities →</a>
+    </span>
+
+    <span x-show="matchesPartial" x-cloak class="px-2 py-0.5 rounded bg-amber-900/30 border border-amber-700/40 text-amber-300">
+      Regex budget exhausted — matches may be incomplete.
+    </span>
+
+    {# Three states, deliberately distinct. "Nothing was active" and "we cannot tell" are
+       different answers, and merging them is how a bounded index gets read as a fact about
+       the data. The wording is also careful about what the chain resolves to: a Finding
+       aggregates every matched event for one rule, so this is "a rule this entity is linked
+       to fired", not "this entity appeared". #}
+    <span x-show="timeState.active && timeState.usable" x-cloak
+          class="px-2 py-0.5 rounded bg-blue-900/30 border border-blue-700/40 text-blue-200 flex items-center gap-2"
+          title="A rule linked to this entity fired in the window — not necessarily the entity itself.">
+      <span>A linked rule fired in <span x-text="formatRange()"></span> UTC</span>
+      <span class="text-blue-400/70" x-show="timeState.withoutIndex" x-cloak>
+        · <span x-text="timeState.withoutIndex"></span> job(s) have no marker index
+      </span>
+      <span class="text-blue-400/70" x-show="timeState.legacy" x-cloak>
+        · <span x-text="timeState.legacy"></span> job(s) predate finding ids — re-run analytics
+      </span>
+      <button type="button" @click="clearTimeWindow()" class="text-blue-300 hover:text-white">×</button>
+    </span>
+    <span x-show="timeState.active && !timeState.usable" x-cloak
+          class="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-400 flex items-center gap-2">
+      No job in this case has an events index, so the timeline cannot narrow the graph.
+      <button type="button" @click="clearTimeWindow()" class="text-gray-400 hover:text-white">×</button>
+    </span>
+    <span x-show="isolateWindow" x-cloak class="px-2 py-0.5 rounded bg-gray-800 border border-gray-700 text-gray-300 flex items-center gap-2">
+      Isolated to one neighbourhood
+      <button type="button" @click="clearIsolate()" class="text-gray-400 hover:text-white">×</button>
+    </span>
+
+    {# Filters only — an overlay demoting a node is a transient hover, not a filter, and
+       counting it here is what made this line flicker in and out under the cursor. #}
+    <span x-show="!loading && counts.dimmedNodes" x-cloak class="text-gray-600">
+      + <span x-text="counts.dimmedNodes.toLocaleString()"></span>
+      <span x-text="dimMode === 'hide' ? 'hidden by your filters' : 'dimmed by your filters'"></span>
+    </span>
+  </div>
+
+  {# Decided once when the payload lands; never toggles during interaction. #}
+  <div x-show="!loading && stats && stats.truncated" x-cloak
+       class="mt-1 px-2 py-1 rounded bg-amber-900/30 border border-amber-700/40 text-amber-300 inline-block">
+    <span>Showing a bounded slice —</span>
+    <template x-if="nodesCapped() && nodeTotalKnown()">
+      <span>top <span x-text="stats?.nodes || 0"></span> of <span x-text="(stats?.total_nodes || 0).toLocaleString()"></span> nodes</span>
+    </template>
+    <template x-if="nodesCapped() && !nodeTotalKnown()">
+      <span>node budget reached (<span x-text="stats?.nodes || 0"></span>)</span>
+    </template>
+    <template x-if="nodesCapped() && edgesCapped()"><span> · </span></template>
+    <template x-if="edgesCapped()">
+      <span>top <span x-text="(stats?.edges || 0).toLocaleString()"></span> of <span x-text="totalEdgesLabel()"></span> edges</span>
+    </template>
+    <span>. Narrow with the type filters<template
+      x-if="scope === 'case' && stats?.job_edges"><span>, or turn off job edges</span></template><template
+      x-if="scope === 'entity'"><span>, or lower the hops / neighbours-per-hop</span></template>.</span>
+  </div>
+
+  {# A near-clique job carries no information but does dominate the edge query, so it is
+     excluded — and said so. A silent semantic change is the graph lying. #}
+  <div x-show="!loading && stats?.job_fanout_suppressed" x-cloak
+       class="mt-1 px-2 py-1 rounded bg-gray-800 border border-gray-700 text-gray-400 inline-block">
+    <span x-text="stats?.job_fanout_suppressed"></span> job(s) touching hundreds of these entities were
+    excluded from co-occurrence edges — a near-clique carries no information.
+  </div>
+</div>

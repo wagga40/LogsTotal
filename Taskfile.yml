@@ -1,0 +1,113 @@
+version: '3'
+
+dotenv: ['.env']
+
+# The go-task binary running this task, handed to the scripts it calls. A script that runs
+# another task goes through `lt_task` (scripts/lib/common.sh), which uses this, so a nested
+# call runs the same go-task as its parent — the pinned copy `./logstotal` resolved, which
+# is not on PATH — rather than whatever `task` a host happens to have.
+env:
+  LOGSTOTAL_TASK_BIN: '{{.TASK_EXE}}'
+
+vars:
+  LINT_PATHS: 'app/ tests/ scripts/ init_db.py sync_workflows.py sync_rules.py'
+  TAILWIND_VERSION: '3.4.17'
+  HTMX_VERSION: '2.0.3'
+  ALPINE_VERSION: '3.15.8'
+  ALPINE_MORPH_VERSION: '3.15.8'
+  HTMX_ALPINE_MORPH_VERSION: '2.0.0'
+  PRISM_VERSION: '1.29.0'
+  MERMAID_VERSION: '11.16.0'
+  SIGMA_VERSION: '3.0.3'
+  GRAPHOLOGY_VERSION: '0.26.0'
+  GRAPHOLOGY_LIBRARY_VERSION: '0.8.0'
+
+
+
+# ── Shared preconditions ─────────────────────────────────────────────────────
+# Not a task namespace — go-task ignores unknown top-level keys, and this one is
+# never reached by `task --list`. Every key carries its anchor *after* the colon
+# deliberately: two tests scan the raw file for a bare 2-space-indented
+# `name:` line, and a bare key here would register as a phantom task that then
+# needed a desc: and a docs mention.
+#
+# Preconditions run before a task's first command, fire through `cmds: - task: x`
+# calls, and are evaluated under --dry. What they buy is the difference between
+# mvdan/sh's `"pdm": executable file not found in $PATH` and a sentence naming the
+# thing to install.
+#
+# The pdm check is the binary only, not `[ -d .venv ]`. The venv's location is a
+# PDM configuration detail, and CI installs through an action rather than into a
+# checked-in .venv — betting on the layout would guard a fresh clone and break the
+# build. (The four stdlib-only python tasks still branch on .venv themselves, via
+# lib/common.sh::run_py, because they have somewhere to fall back to.)
+x-preconditions:
+  pdm: &needs-pdm
+    sh: command -v pdm >/dev/null 2>&1
+    msg: "ERROR: pdm not found. Install it: https://pdm-project.org/en/latest/#installation (macOS: brew install pdm). Then: ./logstotal setup"
+  docker: &needs-docker
+    # Binary only. `docker info` would catch a stopped daemon too, but it blocks for
+    # up to 10s, and every docker:* task would pay that on every invocation.
+    sh: command -v docker >/dev/null 2>&1
+    msg: "ERROR: docker not found. Install Docker Desktop (macOS) or docker.io + docker-compose-plugin (Linux)."
+  sqlite3: &needs-sqlite3
+    sh: command -v sqlite3 >/dev/null 2>&1
+    msg: "ERROR: sqlite3 not found. Install: brew install sqlite (macOS) or apt install sqlite3 (Linux)."
+  redis: &needs-redis
+    sh: command -v redis-server >/dev/null 2>&1
+    msg: "ERROR: redis-server not found. Install: brew install redis (macOS) or apt install redis-server (Linux) — or run it in Docker: ./logstotal redis:docker"
+  curl: &needs-curl
+    sh: command -v curl >/dev/null 2>&1
+    msg: "ERROR: curl not found. Install: apt install curl (Linux); macOS ships it."
+  perl: &needs-perl
+    sh: command -v perl >/dev/null 2>&1
+    msg: "ERROR: perl not found — ./logstotal css:prod and ./logstotal css:dev rewrite base.html with it."
+  shellcheck: &needs-shellcheck
+    sh: command -v shellcheck >/dev/null 2>&1
+    msg: "ERROR: shellcheck not found. Install: brew install shellcheck (macOS) or apt install shellcheck (Linux)."
+
+# ── Where the tasks live ─────────────────────────────────────────────────────
+#
+# `flatten: true` keeps every name unprefixed: `task deploy`, never an `ops:` prefixed
+# spelling. Runbooks, doc references and the `task <name>` strings scripts print rely on it.
+#
+# No `dir:` on either include, deliberately — an included task's cmds run from the
+# ROOT directory, which is what makes `bash scripts/x.sh` resolve. `dir:` moves them and
+# every path in both files breaks at once.
+#
+# No `optional: true` either: a missing included file then hides that whole file's tasks in
+# SILENCE, including from `task --list`. Without it a missing file is a loud exit 100, which
+# is the correct way to find out the archive you extracted is incomplete.
+includes:
+  dev:
+    taskfile: ./taskfiles/dev.yml
+    flatten: true
+  ops:
+    taskfile: ./taskfiles/ops.yml
+    flatten: true
+
+tasks:
+  default:
+    desc: List all available tasks
+    summary: |
+      Prints the handful of commands most sessions start with, then the full list.
+      `./logstotal --list` on its own is 90-odd undifferentiated lines with no entry point.
+    silent: true
+    cmds:
+      # Task names here are checked against the real task list by
+      # tests/test_taskfile_contract.py — a curated list is the one place in this
+      # repo with nothing else watching it for rot.
+      - |
+        echo "LogsTotal — the usual starting points:"
+        echo
+        echo "  first time, Docker      ./logstotal quickstart    (.env + secrets + preflight + up + health)"
+        echo "  is this box ready?      ./logstotal doctor        (./logstotal doctor:docker on a Docker host)"
+        echo "  running deployment      ./logstotal health        ./logstotal backup"
+        echo "  put HTTPS in front      ./logstotal proxy:enable  (or DOMAIN=... ./logstotal quickstart)"
+        echo "  move to a new release   ./logstotal upgrade"
+        echo "  first time, local dev   ./logstotal setup         then: ./logstotal dev + worker:watch + redis:docker"
+        echo "  before you commit       ./logstotal check         then: ./logstotal test"
+        echo
+        echo "Everything else:"
+      # {{.TASK_EXE}}, not a bare `task`: under ./logstotal it is a pinned copy that is not on PATH.
+      - "{{.TASK_EXE}} --list"

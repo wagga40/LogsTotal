@@ -1,0 +1,16 @@
+{#
+  What a failed save puts in the form's error slot.
+
+  It is delivered by `HX-Retarget` rather than by the usual region swap, and that is the
+  whole design: the region swap re-renders the form from the database, so a rule you were
+  halfway through writing would come back as the rule that is stored — or, for a create, as
+  an empty form. Retargeting a small response at a slot inside the form leaves every field
+  exactly as typed.
+
+  Every error, not the first. `validate_spec` returns a list, so a form with a bad
+  condition *and* a bad webhook URL reports both at once rather than one per attempt.
+#}
+<div class="text-xs text-red-300 bg-red-900/30 border border-red-700/40 rounded-lg px-3 py-2" role="alert">
+  <p class="font-medium mb-1">{{ error_title or 'This rule was not saved:' }}</p>
+  <ul class="list-disc pl-4 space-y-0.5">{% for e in errors %}<li>{{ e }}</li>{% endfor %}</ul>
+</div>

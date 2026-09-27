@@ -1,0 +1,420 @@
+{# Self-polling region. `hx-swap="morph"` EXACTLY (plus the extension): `morph:outerHTML`
+   is not recognised by htmx-ext-alpine-morph, falls through to the default innerHTML, and
+   rebuilds every child on each poll — flicker, lost scroll position, and a nested
+   duplicate of this region. The poll stops when nothing is active, the `_job_status.html`
+   rule: without that, every admin with this page open polls forever on an idle instance. #}
+<div id="tasks-content"
+  hx-get="/admin/tasks/partial"
+  {% if has_active %}hx-trigger="every 5s"{% endif %}
+  hx-swap="morph"
+  hx-ext="alpine-morph"
+>
+{% from "partials/_severity_macros.html" import sev_pill with context %}
+
+<!-- ── Activity ─────────────────────────────────────────────────────── -->
+<div x-show="tab === 'activity'">
+
+  <div class="flex items-baseline justify-between mb-3">
+    <h2 class="text-lg font-semibold">Running now</h2>
+    {% if stale_bg_ids %}
+    {# Only offered when there is something to recover. A button that usually does nothing
+       teaches an admin to ignore it. #}
+    <form method="POST" action="/admin/tasks/recover"
+          data-confirm-title="Recover abandoned tasks"
+          data-confirm-message="Mark {{ stale_bg_ids | length }} task(s) as failed? Their workers have stopped reporting, so nothing is going to finish them.">
+      <button type="submit" class="lt-btn lt-btn--sm lt-btn--warn">Recover {{ stale_bg_ids | length }} stuck task(s)</button>
+    </form>
+    {% endif %}
+  </div>
+
+  {% if active_bg_tasks %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Task</th>
+          <th class="px-4 py-3 font-medium">Status</th>
+          <th class="px-4 py-3 font-medium">Progress</th>
+          <th class="px-4 py-3 font-medium">Requested by</th>
+          <th class="px-4 py-3 font-medium">Started</th>
+          <th class="px-4 py-3 font-medium text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for bt in active_bg_tasks %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3">
+            <span class="text-gray-300">{{ bt.name }}</span>
+            <span class="block text-[11px] text-gray-600 font-mono">#{{ bt.id }}{% if bt.kind %} · {{ bt.kind }}{% endif %}</span>
+          </td>
+          <td class="px-4 py-3">
+            {% set s = bt.status.value if bt.status.value is defined else bt.status %}
+            <span class="badge-base {% if s == 'running' %}badge-running{% else %}badge-pending{% endif %}">
+              <span class="badge-dot {% if s == 'running' and bt.id not in stale_bg_ids %}animate-pulse{% endif %}"></span>{{ s | capitalize }}
+            </span>
+            {% if bt.id in stale_bg_ids %}
+            <span class="block text-[11px] text-yellow-500 mt-0.5">no worker reporting</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs text-gray-400">{{ bt.detail or '—' }}</td>
+          <td class="px-4 py-3 text-xs text-gray-500 truncate max-w-[160px]" title="{{ bt.requested_by_label or '' }}">{{ bt.requested_by_label or '—' }}</td>
+          <td class="px-4 py-3 text-gray-500 text-xs">{{ bt.started_at.strftime('%H:%M:%S') if bt.started_at else '—' }}</td>
+          <td class="px-4 py-3 text-right">
+            {% if bt.kind in cancellable %}
+            {% set spec = registry.get(bt.kind) %}
+            <form method="POST" action="/admin/tasks/{{ bt.id }}/cancel" class="inline"
+                  data-confirm-title="Stop {{ bt.name }}"
+                  data-confirm-message="{% if spec and spec.caveat %}{{ spec.caveat }} {% endif %}Work already committed is kept. Stop it?">
+              <button type="submit" class="lt-btn lt-btn--xs lt-btn--warn">Stop</button>
+            </form>
+            {% else %}
+            <span class="text-[11px] text-gray-700">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if active_jobs %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Job</th>
+          <th class="px-4 py-3 font-medium">File</th>
+          <th class="px-4 py-3 font-medium">Workflow</th>
+          <th class="px-4 py-3 font-medium">Status</th>
+          <th class="px-4 py-3 font-medium">Tools</th>
+          <th class="px-4 py-3 font-medium">Submitter</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for job in active_jobs %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3"><a href="/jobs/{{ job.id }}" class="text-blue-400 hover:underline">#{{ job.id }}</a></td>
+          <td class="px-4 py-3 text-gray-300 truncate max-w-[200px]" title="{{ job.filename }}">{{ job.filename }}</td>
+          <td class="px-4 py-3 text-gray-400">{{ job.workflow.name }}</td>
+          <td class="px-4 py-3">{% include "partials/_status_badge.html" %}</td>
+          <td class="px-4 py-3">
+            <div class="flex flex-wrap gap-1">
+              {% for tr in job.task_results %}
+              {% set ts = tr.status.value if tr.status.value is defined else tr.status %}
+              <span class="badge-base
+                {%- if ts == 'running' %} badge-running
+                {%- elif ts == 'completed' %} badge-completed
+                {%- elif ts == 'failed' %} badge-failed
+                {%- elif ts == 'cancelled' %} badge-cancelled
+                {%- else %} badge-pending{% endif %}">{{ tr.tool_name }}</span>
+              {% endfor %}
+            </div>
+          </td>
+          <td class="px-4 py-3 text-gray-400 text-xs max-w-[140px]">
+            {% if job.submitter %}<span class="truncate block" title="{{ job.submitter.email }}">{{ job.submitter.display_name or job.submitter.email }}</span>{% else %}<span class="text-gray-600">Anonymous</span>{% endif %}
+            <span class="block text-gray-600 font-mono">{{ job.submitter_ip or '' }}</span>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if not active_bg_tasks and not active_jobs %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-10 text-center mb-6">
+    <p class="text-sm text-gray-500">Nothing running.</p>
+  </div>
+  {% endif %}
+
+
+  {% if active_ai or recent_ai %}
+  <h2 class="text-lg font-semibold mb-3">AI analyses</h2>
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Job / Case</th>
+          <th class="px-4 py-3 font-medium">Provider / model</th>
+          <th class="px-4 py-3 font-medium">Status</th>
+          <th class="px-4 py-3 font-medium">Detail</th>
+          <th class="px-4 py-3 font-medium">Requested by</th>
+          <th class="px-4 py-3 font-medium text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for run in active_ai + recent_ai %}
+        {% set is_case = run.case_id is defined %}
+        {% set run_base = ('/intel/cases/' ~ run.case_id) if is_case else ('/jobs/' ~ run.job_id) %}
+        {% set stale_ids = stale_case_ai_ids if is_case else stale_ai_ids %}
+        {% set s = run.status.value if run.status.value is defined else run.status %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3">
+            <a href="{{ run_base }}#ai" class="text-blue-400 hover:underline">{{ "Case" if is_case else "Job" }} #{{ run.case_id if is_case else run.job_id }}</a>
+            {% set fname = ai_case_names.get(run.case_id) if is_case else ai_job_names.get(run.job_id) %}
+            {% if fname %}<span class="block text-[11px] text-gray-600 truncate max-w-[180px]" title="{{ fname }}">{{ fname }}</span>{% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs">
+            {# Snapshots on the row, so a deleted provider still reads correctly. #}
+            <span class="text-gray-300">{{ run.provider_name }}</span>
+            <span class="block text-gray-600 font-mono">{{ run.model }}</span>
+          </td>
+          <td class="px-4 py-3">
+            <span class="badge-base
+              {%- if s == 'running' %} badge-running
+              {%- elif s == 'pending' %} badge-pending
+              {%- elif s == 'completed' %} badge-completed
+              {%- elif s == 'cancelled' %} badge-cancelled
+              {%- else %} badge-failed{% endif %}">
+              <span class="badge-dot {% if s == 'running' and run.id not in stale_ids %}animate-pulse{% endif %}"></span>{{ s | capitalize }}
+            </span>
+            {% if run.id in stale_ids %}
+            <span class="block text-[11px] text-yellow-500 mt-0.5">no worker reporting</span>
+            {% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs text-gray-400 max-w-[260px]">
+            {% if run.error_message %}<span class="text-red-400 block truncate" title="{{ run.error_message }}">{{ run.error_message }}</span>
+            {% elif run.duration_ms %}{{ (run.duration_ms / 1000) | round(1) }}s{% if run.output_tokens %}, {{ run.output_tokens }} output tokens{% endif %}
+            {% elif s in ('pending', 'running') %}<span class="text-gray-600">in flight</span>
+            {% else %}&mdash;{% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs text-gray-500 truncate max-w-[150px]">{{ run.requested_by.email if run.requested_by else '—' }}</td>
+          <td class="px-4 py-3 text-right">
+            {% if s in ('pending', 'running') %}
+            {# The job page's own cancel route — a second mechanism here would let the two
+               disagree about what stopping a run means. #}
+            <form method="POST" action="{{ run_base }}/ai-analysis/{{ run.id }}/cancel" class="inline"
+                  data-confirm-title="Stop this analysis"
+                  data-confirm-message="Drops the connection to the provider, which is also what makes it stop generating. Nothing is kept from a stopped run.">
+              <button type="submit" class="lt-btn lt-btn--xs lt-btn--warn">Stop</button>
+            </form>
+            {% else %}
+            <a href="{{ run_base }}#ai" class="lt-btn lt-btn--xs">View</a>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  <h2 class="text-lg font-semibold mb-3">Recently finished</h2>
+  {% if recent_bg_tasks %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Task</th>
+          <th class="px-4 py-3 font-medium">Status</th>
+          <th class="px-4 py-3 font-medium">Detail</th>
+          <th class="px-4 py-3 font-medium">Requested by</th>
+          <th class="px-4 py-3 font-medium">Finished</th>
+          <th class="px-4 py-3 font-medium text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for bt in recent_bg_tasks %}
+        {% set s = bt.status.value if bt.status.value is defined else bt.status %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3">
+            <span class="text-gray-300">{{ bt.name }}</span>
+            <span class="block text-[11px] text-gray-600 font-mono">#{{ bt.id }}</span>
+          </td>
+          <td class="px-4 py-3">
+            <span class="badge-base
+              {%- if s == 'completed' %} badge-completed
+              {%- elif s == 'cancelled' %} badge-cancelled
+              {%- else %} badge-failed{% endif %}"><span class="badge-dot"></span>{{ s | capitalize }}</span>
+          </td>
+          <td class="px-4 py-3 text-xs text-gray-400 max-w-[320px]">
+            {% if bt.error_message %}<span class="text-red-400 block truncate" title="{{ bt.error_message }}">{{ bt.error_message }}</span>
+            {% elif bt.detail %}<span class="block truncate" title="{{ bt.detail }}">{{ bt.detail }}</span>
+            {% else %}—{% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs text-gray-500 truncate max-w-[160px]">{{ bt.requested_by_label or '—' }}</td>
+          <td class="px-4 py-3 text-gray-500 text-xs">{{ bt.finished_at.strftime('%Y-%m-%d %H:%M') if bt.finished_at else '—' }}</td>
+          <td class="px-4 py-3 text-right">
+            {% if bt.kind in retryable %}
+            {% set spec = registry.get(bt.kind) %}
+            <form method="POST" action="/admin/tasks/{{ bt.id }}/retry" class="inline"
+                  data-confirm-title="Run {{ bt.name }} again"
+                  data-confirm-message="{% if spec and spec.notes %}{{ spec.notes }} {% endif %}This starts a new run; the record of this one is kept.">
+              <button type="submit" class="lt-btn lt-btn--xs">Run again</button>
+            </form>
+            {% else %}
+            <span class="text-[11px] text-gray-700">—</span>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+
+  {% if recent_jobs %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Job</th>
+          <th class="px-4 py-3 font-medium">File</th>
+          <th class="px-4 py-3 font-medium">Status</th>
+          <th class="px-4 py-3 font-medium">Findings</th>
+          <th class="px-4 py-3 font-medium">Finished</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for job in recent_jobs %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3"><a href="/jobs/{{ job.id }}" class="text-blue-400 hover:underline">#{{ job.id }}</a></td>
+          <td class="px-4 py-3 text-gray-300 truncate max-w-[220px]" title="{{ job.filename }}">{{ job.filename }}</td>
+          <td class="px-4 py-3">{% include "partials/_status_badge.html" %}</td>
+          <td class="px-4 py-3 font-mono">{{ job.total_findings or 0 }}</td>
+          <td class="px-4 py-3 text-gray-500 text-xs">{{ job.finished_at.strftime('%Y-%m-%d %H:%M') if job.finished_at else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Queue ────────────────────────────────────────────────────────── -->
+<div x-show="tab === 'queue'" x-cloak>
+  <h2 class="text-lg font-semibold mb-1">Waiting for a worker</h2>
+  <p class="text-xs text-gray-500 mb-3">
+    {{ huey_queue.queue_size }} queued, {{ huey_scheduled.scheduled_size }} scheduled for later.
+  </p>
+
+  {% if huey_queue.error or huey_scheduled.error %}
+  <div class="bg-yellow-950/30 border border-yellow-800 rounded-xl p-4 mb-6">
+    <p class="text-sm text-yellow-300">Could not read the broker: {{ huey_queue.error or huey_scheduled.error }}</p>
+  </div>
+  {% endif %}
+
+  {% if huey_queue['items'] %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-6">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Task</th>
+          <th class="px-4 py-3 font-medium">Arguments</th>
+          <th class="px-4 py-3 font-medium">Task ID</th>
+          <th class="px-4 py-3 font-medium text-right">Actions</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for item in huey_queue['items'] %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3 text-gray-300">{{ item.label }}<span class="block text-[11px] text-gray-600 font-mono">{{ item.task_name }}</span></td>
+          <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ item.args_summary or '—' }}</td>
+          <td class="px-4 py-3 text-gray-500 font-mono text-xs" title="{{ item.task_id }}">{{ item.task_id[:12] }}…</td>
+          <td class="px-4 py-3 text-right">
+            {% if item.task_id != '?' %}
+            <form method="POST" action="/admin/tasks/queue/{{ item.task_id }}/revoke" class="inline"
+                  data-confirm-title="Skip this task"
+                  data-confirm-message="The entry stays in the queue and is dropped when a worker reaches it. It will not run.">
+              <button type="submit" class="lt-btn lt-btn--xs lt-btn--warn">Skip</button>
+            </form>
+            {% endif %}
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% if huey_queue.queue_size > huey_queue['items'] | length %}
+    <div class="px-4 py-2 text-xs text-gray-500 border-t border-gray-800">
+      …and {{ huey_queue.queue_size - huey_queue['items'] | length }} more waiting.
+    </div>
+    {% endif %}
+  </div>
+  {% elif not huey_queue.error %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-8 text-center mb-6">
+    <p class="text-sm text-gray-500">Nothing waiting in the broker queue.</p>
+  </div>
+  {% endif %}
+
+  <h2 class="text-lg font-semibold mb-1">Scheduled for later</h2>
+  <p class="text-xs text-gray-500 mb-3">
+    Deferred re-runs and webhook retry backoff live here, not in the queue above &mdash; which
+    is why an idle-looking queue does not mean an idle worker.
+  </p>
+  {% if huey_scheduled['items'] %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Task</th>
+          <th class="px-4 py-3 font-medium">Arguments</th>
+          <th class="px-4 py-3 font-medium">Runs at</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for item in huey_scheduled['items'] %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3 text-gray-300">{{ item.label }}<span class="block text-[11px] text-gray-600 font-mono">{{ item.task_name }}</span></td>
+          <td class="px-4 py-3 text-gray-400 font-mono text-xs">{{ item.args_summary or '—' }}</td>
+          <td class="px-4 py-3 text-gray-500 text-xs font-mono">{{ item.eta or '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-8 text-center">
+    <p class="text-sm text-gray-500">Nothing scheduled.</p>
+  </div>
+  {% endif %}
+</div>
+
+<!-- ── Scheduled (periodic) ─────────────────────────────────────────── -->
+<div x-show="tab === 'scheduled'" x-cloak>
+  <h2 class="text-lg font-semibold mb-1">Recurring tasks</h2>
+  <p class="text-xs text-gray-500 mb-3">
+    Next run is computed from each task&rsquo;s own schedule, so it cannot drift from the code.
+    <span class="text-gray-600">These only run while a worker is up &mdash; a dash under &ldquo;Last run&rdquo; on a
+    long-lived instance means the sweeps are not happening.</span>
+  </p>
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <table class="w-full text-sm">
+      <thead class="border-b border-gray-800">
+        <tr class="text-gray-400 text-left">
+          <th class="px-4 py-3 font-medium">Task</th>
+          <th class="px-4 py-3 font-medium">Last run</th>
+          <th class="px-4 py-3 font-medium">Result</th>
+          <th class="px-4 py-3 font-medium">Next run</th>
+        </tr>
+      </thead>
+      <tbody class="divide-y divide-gray-800">
+        {% for row in scheduled_tasks %}
+        <tr class="hover:bg-gray-800/50 transition">
+          <td class="px-4 py-3">
+            <span class="text-gray-300">{{ row.label }}</span>
+            <span class="block text-[11px] text-gray-600 font-mono">{{ row.key }}</span>
+          </td>
+          <td class="px-4 py-3 text-gray-500 text-xs font-mono">
+            {{ row.last_ts or '—' }}
+            {% if row.last_duration_ms is not none %}<span class="block text-gray-700">{{ row.last_duration_ms }} ms</span>{% endif %}
+          </td>
+          <td class="px-4 py-3 text-xs">
+            {% if row.last_outcome == 'ok' %}
+            <span class="badge-base badge-completed"><span class="badge-dot"></span>OK</span>
+            {% elif row.last_outcome == 'error' %}
+            <span class="badge-base badge-failed"><span class="badge-dot"></span>Error</span>
+            {% else %}
+            <span class="text-gray-700">never seen</span>
+            {% endif %}
+            {% if row.last_detail %}<span class="block text-gray-500 mt-0.5">{{ row.last_detail }}</span>{% endif %}
+          </td>
+          <td class="px-4 py-3 text-gray-500 text-xs font-mono">{{ row.next_run.strftime('%Y-%m-%d %H:%M') if row.next_run else '—' }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+
+</div>

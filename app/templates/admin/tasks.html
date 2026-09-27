@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}Tasks – LogsTotal{% endblock %}
+
+{% block content %}
+{#- What is in flight right now, which is the question this page is opened to answer.
+    Deliberately not a lifetime total: `recent_bg_tasks` is a LIMIT 50 window and the
+    prune sweep removes finished rows, so "tasks run" would be a number that quietly
+    means "since the last prune". -#}
+{%- set _in_flight = (active_jobs | length) + (active_bg_tasks | length) + (active_ai | length) %}
+{%- set _queued = huey_queue.queue_size + huey_scheduled.scheduled_size %}
+{{ page_header("Background tasks", "/admin#manage", "Manage",
+               pills=([('%d running' % _in_flight, 'blue')] if _in_flight else [])
+                     + ([('%d queued' % _queued, 'yellow')] if _queued else [])
+                     or [('idle',)]) }}
+<p class="text-sm text-gray-500 mb-6">
+  Everything the workers are doing, waiting to do, or are scheduled to do.
+</p>
+
+{% if request.query_params.get('recovered') %}
+<div class="mb-4 rounded-lg border border-green-800 bg-green-950/30 px-4 py-2.5 text-sm text-green-300">
+  Recovered {{ request.query_params.get('recovered') }} abandoned task(s).
+</div>
+{% endif %}
+{% if request.query_params.get('revoked') == '1' %}
+<div class="mb-4 rounded-lg border border-green-800 bg-green-950/30 px-4 py-2.5 text-sm text-green-300">
+  Revoked. The entry stays in the queue and is skipped when a worker reaches it.
+</div>
+{% endif %}
+
+{% set task_tabs = [
+  {'key': 'activity',  'label': 'Activity',  'badge': None, 'lazy_event': None, 'icon': 'clock'},
+  {'key': 'queue',     'label': 'Queue',     'badge': (huey_queue.queue_size + huey_scheduled.scheduled_size) or None, 'lazy_event': None, 'icon': 'queue'},
+  {'key': 'scheduled', 'label': 'Scheduled', 'badge': None, 'lazy_event': None, 'icon': 'calendar'},
+] %}
+<div x-data='resourceTabs({{ task_tabs | tojson }})'>
+  {% from "partials/_tab_badge.html" import tab_icon, tab_badge %}
+  <div class="flex gap-1 border-b border-gray-800 mb-5">
+    {% for tab in task_tabs %}
+    <button type="button" @click="select('{{ tab.key }}')"
+            :class="tab === '{{ tab.key }}' ? 'border-blue-500 text-gray-100' : 'border-transparent text-gray-500 hover:text-gray-300'"
+            class="flex items-center gap-1.5 px-3 py-2 text-sm border-b-2 transition-colors">
+      {{ tab_icon(tab) }}{{ tab.label }}{{ tab_badge(tab) }}
+    </button>
+    {% endfor %}
+  </div>
+
+  {# The region self-polls; each pane is inside it so a poll refreshes whichever is open. #}
+  {% include "admin/partials/_tasks_table.html" %}
+</div>
+{% endblock %}

@@ -1,0 +1,229 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% from "intel/partials/_entity_type_badge.html" import type_badge, entity_type_checkboxes %}
+{% block title %}Enrichment services – Admin – LogsTotal{% endblock %}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+
+  {{ page_header("Enrichment services", "/admin#manage", "Manage",
+                 pills=[('%d of %d enabled' % (services | selectattr('enabled') | list | length, services | length),
+                         'green' if services | selectattr('enabled') | list else 'gray')] if services else [('none',)]) }}
+  <p class="text-sm text-gray-500 mb-6">External lookup links shown on entity detail pages. Use <code class="bg-gray-800 px-1 rounded text-blue-300">{value}</code> in templates to substitute the entity value.</p>
+
+  {% set msg_map = {
+    'created': 'Service created.',
+    'updated': 'Service updated.',
+    'toggled': 'Service toggled.',
+    'deleted': 'Service deleted.',
+    'token_cleared': 'API token cleared.'
+  } %}
+  {% for key, msg in msg_map.items() %}
+    {% if request.query_params.get(key) %}
+    <div class="bg-green-900/40 border border-green-700/50 text-green-300 px-4 py-2 rounded-lg text-sm mb-4">{{ msg }}</div>
+    {% endif %}
+  {% endfor %}
+
+  <!-- Add form -->
+  <details class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
+    <summary class="px-5 py-3 cursor-pointer text-sm text-gray-300 hover:text-white">+ Add new service</summary>
+    {#
+    "At least one" has no native spelling — `required` on a checkbox demands *that*
+    box — so the count is kept in Alpine and the submit waits for it. The initial value
+    comes from the server rather than a DOM read at init, which keeps the `checked`
+    attributes the single source of truth and sidesteps any question of when Alpine
+    first sees them. The route still refuses an empty group: this is a courtesy, not
+    the validation.
+    #}
+    <form method="POST" action="/admin/enrichment" class="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-gray-800"
+          x-data="{ chosen: 0 }" @change="chosen = $el.querySelectorAll('input[name=entity_types]:checked').length">
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">Name *</span>
+        <input type="text" name="name" required maxlength="80"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">Provider key (optional)</span>
+        <input type="text" name="provider_key" maxlength="40" placeholder="otx, urlscan, …"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <div class="text-xs sm:col-span-2">
+        <span class="block text-gray-400 mb-1.5">Entity types * <span class="text-gray-600">— which observables this service can look up</span></span>
+        {{ entity_type_checkboxes(entity_types, []) }}
+      </div>
+      <label class="text-xs sm:col-span-2">
+        <span class="block text-gray-400 mb-1">Link template (browser URL)</span>
+        <input type="text" name="link_template" maxlength="500" placeholder="https://example.com/lookup/{value}"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">API template (optional, for future enrichment calls)</span>
+        <input type="text" name="api_template" maxlength="500" placeholder="https://api.example.com/v1/{value}"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">API method</span>
+        <select name="api_method" class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200">
+          <option value="GET">GET</option>
+          <option value="POST">POST</option>
+        </select>
+      </label>
+      <label class="text-xs sm:col-span-2">
+        <span class="block text-gray-400 mb-1">API headers (JSON, {token} substitution supported)</span>
+        <textarea name="api_headers_json" rows="2" placeholder='{"Authorization": "Bearer {token}"}'
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none"></textarea>
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">API token (encrypted at rest)</span>
+        <input type="password" name="api_token" autocomplete="off"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">Display order</span>
+        <input type="number" name="display_order" value="100" min="0" max="9999"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs sm:col-span-2">
+        <span class="block text-gray-400 mb-1">Notes</span>
+        <textarea name="notes" rows="2"
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"></textarea>
+      </label>
+      <label class="flex items-center gap-2 text-sm text-gray-300">
+        <input type="hidden" name="enabled" value="0">{# an unticked box posts nothing, and the route defaults to 1 #}
+        <input type="checkbox" name="enabled" value="1" checked class="lt-check">
+        Enabled
+      </label>
+      <div class="flex items-end justify-end">
+        <button type="submit" class="lt-btn lt-btn--lg lt-btn--primary"
+                :disabled="!chosen" title="Tick at least one entity type first">Create service</button>
+      </div>
+    </form>
+  </details>
+
+  <!-- Existing services -->
+  {% if services %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    {% for s in services %}
+    <details class="border-b border-gray-800/50 last:border-b-0 group">
+      <summary class="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-gray-800/50 transition">
+        <span class="flex-shrink-0 w-8 text-center text-xs text-gray-600">{{ s.display_order }}</span>
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2">
+            <span class="text-sm font-medium text-white truncate {% if not s.enabled %}line-through text-gray-500{% endif %}">{{ s.name }}</span>
+            {% if s.has_api_token %}
+            <span class="text-[9px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-700/40" title="API token stored encrypted">TOKEN</span>
+            {% endif %}
+            {# The shared badge, not a hand-rolled grey pill: an admin reading this row and
+               an analyst reading the entity page should see the same colour for the same type. #}
+            {% for t in s.entity_types %}{{ type_badge(t) }}{% endfor %}
+          </div>
+          {% if s.link_template %}
+          <code class="block text-xs text-gray-500 truncate font-mono">{{ s.link_template }}</code>
+          {% endif %}
+        </div>
+        <span class="text-xs {% if s.enabled %}text-emerald-400{% else %}text-gray-600{% endif %}">{% if s.enabled %}● enabled{% else %}○ disabled{% endif %}</span>
+      </summary>
+
+      <div class="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-950/50">
+        <form method="POST" action="/admin/enrichment/{{ s.id }}" class="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3"
+              x-data="{ chosen: {{ s.entity_types | length }} }" @change="chosen = $el.querySelectorAll('input[name=entity_types]:checked').length">
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Name</span>
+            <input type="text" name="name" value="{{ s.name }}" required maxlength="80"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Provider key</span>
+            <input type="text" name="provider_key" value="{{ s.provider_key or '' }}" maxlength="40"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <div class="text-xs sm:col-span-2">
+            <span class="block text-gray-400 mb-1.5">Entity types *</span>
+            {{ entity_type_checkboxes(entity_types, s.entity_types) }}
+          </div>
+          <label class="text-xs sm:col-span-2">
+            <span class="block text-gray-400 mb-1">Link template</span>
+            <input type="text" name="link_template" value="{{ s.link_template or '' }}" maxlength="500"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">API template</span>
+            <input type="text" name="api_template" value="{{ s.api_template or '' }}" maxlength="500"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">API method</span>
+            <select name="api_method" class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200">
+              <option value="GET" {% if s.api_method == 'GET' %}selected{% endif %}>GET</option>
+              <option value="POST" {% if s.api_method == 'POST' %}selected{% endif %}>POST</option>
+            </select>
+          </label>
+          <label class="text-xs sm:col-span-2">
+            <span class="block text-gray-400 mb-1">API headers (JSON)</span>
+            <textarea name="api_headers_json" rows="2"
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">{{ s.api_headers_json or '' }}</textarea>
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">API token {% if s.has_api_token %}(leave blank to keep existing){% endif %}</span>
+            <input type="password" name="api_token" autocomplete="off"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Display order</span>
+            <input type="number" name="display_order" value="{{ s.display_order }}" min="0" max="9999"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs sm:col-span-2">
+            <span class="block text-gray-400 mb-1">Notes</span>
+            <textarea name="notes" rows="2"
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">{{ s.notes or '' }}</textarea>
+          </label>
+          <label class="flex items-center gap-2 text-sm text-gray-300">
+            <input type="hidden" name="enabled" value="0">
+            <input type="checkbox" name="enabled" value="1" {% if s.enabled %}checked{% endif %} class="lt-check">
+            Enabled
+          </label>
+          <div class="flex items-end justify-end gap-2">
+            <button type="submit" class="lt-btn lt-btn--primary"
+                    :disabled="!chosen" title="Tick at least one entity type first">Save</button>
+          </div>
+        </form>
+
+        <div class="sm:col-span-2 flex flex-wrap gap-2 pt-2 border-t border-gray-800">
+          <form method="POST" action="/admin/enrichment/{{ s.id }}/toggle" class="inline">
+            <button type="submit" class="text-xs px-3 py-1.5 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:text-white transition">
+              {% if s.enabled %}Disable{% else %}Enable{% endif %}
+            </button>
+          </form>
+          {% if s.has_api_token %}
+          <form method="POST" action="/admin/enrichment/{{ s.id }}/clear-token"
+                data-confirm-title="Clear API token"
+                data-confirm-message="Permanently remove the stored API token for {{ s.name }}?"
+                data-confirm-accept="Clear">
+            <button type="submit" class="text-xs px-3 py-1.5 rounded border border-amber-700/50 bg-amber-900/20 text-amber-300 hover:text-amber-200 transition">
+              Clear token
+            </button>
+          </form>
+          {% endif %}
+          <form method="POST" action="/admin/enrichment/{{ s.id }}/delete"
+                data-confirm-title="Delete service"
+                data-confirm-message="Permanently delete the {{ s.name }} enrichment service?"
+                data-confirm-accept="Delete" class="ml-auto">
+            <button type="submit" class="text-xs px-3 py-1.5 rounded text-red-400 hover:text-red-300 transition">
+              Delete
+            </button>
+          </form>
+        </div>
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
+    <p class="text-gray-500">No enrichment services configured.</p>
+    <p class="text-xs text-gray-600 mt-2">Add one above to get started.</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

@@ -1,0 +1,81 @@
+{% from "partials/_pager.html" import pager %}
+{#
+  One page of a case's entity links, with a server-side filter.
+
+  Lives inside `#case-entities-region`, which is its own swap target: the filter form and
+  the pager both re-fetch this partial into the same region. The card header and "+ Add"
+  stay in case_detail.html, outside the region, so a page change cannot re-render the
+  dialog trigger.
+
+  The filter is server-side on purpose. The list is paged at 50, so a client-side filter
+  would only ever search the rows currently loaded — on a 500-entity case that silently
+  misses most of the answer, while looking like it worked.
+
+  Expects: case, entity_links, entity_total (filtered), entity_grand_total (unfiltered),
+  q, entity_type, entity_types, page, total_pages, page_size, user, is_owner,
+  tags_by_entity (bulk-loaded for THIS page — `_case_entity_row.html` reads it per row and
+  the tag chips silently vanish without it).
+#}
+{% from "intel/partials/_entity_type_badge.html" import type_label %}
+{# Built without a leading `&` and joined once, so `pager()` can append it to `?page=N`
+   the same way every other paged surface does. #}
+{% set filter_qs = [('q=' ~ (q | urlencode)) if q else '', ('entity_type=' ~ entity_type) if entity_type else ''] | select | join('&') %}
+
+{# `change` covers the select and `keyup changed delay` the text box, so typing filters
+   without a submit while a paste-and-tab still works. `hx-include` is unnecessary: the
+   form element itself is serialised. #}
+<form hx-get="/intel/cases/{{ case.id }}/entities-partial"
+      hx-target="#case-entities-region"
+      hx-swap="innerHTML"
+      hx-trigger="change, keyup changed delay:300ms from:find input[name='q']"
+      class="lt-bar px-5 py-3 border-b border-gray-800">
+  <div class="lt-ctl">
+    <span class="lt-ctl__label">Search</span>
+    <input type="search" id="case-entities-q" name="q" value="{{ q }}" maxlength="200"
+           placeholder="Filter by value…" autocomplete="off"
+           class="lt-field lt-field--sm w-56">
+  </div>
+  <div class="lt-ctl">
+    <span class="lt-ctl__label">Type</span>
+    <select id="case-entities-type" name="entity_type" class="lt-field lt-field--sm w-40">
+      <option value="">All types</option>
+      {% for t in entity_types %}
+      <option value="{{ t }}" {% if entity_type == t %}selected{% endif %}>{{ type_label(t, full=true) }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  {% if q or entity_type %}
+  <a href="#" hx-get="/intel/cases/{{ case.id }}/entities-partial"
+     hx-target="#case-entities-region" hx-swap="innerHTML"
+     class="lt-btn lt-btn--xs">Clear</a>
+  <span class="text-xs text-gray-500 ml-auto">{{ entity_total }} of {{ entity_grand_total }}</span>
+  {% endif %}
+  <noscript><button type="submit" class="lt-btn lt-btn--sm">Filter</button></noscript>
+</form>
+
+{% if entity_links %}
+{# The card outside already carries `overflow-hidden` for its rounded corners, so the
+   scroll box has to be this inner element. See the .lt-scroll note in base.html. #}
+<div class="divide-y divide-gray-800/50 lt-scroll lt-scroll--lg">
+  {% for el in entity_links %}
+  {% include "intel/partials/_case_entity_row.html" %}
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between px-5 py-3 border-t border-gray-800 text-xs text-gray-500">
+  <span>{{ (page - 1) * page_size + 1 }}&ndash;{{ (page - 1) * page_size + entity_links | length }} of {{ entity_total }}</span>
+  {{ pager(page, total_pages, url='/intel/cases/' ~ case.id ~ '/entities-partial',
+           qs=filter_qs, target='#case-entities-region') }}
+</div>
+{% endif %}
+
+{% else %}
+<p class="px-5 py-8 text-sm text-gray-500 text-center">
+  {% if q or entity_type %}
+  No entities match this filter.
+  {% else %}
+  No entities. Add observables from their detail pages or search above.
+  {% endif %}
+</p>
+{% endif %}

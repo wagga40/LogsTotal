@@ -1,0 +1,291 @@
+{% extends "base.html" %}
+{% from "partials/_copy_button.html" import copy_button with context %}
+{% from "partials/_tab_badge.html" import tab_badge, tab_icon %}
+{% block title %}{{ entity.value }} – Intel – LogsTotal{% endblock %}
+
+{% from "intel/partials/_entity_type_badge.html" import type_badge, type_label %}
+{% from "partials/_add_to_case_dialog.html" import add_to_case_dialog %}
+
+{% block content %}
+{#
+  `job_qs` is threaded into every lazy pane's hx-get and into the exports. Every one must
+  carry it: a region that forgets renders perfectly and shows unscoped data next to a
+  scoped badge, which is invisible in a browser — tests/test_intel_job_scope.py checks
+  all of them. Set at the top of the block so the header's export menu can use it too.
+#}
+{% set job_qs = '?job=' ~ job if job else '' %}
+<div class="max-w-7xl mx-auto">
+
+  <!-- Breadcrumb -->
+  <div class="flex items-center gap-2 text-sm text-gray-500 mb-6">
+    <a href="/intel" class="hover:text-gray-300 transition">Intel</a>
+    <span class="text-gray-700">/</span>
+    <a href="/intel?type={{ entity.entity_type }}" class="text-gray-300 hover:text-white transition">{{ type_label(entity.entity_type, full=true) }}</a>
+    <span class="text-gray-700">/</span>
+    <span class="text-white font-mono truncate max-w-[300px]">{{ entity.value }}</span>
+  </div>
+
+  <!-- Entity header card -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    <!-- Action buttons (top) -->
+    <div class="flex flex-wrap gap-2 mb-5 pb-5 border-b border-gray-800">
+      {% include "intel/partials/_entity_watchlist_button.html" %}
+      {% include "intel/partials/_entity_allowlist_button.html" %}
+      {% if enrichment_urls %}
+      {% for link in enrichment_urls %}
+      <a href="{{ link.url }}" target="_blank" rel="noopener"
+         class="lt-btn">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14"/></svg>
+        {{ link.name }}
+      </a>
+      {% endfor %}
+      {% endif %}
+      <div class="relative" x-data="{ exportOpen: false }">
+        <button type="button" @click="exportOpen = !exportOpen"
+                :class="exportOpen ? 'border-blue-700/60 bg-blue-900/30 text-blue-300' : 'border-gray-700 bg-gray-800 text-gray-300 hover:text-white hover:border-gray-500'"
+                class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition">
+          <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          Export <span class="opacity-60">&#9662;</span>
+        </button>
+        <div x-show="exportOpen" x-cloak @click.outside="exportOpen = false"
+             class="lt-menu absolute left-0 mt-2 w-60">
+          <a href="/intel/entities/{{ entity.id }}/stix" target="_blank" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">STIX 2.1 bundle</a>
+          <button type="button" @click="exportOpen = false; copyIocPack('/intel/entities/{{ entity.id }}/ioc-pack')"
+                  class="block w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">Copy IOC pack</button>
+          {# Exports follow the active job scope — a downloaded layer or GraphML that
+             silently covered every job would contradict the page it was taken from. #}
+          <a href="/intel/entities/{{ entity.id }}/mitre-layer{{ job_qs }}" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">MITRE Navigator layer{% if job %} (job #{{ job }}){% endif %}</a>
+          <a href="/intel/entities/{{ entity.id }}/graph.graphml{{ job_qs }}" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">Graph (GraphML){% if job %} (job #{{ job }}){% endif %}</a>
+        </div>
+      </div>
+      <button type="button" data-add-to-case-trigger="entity-{{ entity.id }}"
+              class="lt-btn lt-btn--active">
+        <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+        Add to case
+      </button>
+    </div>
+
+    <!-- Entity info -->
+    <div>
+      <div class="flex flex-wrap items-center gap-3 mb-3">
+        {{ type_badge(entity.entity_type, full=true) }}
+        {# No derived chips here. A shared rule's label is a tag, and the tag region below
+           renders it — inert copies of the same words beside the editable ones would be
+           duplication. What the attribute engine computed is shown on the Overview tab's
+           Attributes card. #}
+        <span class="text-xs text-gray-500">ID #{{ entity.id }}</span>
+      </div>
+      <h1 class="text-xl font-mono font-bold text-white break-all mb-4">
+        <span>{{ entity.value }}</span>
+        {{ copy_button(source='span', title='Copy to clipboard', extra='ml-2 align-middle', icon_cls='w-4 h-4') }}
+      </h1>
+      <div class="flex flex-wrap gap-6 text-sm">
+        <div>
+          <span class="text-gray-500">First seen</span>
+          <span class="ml-2 text-gray-300"
+                {% if entity.first_seen_at %}title="{{ entity.first_seen_at.strftime('%Y-%m-%d %H:%M UTC') }}"{% endif %}>
+            {% if entity.first_seen_at %}{{ entity.first_seen_at | time_ago }}{% else %}&mdash;{% endif %}
+          </span>
+        </div>
+        <div>
+          <span class="text-gray-500">Last seen</span>
+          <span class="ml-2 text-gray-300"
+                {% if entity.last_seen_at %}title="{{ entity.last_seen_at.strftime('%Y-%m-%d %H:%M UTC') }}"{% endif %}>
+            {% if entity.last_seen_at %}{{ entity.last_seen_at | time_ago }}{% else %}&mdash;{% endif %}
+          </span>
+        </div>
+        <div>
+          <span class="text-gray-500">Appears in</span>
+          <span class="ml-2 text-white font-medium">{{ entity.job_count or 0 }} job{{ 's' if (entity.job_count or 0) != 1 else '' }}</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tags -->
+    <div class="mt-4 pt-4 border-t border-gray-800">
+      {% include "intel/partials/_entity_header_tags.html" %}
+    </div>
+
+    {% include "partials/_case_backlinks.html" %}
+  </div>
+
+  <!-- Tabbed workbench -->
+  <div x-data='resourceTabs({{ tabs | tojson }})'>
+
+    <!-- Job scope -->
+    {#
+      A full navigation rather than in-page state, for two reasons. The tab badges are
+      computed server-side from the same scope, so the scope has to reach the server or
+      the badge and its pane disagree. And the five job-scoped panes below are
+      `hx-trigger="… once"`: re-arming them in place would mean re-processing five regions
+      on every change, which is exactly the Alpine-⇄-htmx coupling that keeps producing
+      silent failures here. A reload re-arms them for free. `+ '#' + tab` keeps you on the
+      tab you were reading.
+    #}
+    {% if job_options %}
+    <div class="lt-bar mb-4">
+      {#
+        With exactly one job the server has already scoped to it, so a picker offering
+        "All jobs (1)" and a Clear button would both navigate to a URL that redirects
+        straight back here. Nothing is lost by dropping them: Overview is global whatever
+        the scope, and at N=1 every other pane renders the same rows either way.
+      #}
+      {% if job_total > 1 %}
+      <div class="lt-ctl">
+        <span class="lt-ctl__label">Job scope</span>
+        <select class="lt-field lt-field--sm w-64"
+                @change="window.location.href = '/intel/entities/{{ entity.id }}' + ($event.target.value ? '?job=' + $event.target.value : '') + '#' + tab">
+          <option value="">All jobs ({{ job_total }})</option>
+          {% for opt in job_options %}
+          <option value="{{ opt.id }}" {% if opt.id == job %}selected{% endif %}>
+            #{{ opt.id }}{% if opt.filename %} — {{ opt.filename }}{% endif %}
+          </option>
+          {% endfor %}
+        </select>
+      </div>
+      {% else %}
+      <div class="lt-ctl">
+        <span class="lt-ctl__label">Job scope</span>
+        <span class="text-xs text-gray-400">the only job this entity appears in</span>
+      </div>
+      {% endif %}
+      {% if job %}
+      {% if job_total > 1 %}<a href="/intel/entities/{{ entity.id }}" class="lt-btn lt-btn--xs">Clear</a>{% endif %}
+      <a href="/jobs/{{ job }}" class="lt-btn lt-btn--xs">Open job #{{ job }} &rarr;</a>
+      {% endif %}
+      {% if job_total > job_picker_limit %}
+      <span class="text-xs text-gray-600">showing the {{ job_picker_limit }} most recent of {{ job_total }}</span>
+      {% endif %}
+    </div>
+    {% endif %}
+    {% if job_error %}
+    <p class="mb-4 text-xs text-amber-300/80 bg-amber-950/20 border border-amber-900/40 rounded-lg px-3 py-2">{{ job_error }}</p>
+    {% endif %}
+
+    <!-- Tab strip -->
+    <div class="flex flex-wrap border-b border-gray-800 mb-6 gap-1">
+      {% for tab in tabs %}
+      <button @click="select('{{ tab.key }}')"
+              :class="tab === '{{ tab.key }}' ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'"
+              class="px-4 py-2 -mb-px border-b-2 text-sm font-medium transition flex items-center gap-2">
+        {{ tab_icon(tab) }} {{ tab.label }} {{ tab_badge(tab) }}
+      </button>
+      {% endfor %}
+    </div>
+
+    <!-- Overview (eager) -->
+    <div x-show="tab === 'overview'" x-cloak>
+      {% include "intel/partials/_entity_overview.html" %}
+    </div>
+
+    <!-- Findings (lazy via HTMX) -->
+    <div x-show="tab === 'findings'" x-cloak>
+      <div id="entity-findings-region"
+           hx-get="/intel/entities/{{ entity.id }}/findings-partial{{ job_qs }}"
+           hx-trigger="loadFindings from:body once"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading findings…
+        </div>
+      </div>
+    </div>
+
+    <!-- Relationships (lazy via HTMX) -->
+    <div x-show="tab === 'relationships'" x-cloak>
+      <div id="entity-relationships-region"
+           hx-get="/intel/entities/{{ entity.id }}/relationships-partial{{ job_qs }}"
+           hx-trigger="loadRelationships from:body once"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading relationships…
+        </div>
+      </div>
+    </div>
+
+    <!-- MITRE -->
+    <div x-show="tab === 'mitre'" x-cloak>
+      <div id="entity-mitre-region"
+           hx-get="/intel/entities/{{ entity.id }}/mitre-partial{{ job_qs }}"
+           hx-trigger="loadMitre from:body once"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading MITRE coverage…
+        </div>
+      </div>
+    </div>
+
+    {# Processes (lazy via HTMX). Rendered only when `_build_entity_tabs` emitted the tab —
+       `resourceTabs` derives its key set from that list, so an absent tab is simply
+       unreachable and this pane is dead markup rather than a broken one. #}
+    <div x-show="tab === 'processes'" x-cloak>
+      <div id="entity-processes-region"
+           hx-get="/intel/entities/{{ entity.id }}/process-tree-partial{{ job_qs }}"
+           hx-trigger="loadProcesses from:body once"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading process tree…
+        </div>
+      </div>
+    </div>
+
+    <!-- Graph (lazy via HTMX) -->
+    <div x-show="tab === 'graph'" x-cloak>
+      <div id="entity-graph-region"
+           hx-get="/intel/entities/{{ entity.id }}/graph-partial{{ job_qs }}"
+           hx-trigger="loadGraph from:body once"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading graph…
+        </div>
+      </div>
+    </div>
+
+    {#
+      Discussions: the thread only. The analyst note lives on Overview, where the rest of
+      the things that describe this entity live — one field about the entity and a
+      multi-party conversation do not belong in one tab.
+
+      Lazy on first activation, like the job page's Discussion tab, rather than
+      `hx-trigger="load"`: `x-show` only toggles CSS, so a bare `load` would fetch a thread
+      nobody had opened on every entity page view.
+    #}
+    <div x-show="tab === 'discussion'" x-cloak>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6"
+           hx-get="/comments/entity/{{ entity.id }}"
+           hx-trigger="loadComments from:body once"
+           hx-swap="innerHTML">
+        <p class="text-sm text-gray-500">Loading discussion…</p>
+      </div>
+    </div>
+  </div>
+
+</div>
+
+<script>
+  function copyIocPack(url) {
+    fetch(url, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(pack => ltCopy(JSON.stringify(pack, null, 2)))
+      .then(() => {
+        const f = document.getElementById('flash');
+        if (f) f.innerHTML = '<div class="bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 px-3 py-2 rounded text-sm">IOC pack copied to clipboard.</div>';
+        setTimeout(() => { if (f) f.innerHTML = ''; }, 3000);
+      })
+      .catch(() => {
+        const f = document.getElementById('flash');
+        if (f) {
+          f.innerHTML = '<div class="bg-red-900/40 border border-red-700/50 text-red-300 px-3 py-2 rounded text-sm">Failed to copy IOC pack.</div>';
+          setTimeout(() => { f.innerHTML = ''; }, 3000);
+        }
+      });
+  }
+
+</script>
+
+{{ add_to_case_dialog('entity', entity.id) }}
+{% endblock %}

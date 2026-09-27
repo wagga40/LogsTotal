@@ -1,0 +1,107 @@
+{% set type_chip = {
+  'user': 'bg-blue-900/50 text-blue-300 border-blue-700/40',
+  'computer': 'bg-purple-900/50 text-purple-300 border-purple-700/40',
+  'ip_address': 'bg-green-900/50 text-green-300 border-green-700/40',
+  'hash': 'bg-yellow-900/50 text-yellow-300 border-yellow-700/40',
+  'executable': 'bg-orange-900/50 text-orange-300 border-orange-700/40',
+  'domain': 'bg-cyan-900/50 text-cyan-300 border-cyan-700/40',
+  'cmdline_file': 'bg-rose-900/50 text-rose-300 border-rose-700/40',
+  'service': 'bg-teal-900/50 text-teal-300 border-teal-700/40',
+  'task': 'bg-indigo-900/50 text-indigo-300 border-indigo-700/40',
+} %}
+
+{% if total == 0 %}
+<div class="text-center py-12 text-gray-500 text-sm">
+  {% if job %}
+  No typed relationships for this entity whose other endpoint also appears in job #{{ job }}.
+  {% else %}
+  No typed relationships for this entity yet.
+  <div class="mt-1 text-gray-600">Run new jobs, or use Admin → &ldquo;Rebuild Entity Relationships&rdquo; to backfill older jobs.</div>
+  {% endif %}
+</div>
+{% else %}
+<div class="text-xs text-gray-500 mb-3">
+  {{ total }} typed relationship{{ 's' if total != 1 else '' }} for this entity
+  {% if job %} · job #{{ job }}{% endif %}
+  {% if capped %} · showing the strongest {{ total }}{% endif %}
+</div>
+{% if job %}
+{# A typed edge is a cross-job aggregate — EntityRelationship has no job column. Saying so
+   is the honest alternative to a filter that looks stricter than it is. #}
+<p class="text-xs text-gray-600 mb-3 -mt-1">
+  Filtered to relationships whose other endpoint also appears in job #{{ job }}. Typed
+  relationships themselves are cross-job aggregates, so their counts and dates still span every job.
+</p>
+{% endif %}
+
+{# Deliberately NOT `.lt-scroll`, unlike the Findings tab.
+
+   This is a stack of grouped cards, each with its own header, and there is no pager under
+   it. Boxing the whole stack scrolls the group headers out of view — so you lose track of
+   which relationship type you are reading — and puts an inner scrollbar in competition
+   with the page's for no benefit, since there is no "Next" to keep reachable. A flat list
+   of uniform rows with a pager below it (Findings, case Entities/Jobs) is the shape that
+   earns a scroll box; this is not it. The list is bounded server-side instead, by
+   `_RELATIONSHIPS_CAP` per direction. #}
+<div class="space-y-5">
+  {% for g in groups %}
+  <div class="border border-gray-800 rounded-lg overflow-hidden">
+    <div class="flex items-center gap-2 px-4 py-2.5 bg-gray-800/40 border-b border-gray-800">
+      <span class="text-xs font-semibold text-gray-200">{{ g.label }}</span>
+      {% if g.direction == 'out' %}
+      <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/30">outgoing</span>
+      {% else %}
+      <span class="text-[10px] uppercase tracking-wider px-1.5 py-0.5 rounded bg-gray-700/40 text-gray-300 border border-gray-600/30">incoming</span>
+      {% endif %}
+      <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400">{{ g.count }}</span>
+    </div>
+    <div class="divide-y divide-gray-800">
+      {% for r in g.rows %}
+      <div x-data="{ open: false }">
+        <div class="flex flex-wrap items-center gap-3 px-4 py-2.5 bg-gray-900 hover:bg-gray-800/60 transition">
+          {% if g.direction == 'out' %}
+          <span class="text-gray-600 text-xs font-mono shrink-0">this</span>
+          <svg class="w-4 h-4 text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+          {% endif %}
+          <span class="text-[10px] px-1.5 py-0.5 rounded-full border font-medium shrink-0 {{ type_chip.get(r.other.entity_type, 'bg-gray-800 text-gray-400 border-gray-700') }}">
+            {{ r.other.entity_type.replace('_', ' ') }}
+          </span>
+          <a href="/intel/entities/{{ r.other.id }}"
+             class="flex-1 min-w-0 text-sm font-mono text-gray-200 hover:text-white truncate"
+             title="{{ r.other.value }}">{{ r.other.value }}</a>
+          {% if g.direction == 'in' %}
+          <svg class="w-4 h-4 text-gray-600 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M14 5l7 7m0 0l-7 7m7-7H3"/></svg>
+          <span class="text-gray-600 text-xs font-mono shrink-0">this</span>
+          {% endif %}
+          <span class="text-xs text-gray-500 shrink-0" title="times observed">&times;{{ r.occurrence_count }}</span>
+          {% if r.last_seen_at %}
+          <span class="text-xs text-gray-600 shrink-0 hidden sm:inline">{{ r.last_seen_at.strftime('%Y-%m-%d') }}</span>
+          {% endif %}
+          {% if r.relationship_id %}
+          <button type="button"
+                  @click="open = !open"
+                  hx-get="/intel/relationships/{{ r.relationship_id }}/evidence-partial"
+                  hx-trigger="click once"
+                  hx-target="#rel-ev-{{ r.relationship_id }}"
+                  hx-swap="innerHTML"
+                  class="shrink-0 text-xs text-purple-400 hover:text-purple-300 transition inline-flex items-center gap-1">
+            <svg class="w-3 h-3 transition-transform" :class="open ? 'rotate-90' : ''" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+            <span x-text="open ? 'Hide evidence' : 'Evidence'"></span>
+          </button>
+          {% endif %}
+        </div>
+        {% if r.relationship_id %}
+        <div x-show="open" x-cloak id="rel-ev-{{ r.relationship_id }}" class="px-4 py-3 bg-gray-950/40 border-t border-gray-800" style="display:none">
+          <div class="flex items-center justify-center py-4 text-gray-500 text-xs">
+            <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"></circle><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z"></path></svg>
+            Loading evidence…
+          </div>
+        </div>
+        {% endif %}
+      </div>
+      {% endfor %}
+    </div>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}

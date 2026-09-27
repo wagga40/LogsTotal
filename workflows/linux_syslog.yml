@@ -1,0 +1,13 @@
+name: "Linux Syslog Analysis"
+description: "Run ChopChopGo against syslog with the SigmaHQ Linux builtin rules"
+is_default: false
+log_types:
+  - syslog
+
+tasks:
+  - tool: chopchopgo
+    tool_path:
+      x86_64-linux: tools/chopchopgo/chopchopgo-intel-lin
+      aarch64-linux: tools/chopchopgo/chopchopgo-arm-lin
+    rules_path: tools/chopchopgo/rules/builtin
+    timeout: 300

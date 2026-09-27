@@ -1,0 +1,116 @@
+{#
+  The one pager for every paged list in the app:
+
+      ← Prev   1 … 5 6 [7] 8 9 … 18   Next →   Go to [ 7 ]
+
+  The numbers are a fixed-width window from `app/pagination.py::page_window` — nine slots
+  whenever there are more than nine pages, so the control keeps its width and Next stays
+  under the cursor. The "go to" field appears only once the window elides pages. On a
+  small screen the numbers give way to "7 / 18".
+
+  **Both Prev and Next always render, disabled at the ends.** Omitting one moves "Next"
+  sideways the moment you reach page 2, so the control shifts out from under the cursor
+  exactly when it is being used repeatedly.
+
+  **The numbers hide behind a wrapper, never on the buttons.** `.lt-btn` declares
+  `display`, and the production sheet is linked BEFORE base.html's <style>, so a `hidden`
+  on the button itself would lose in prod and win in dev.
+
+  Only the *navigation verb* differs between call sites, because it genuinely must: a page
+  navigates, an htmx pane swaps a region, and the Intel dashboard writes into an Alpine
+  scope that owns the whole filter state. One argument selects which; geometry, glyphs,
+  position text, disabled handling and aria are shared.
+
+      {{ pager(page, total_pages, url='/jobs', qs=list_qs, total=total, per_page=per_page, noun='jobs', noun_one='job', keys=True) }}
+      {{ pager(page, total_pages, url='/intel/cases/3/jobs-partial', target='#case-jobs-region') }}
+      {{ pager(page, total_pages, alpine='triggerRefresh(false)') }}
+
+  `qs` is an already-encoded fragment (`tags=a%2Cb&q=…`), built server-side by whoever owns
+  the filter — assembling it in Jinja is four separate chances to get the escaping wrong.
+  The go-to field is a real form, so the same filter travels as hidden inputs
+  (`qs_pairs`), and a link pager's jump works without JavaScript.
+
+  `total` + `per_page` add "41–60 of 359 jobs". `compact=True` is that range and two
+  arrows, for the top of a list. `keys=True` marks the pager whose Prev/Next the ← and →
+  keys press (`app.js::ltPagerKeyTarget`) — opt-in, so a page with several paged panes
+  never guesses which one the arrows mean.
+
+  The pager is never placed inside a `.lt-scroll` box; `tests/test_control_primitives.py`
+  enforces that, because otherwise you scroll fifty rows to reach "Next".
+#}
+
+{# One step: a page number, Prev or Next, in whichever verb the caller navigates with. #}
+{% macro _step(n, label, aria, disabled, url, qs, target, alpine, swap, mark='', current=false) -%}
+{%- if current -%}
+<span class="lt-btn lt-btn--sm lt-btn--active tabular-nums" aria-current="page">{{ label }}</span>
+{%- elif alpine -%}
+<button type="button" class="lt-btn lt-btn--sm tabular-nums" aria-label="{{ aria }}"{{ mark }}{% if disabled %} disabled{% endif %}
+        @click="page = {{ n }}; {{ alpine }}">{{ label | safe }}</button>
+{%- elif target -%}
+<button type="button" class="lt-btn lt-btn--sm tabular-nums" aria-label="{{ aria }}"{{ mark }}{% if disabled %} disabled{% endif %}
+        hx-get="{{ url }}?page={{ n }}{% if qs %}&amp;{{ qs }}{% endif %}"
+        {# A morph swap ALWAYS ships `hx-ext`, and the style is exactly `morph` — the
+           extension matches that string and nothing else, and htmx silently falls back to
+           `innerHTML` for any spelling it does not handle. Pinned by
+           tests/test_alpine_bindings_initialize.py::TestMorphSwapSpelling. #}
+        hx-target="{{ target }}" hx-swap="{{ swap }}"{% if swap == 'morph' %} hx-ext="alpine-morph"{% endif %}>{{ label | safe }}</button>
+{%- elif disabled -%}
+{# A disabled <a> is not a thing, so the dead end is a span wearing the same class. #}
+<span class="lt-btn lt-btn--sm" aria-label="{{ aria }}" aria-disabled="true"{{ mark }} style="opacity:.4">{{ label | safe }}</span>
+{%- else -%}
+<a href="{{ url }}?page={{ n }}{% if qs %}&amp;{{ qs }}{% endif %}" class="lt-btn lt-btn--sm tabular-nums" aria-label="{{ aria }}"{{ mark }}>{{ label | safe }}</a>
+{%- endif -%}
+{%- endmacro %}
+
+{% macro pager(page, total_pages, url='', qs='', target='', alpine='', swap='innerHTML', total=none, per_page=none, noun='', noun_one='', compact=false, keys=false) %}
+{% set page = [[page, 1] | max, [total_pages, 1] | max] | min %}
+{# Every link adds its own `page`, so any `page` in the caller's fragment has to go. #}
+{% set nav = dict(url=url, qs=qs_without_page(qs), target=target, alpine=alpine, swap=swap) %}
+{% set range_text -%}
+{%- if total is not none and per_page -%}
+{%- if total_pages > 1 -%}{{ (page - 1) * per_page + 1 }}–{{ [page * per_page, total] | min }} of {{ total }} {{ noun }}
+{%- else -%}{{ total }} {{ noun_one if total == 1 else noun }}{%- endif -%}
+{%- endif -%}
+{%- endset %}
+{% if compact %}
+{% if range_text or total_pages > 1 %}
+<div class="flex items-center gap-2" role="navigation" aria-label="Pagination, top of list"{% if keys %} data-pager-keys{% endif %}>
+  {% if range_text %}<span class="text-xs text-gray-500 tabular-nums">{{ range_text }}</span>{% endif %}
+  {% if total_pages > 1 %}
+  {{ _step(page - 1, '&lsaquo;', 'Previous page', page <= 1, mark=' data-pager-prev', **nav) }}
+  {{ _step(page + 1, '&rsaquo;', 'Next page', page >= total_pages, mark=' data-pager-next', **nav) }}
+  {% endif %}
+</div>
+{% endif %}
+{% elif total_pages > 1 %}
+<div class="flex flex-wrap items-center justify-center gap-2 mt-6" role="navigation" aria-label="Pagination"{% if keys %} data-pager-keys{% endif %}>
+  {% if range_text %}<span class="text-xs text-gray-500 tabular-nums mr-2">{{ range_text }}</span>{% endif %}
+  {{ _step(page - 1, '&larr; Prev', 'Previous page', page <= 1, mark=' data-pager-prev', **nav) }}
+  <span class="hidden sm:flex items-center gap-1">
+    {%- for n in page_window(page, total_pages) %}
+    {%- if n is none %}
+    <span class="px-1 text-xs text-gray-500" aria-hidden="true">…</span>
+    {%- else %}
+    {{ _step(n, n, 'Page ' ~ n, false, current=(n == page), **nav) }}
+    {%- endif %}
+    {%- endfor %}
+  </span>
+  <span class="sm:hidden text-xs text-gray-500 tabular-nums px-1">{{ page }} / {{ total_pages }}</span>
+  {{ _step(page + 1, 'Next &rarr;', 'Next page', page >= total_pages, mark=' data-pager-next', **nav) }}
+  {% if total_pages > page_window(1, total_pages) | length %}
+  {% if alpine %}
+  <form class="lt-ctl ml-2" @submit.prevent="page = Math.min({{ total_pages }}, Math.max(1, Math.floor(Number($event.target.elements.page.value)) || 1)); {{ alpine }}">
+  {% elif target %}
+  <form class="lt-ctl ml-2" hx-get="{{ url }}" hx-target="{{ target }}" hx-swap="{{ swap }}"{% if swap == 'morph' %} hx-ext="alpine-morph"{% endif %}>
+  {% else %}
+  <form class="lt-ctl ml-2" method="get" action="{{ url }}">
+  {% endif %}
+    {% if not alpine %}{% for name, value in qs_pairs(qs) %}<input type="hidden" name="{{ name }}" value="{{ value }}">{% endfor %}{% endif %}
+    <span class="lt-ctl__label">Go to</span>
+    <input type="number" name="page" min="1" max="{{ total_pages }}" value="{{ page }}" required inputmode="numeric"
+           class="lt-field lt-field--sm w-16 tabular-nums" aria-label="Go to page, 1 to {{ total_pages }}">
+  </form>
+  {% endif %}
+</div>
+{% endif %}
+{% endmacro %}

@@ -1,0 +1,62 @@
+name: Docs
+
+# The documentation website, built from docs/ and mkdocs.yml with Zensical.
+#
+# Built on every pull request that touches it, in strict mode, so a broken link or anchor
+# fails review instead of reaching the site. Published only for a release tag, or by hand:
+# the public site describes the latest release, never unreleased work on main.
+on:
+  pull_request:
+    paths: ["docs/**", "mkdocs.yml", ".github/workflows/docs.yml"]
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      # actions/checkout v4.2.2 — SHA-pinned like every other action in this repository.
+      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683
+
+      - name: Set up PDM (with Python)
+        # pdm-project/setup-pdm v4.5
+        uses: pdm-project/setup-pdm@973541a5febeafcfdadf8a51211435be6ecfd90f
+        with:
+          python-version: "3.14"
+          cache: true
+
+      # Only the docs group: the site needs Zensical, not the application.
+      - run: pdm install --no-default -G docs
+
+      - name: Build the site (warnings are errors)
+        run: ./logstotal docs:build
+
+      - name: Keep the built site
+        if: github.event_name != 'pull_request'
+        # actions/upload-pages-artifact v5.0.0
+        uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9
+        with:
+          path: site
+
+  deploy:
+    if: github.event_name != 'pull_request'
+    needs: build
+    runs-on: ubuntu-latest
+    # A second publish waits for the first rather than cancelling it half-way.
+    concurrency:
+      group: pages
+      cancel-in-progress: false
+    permissions:
+      pages: write
+      id-token: write
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        # actions/deploy-pages v5.0.1
+        uses: actions/deploy-pages@368f82528645a54fb793d4d04e342629a3f51346

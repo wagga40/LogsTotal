@@ -1,0 +1,5 @@
+FROM alpine:3.21
+COPY --from=dxflrs/garage:v2.2.0 /garage /garage
+COPY garage-entrypoint.sh /garage-entrypoint.sh
+RUN chmod +x /garage-entrypoint.sh
+ENTRYPOINT ["/bin/sh", "/garage-entrypoint.sh"]

@@ -1,0 +1,216 @@
+{% from "intel/partials/_tag_chip.html" import tag_classes, tag_dot_class %}
+{#
+  One row per distinct tag name. Every action here is instance-wide — that is the point of
+  the page — so each form posts back and swaps this whole region.
+
+  `#tag-manager-region` is its own hx-swap target, the same self-contained-region idiom as
+  `_case_notes.html` and `_comment_thread.html`.
+#}
+{# `with context`: the create form renders colour swatches from `tag_colors`. #}
+{% from "intel/partials/_tag_combobox.html" import tag_combobox with context %}
+<div id="tag-manager-region">
+  {#
+    Search/sort and create live in the partial, not the page, so every render of the
+    manager — the full page and the HTMX fragment the routes return — is the same control
+    set rather than a cut-down copy.
+  #}
+  <div class="lt-bar mb-4">
+    {#
+      Each control includes *only its sibling*, by id — never `closest .lt-bar`.
+
+      That selector resolved to the wrapper below, which also contains the create form and
+      its hidden `q`/`sort` carriers. htmx walks straight through a nested <form> when the
+      include target is not itself a form, so every request carried the value twice: once
+      live from the control, once stale from the hidden input. Starlette keeps the **last**
+      duplicate, and the stale one comes later in DOM order — so changing the sort re-sent
+      the sort you already had, and typing in the search box re-sent the empty one and the
+      outerHTML swap wiped what you had typed.
+    #}
+    <input type="text" id="tagmgr-q" name="q" value="{{ current_q }}" placeholder="Search tags…" class="lt-field flex-1 min-w-[220px]"
+           hx-get="/intel/tags" hx-trigger="keyup changed delay:300ms, search"
+           hx-target="#tag-manager-region" hx-swap="outerHTML" hx-include="#tagmgr-sort">
+    <select id="tagmgr-sort" name="sort" class="lt-field"
+            hx-get="/intel/tags" hx-trigger="change"
+            hx-target="#tag-manager-region" hx-swap="outerHTML" hx-include="#tagmgr-q">
+      <option value="count" {% if current_sort == 'count' %}selected{% endif %}>Most used</option>
+      <option value="name" {% if current_sort == 'name' %}selected{% endif %}>Name (A–Z)</option>
+      <option value="recent" {% if current_sort == 'recent' %}selected{% endif %}>Recently used</option>
+    </select>
+
+    <form class="lt-bar ml-auto" x-data="tagCombobox({ max: {{ tag_write_max }} })"
+          hx-post="/intel/tags" hx-target="#tag-manager-region" hx-swap="outerHTML"
+          @htmx:after-request="window.tagVocabChanged(); reset()">
+      <input type="hidden" name="q" value="{{ current_q }}">
+      <input type="hidden" name="sort" value="{{ current_sort }}">
+      {{ tag_combobox(width='w-72', placeholder='New tag name…') }}
+      {# Dead until the field holds something — see `isEmpty()` in app.js. #}
+      <button type="submit" class="lt-btn lt-btn--primary"
+              :disabled="isEmpty()" title="Type or pick a tag first">Create tag</button>
+    </form>
+  </div>
+
+  {#
+    Two tones, and the classes are literals in an if-chain because `bg-{{ tone }}-900/30`
+    renders unstyled in a production CSS build — the scanner never sees the assembled name.
+    A refusal in the success colour is a refusal nobody reads, and the link is part of it:
+    only an admin can switch a shared rule off (`_rule_can_edit`), so the notice has to say
+    where the switch is rather than leave a member at a dead end.
+  #}
+  {% if notice %}
+  {% if notice_tone == 'refused' %}
+  <div class="mb-3 text-xs text-amber-300 bg-amber-900/30 border border-amber-700/40 rounded-lg px-3 py-2">
+    {{ notice }}
+    <a href="/intel/rules" class="underline hover:text-amber-200">Rules &rarr;</a>
+  </div>
+  {% else %}
+  <div class="mb-3 text-xs text-green-300 bg-green-900/30 border border-green-700/40 rounded-lg px-3 py-2">{{ notice }}</div>
+  {% endif %}
+  {% endif %}
+
+  {% if tag_rows %}
+  {#
+    No `overflow-hidden`: it is an ancestor of every row, so it clips the tag combobox panel
+    and the colour popup. The panel is taller than a row, which means on the last row — and
+    on a one-tag table — the control opens into nothing and reads as broken. The corners are
+    rounded on the first and last children instead.
+  #}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl">
+    <div class="flex items-center gap-3 px-4 py-2 rounded-t-xl border-b border-gray-800 text-[10px] text-gray-500 uppercase tracking-wide">
+      <span class="flex-1">Tag</span>
+      <span class="w-20 text-right">Entities</span>
+      <span class="w-20 text-right">Jobs</span>
+      <span class="w-28 text-right">Last used</span>
+      <span class="w-64 text-right">Actions</span>
+    </div>
+    {% for row in tag_rows %}
+    <div class="group flex items-center gap-3 px-4 py-2 border-b border-gray-800/50 last:border-0 last:rounded-b-xl hover:bg-gray-800/40 transition"
+         x-data="{ editing: false, merging: false }">
+      <div class="flex-1 min-w-0 flex items-center gap-2">
+        {#
+          The chip is the row's identity, not a link: linking it to Intel would make Intel
+          the tag's home — and for a tag that lives only on jobs, land you on an empty entity
+          list. The two count cells are the pivots, and each is a link only when there is
+          something behind it.
+        #}
+        <span class="lt-chip {{ tag_classes(row.color) }}">{{ row.tag }}</span>
+        {% if row.is_builtin %}
+        {#
+          A shared rule *re-adds* this tag on every matching job, so renaming or deleting it
+          lasts until the next analysis. Saying so beats letting the reappearance read as a
+          bug.
+        #}
+        <a href="/intel/rules" class="text-[10px] text-yellow-500 hover:text-yellow-400" title="Added by a shared rule — delete it and the next matching job puts it back. Switch the rule off on Rules.">shared rule</a>
+        {% endif %}
+      </div>
+      {#
+        Both counts pivot to the list they describe — this page is the hub you leave *from*.
+        A zero is deliberately not a link: there is nothing on the other side of it, and a
+        link that lands you on an empty list is worse than a plain number.
+      #}
+      <span class="w-20 text-right text-sm">
+        {% if row.count %}<a href="/intel?tags={{ row.tag | urlencode }}" class="text-blue-400 hover:text-blue-300 tabular-nums">{{ row.count }}</a>
+        {% else %}<span class="text-gray-700 tabular-nums">0</span>{% endif %}
+      </span>
+      <span class="w-20 text-right text-sm">
+        {% if row.job_count %}<a href="/jobs?tags={{ row.tag | urlencode }}" class="text-blue-400 hover:text-blue-300 tabular-nums">{{ row.job_count }}</a>
+        {% else %}<span class="text-gray-700 tabular-nums">0</span>{% endif %}
+      </span>
+      <span class="w-28 text-right text-xs text-gray-600">
+        {% if row.last_used %}{{ row.last_used | time_ago }}{% elif row.count == 0 and row.job_count == 0 %}<span class="text-gray-700" title="Defined but not applied to anything yet">unused</span>{% else %}—{% endif %}
+      </span>
+
+      <div class="w-64 flex items-center justify-end gap-1">
+        <div x-show="!editing && !merging" class="flex items-center gap-1">
+          {#
+            Swatches, not a <select>, matching the create picker: a dropdown of colour
+            *names* makes you read the word and imagine the colour, which is the one thing
+            a palette control should never ask.
+          #}
+          {#
+            The trigger is a real `lt-btn lt-btn--sm`, not a bare 20px circle: it sits in a
+            row of 24px buttons and a loose circle did not line up with them. The colour is
+            a solid dot inside the button, which is also what makes twelve colours tellable
+            apart — the translucent chip backgrounds are not.
+          #}
+          <div class="relative" x-data="{ open: false }" @focusout="if (!$event.currentTarget.contains($event.relatedTarget)) open = false">
+            <button type="button" @click="open = !open" title="Recolour '{{ row.tag }}' everywhere"
+                    class="lt-btn lt-btn--sm" :class="open ? 'lt-btn--active' : ''">
+              <span class="w-3 h-3 rounded-full {{ tag_dot_class(row.color) }}"></span>
+            </button>
+            <div x-show="open" x-cloak
+                 class="lt-menu lt-menu--flush absolute right-0 top-full mt-1 p-2 w-[8.5rem]">
+              <form hx-post="/intel/tags/recolor" hx-target="#tag-manager-region" hx-swap="outerHTML"
+                    class="grid grid-cols-6 gap-1.5">
+                <input type="hidden" name="q" value="{{ current_q }}">
+                <input type="hidden" name="tag" value="{{ row.tag }}">
+                <input type="hidden" name="sort" value="{{ current_sort }}">
+                {% for c in tag_colors %}
+                <button type="submit" name="color" value="{{ c }}" title="{{ c }}"
+                        class="w-4 h-4 rounded-full {{ tag_dot_class(c) }} hover:brightness-125 {% if c == row.color %}ring-2 ring-offset-1 ring-offset-gray-900 ring-white{% endif %}"></button>
+                {% endfor %}
+              </form>
+            </div>
+          </div>
+          <button type="button" @click="editing = true" class="lt-btn lt-btn--sm">Rename</button>
+          {#
+            Refused up front, not after a target has been typed. A shared rule re-adds this
+            name on the next matching job, so folding it away splits the tag in two and
+            folding something into it labels entities the rule never matched — the route
+            refuses both, and a control that only fails on submit is a control that lies.
+          #}
+          {% if row.is_builtin %}
+          <button type="button" class="lt-btn lt-btn--sm" disabled
+                  title="A shared rule re-adds {{ row.tag }}, so it cannot be folded into another tag — or another tag into it. Switch the rule off on Rules first.">Merge</button>
+          {% else %}
+          <button type="button" @click="merging = true" class="lt-btn lt-btn--sm">Merge</button>
+          {% endif %}
+          <button type="button" class="lt-btn lt-btn--sm lt-btn--danger"
+                  data-confirm-title="Remove this tag everywhere?"
+                  data-confirm-message="'{{ row.tag }}' will be removed from {{ row.count }} entit{{ 'y' if row.count == 1 else 'ies' }} and {{ row.job_count }} job{{ '' if row.job_count == 1 else 's' }}. This cannot be undone."
+                  data-confirm-accept="Remove"
+                  hx-post="/intel/tags/delete"
+                  hx-vals='{"tag": {{ row.tag | tojson }}, "q": {{ current_q | tojson }}, "sort": {{ current_sort | tojson }}}'
+                  hx-target="#tag-manager-region" hx-swap="outerHTML">Delete</button>
+        </div>
+
+        <form x-show="editing" x-cloak class="flex items-center gap-1"
+              x-data='tagCombobox({ value: {{ row.tag | tojson }}, color: {{ row.color | tojson }} })'
+              @htmx:after-request="window.tagVocabChanged()"
+              hx-post="/intel/tags/rename" hx-target="#tag-manager-region" hx-swap="outerHTML">
+          <input type="hidden" name="q" value="{{ current_q }}">
+          <input type="hidden" name="tag" value="{{ row.tag }}">
+          <input type="hidden" name="sort" value="{{ current_sort }}">
+          {{ tag_combobox(name='new_tag', color_name='_rename_color_unused', size='lt-field--sm', width='w-56', placeholder='new name…') }}
+          <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary"
+                  :disabled="isEmpty()" title="Type the new name first">Save</button>
+          <button type="button" @click="editing = false" class="lt-btn lt-btn--sm">Cancel</button>
+        </form>
+
+        <form x-show="merging" x-cloak class="flex items-center gap-1"
+              x-data="tagCombobox()"
+              hx-post="/intel/tags/merge" hx-target="#tag-manager-region" hx-swap="outerHTML"
+              @htmx:after-request="reset()">
+          <input type="hidden" name="q" value="{{ current_q }}">
+          <input type="hidden" name="tag" value="{{ row.tag }}">
+          <input type="hidden" name="sort" value="{{ current_sort }}">
+          {{ tag_combobox(name='into', color_name='_merge_color_unused', size='lt-field--sm', width='w-56', placeholder='merge into…') }}
+          <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary"
+                  :disabled="isEmpty()" title="Pick the tag to merge into first">Merge</button>
+          <button type="button" @click="merging = false" class="lt-btn lt-btn--sm">Cancel</button>
+        </form>
+      </div>
+    </div>
+    {% endfor %}
+  </div>
+  <p class="mt-3 text-xs text-gray-600">
+    Showing {{ tag_rows | length }} of {{ tag_total }} tag{{ '' if tag_total == 1 else 's' }}.
+    Every action on this page applies to all entities carrying the tag.
+  </p>
+
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-10 text-center">
+    <p class="text-sm text-gray-400">{% if current_q %}No tags match "{{ current_q }}".{% else %}No tags yet.{% endif %}</p>
+    <p class="text-xs text-gray-600 mt-1">Tag an entity from its detail page, or select rows on the dashboard and tag them in bulk.</p>
+  </div>
+  {% endif %}
+</div>

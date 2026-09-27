@@ -1,0 +1,56 @@
+{% from "intel/partials/_tag_chip.html" import tag_chip %}
+{# `with context`: the macro renders the colour swatches from `tag_colors`, and a Jinja
+   macro cannot see the caller's context without it — the loop would silently produce
+   nothing, which is exactly how colour picking broke on the entity page. #}
+{% from "intel/partials/_tag_combobox.html" import tag_combobox with context %}
+{#
+  Tag region for the job header. A structural twin of
+  `intel/partials/_entity_header_tags.html`, with three differences worth knowing:
+
+  * chips link to `/jobs?tags=…`, not `/intel?tags=…` — the pivot stays on the surface you
+    are already reading;
+  * the whole region is member-gated by the caller, because `/jobs` is anonymous-viewable
+    and `tagCombobox()` fetches `/intel/tags.json`, which is member+. Rendered for a
+    `role=user` it would be a silent 403 and a permanently empty picker;
+  * it must live in the header card, **never** inside `#job-status-region` — that region
+    morph-swaps every 3s while a job runs and would wipe a half-typed tag.
+
+  The whole div is the HTMX swap target for the add and remove routes (outerHTML), so it
+  stays self-contained. `entityTagInput()` and `tagCombobox()` come from /static/app.js
+  rather than an inline <script>: this markup arrives by swap, and a factory defined in
+  swapped content is hostage to script/init ordering.
+#}
+<div id="job-tags-region" class="flex flex-wrap items-center gap-1.5"
+     x-data="entityTagInput()">
+  {% for t in tags %}
+  <span class="inline-flex items-center gap-1">
+    {{ tag_chip(t.tag, t.color, href='/jobs?tags=' ~ (t.tag | urlencode)) }}
+    <button hx-post="/jobs/{{ job.id }}/tags/remove"
+            hx-vals='{"tag": {{ t.tag | tojson }}}'
+            hx-target="#job-tags-region"
+            hx-swap="outerHTML"
+            class="text-xs text-gray-600 hover:text-gray-300 leading-none"
+            title="Remove tag">&times;</button>
+  </span>
+  {% endfor %}
+
+  <button x-show="!adding"
+          @click="open()"
+          class="lt-chip lt-chip--btn border-dashed border-gray-700 text-gray-500 hover:text-gray-300 hover:border-gray-500">
+    + tag
+  </button>
+
+  <form x-show="adding" x-cloak
+        x-data="tagCombobox({ max: {{ tag_write_max }} })"
+        hx-post="/jobs/{{ job.id }}/tags"
+        hx-target="#job-tags-region"
+        hx-swap="outerHTML"
+        @htmx:after-request="window.tagVocabChanged(); cancel(); reset()"
+        @keydown.window.escape="cancel()"
+        class="inline-flex items-center gap-1">
+    {{ tag_combobox(size='lt-field--sm', width='w-80', placeholder='Search or create a tag…') }}
+    <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary"
+            :disabled="isEmpty()" title="Type or pick a tag first">Add</button>
+    <button type="button" @click="cancel()" class="lt-btn lt-btn--sm lt-btn--ghost">&times;</button>
+  </form>
+</div>

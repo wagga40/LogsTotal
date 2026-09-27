@@ -1,0 +1,54 @@
+{#- Shared entity-type badge + label macros.
+    Usage: {% from "intel/partials/_entity_type_badge.html" import type_badge, type_label %}
+           {{ type_badge(entity.entity_type) }}            — small table pill
+           {{ type_badge(entity.entity_type, full=true) }} — larger pill, full label
+           {{ type_label(entity.entity_type, full=true) }} — plain text label
+    Single source of truth for the per-type pill (was copy-pasted in 4 templates). -#}
+{% set _type_badge_classes = {
+  'user': 'bg-blue-900/50 text-blue-300 border-blue-700/40',
+  'computer': 'bg-purple-900/50 text-purple-300 border-purple-700/40',
+  'ip_address': 'bg-green-900/50 text-green-300 border-green-700/40',
+  'hash': 'bg-yellow-900/50 text-yellow-300 border-yellow-700/40',
+  'executable': 'bg-orange-900/50 text-orange-300 border-orange-700/40',
+  'domain': 'bg-cyan-900/50 text-cyan-300 border-cyan-700/40',
+  'cmdline_file': 'bg-rose-900/50 text-rose-300 border-rose-700/40',
+  'service': 'bg-teal-900/50 text-teal-300 border-teal-700/40',
+  'task': 'bg-indigo-900/50 text-indigo-300 border-indigo-700/40',
+} %}
+{% set _type_short_labels = {
+  'user': 'User', 'computer': 'Computer', 'ip_address': 'IP',
+  'hash': 'Hash', 'executable': 'Exec', 'domain': 'Domain',
+  'cmdline_file': 'Cmdline', 'service': 'Service', 'task': 'Task',
+} %}
+{% set _type_full_labels = {
+  'user': 'User', 'computer': 'Computer', 'ip_address': 'IP Address',
+  'hash': 'Hash', 'executable': 'Executable', 'domain': 'Domain',
+  'cmdline_file': 'Cmdline File', 'service': 'Service', 'task': 'Scheduled Task',
+} %}
+{% macro type_badge_classes(entity_type) -%}
+{{ _type_badge_classes.get(entity_type, 'bg-gray-800 text-gray-400 border-gray-700') }}
+{%- endmacro %}
+{% macro type_label(entity_type, full=false) -%}
+{{ (_type_full_labels if full else _type_short_labels).get(entity_type, entity_type) }}
+{%- endmacro %}
+{% macro type_badge(entity_type, full=false) -%}
+<span class="inline-block {{ 'text-xs px-3 py-1' if full else 'text-[10px] px-2 py-0.5' }} rounded-full border font-medium whitespace-nowrap {{ _type_badge_classes.get(entity_type, 'bg-gray-800 text-gray-400 border-gray-700') }}">{{ type_label(entity_type, full) }}</span>
+{%- endmacro %}
+{#- A pick-your-types control, for the two admin forms that ask the question: the
+    enrichment service editor and the watch-rule editor. Both used a free-text CSV box that
+    silently dropped anything it did not recognise, so a typo cost you the whole form and
+    said only "at least one valid entity_type is required".
+
+    Plain checkboxes, no Alpine — both pages are ordinary form posts with a full reload, and
+    a repeated `name` is exactly the wire shape `constants.parse_entity_types` reads. -#}
+{% macro entity_type_checkboxes(all_types, selected, name='entity_types') -%}
+<div class="flex flex-wrap gap-x-4 gap-y-1.5">
+  {% for t in all_types %}
+  <label class="inline-flex items-center gap-1.5 cursor-pointer">
+    <input type="checkbox" name="{{ name }}" value="{{ t }}"{% if t in selected %} checked{% endif %}
+           class="lt-check">
+    {{ type_badge(t) }}
+  </label>
+  {% endfor %}
+</div>
+{%- endmacro %}

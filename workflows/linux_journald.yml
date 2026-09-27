@@ -1,0 +1,30 @@
+name: "Linux Journald Analysis"
+description: "Run Zircolite against a journald JSON export, with journald→sysmon field aliases"
+is_default: false
+log_types:
+  - journald
+
+# NOTE ON COVERAGE (re-measured 2026-08-05):
+# ChopChopGo's journald target reads the LIVE systemd journal only (it rejects -file),
+# so it cannot process an uploaded export and is not run here.
+#
+# Zircolite parses a `journalctl -o json` export fine via -j, but the compiled Linux
+# SIGMA ruleset keys on sysmon/auditd field names (CommandLine, Image, comm), not
+# journald's (_CMDLINE, _EXE, _COMM). Without a mapping almost nothing fired: measured
+# 0 detections on an 8-event sample. `options.config` below passes a field-alias config
+# that makes the same ruleset see those fields — same sample, same ruleset: 6 detections
+# across 7 events.
+#
+# Coverage is still narrower than for EVTX: the ruleset has no journald-specific rules,
+# only process/command-shaped ones that the aliases now reach. Rules keying on fields a
+# journald export does not carry at all (parent process, hashes, network tuples) cannot
+# match, so treat this as good-not-complete.
+tasks:
+  - tool: zircolite
+    # Pinned by digest — see docs/runbooks/detection-tools.md#updating-rule-sets to move it.
+    docker_image: wagga40/zircolite:4.0.0@sha256:552f1900fb5533a58fdad1ae61f46c09018271787d5d7a2d08cb318d3221461f
+    rules_path: tools/zircolite/rules/rules_linux.json
+    timeout: 300
+    options:
+      # Resolved beside rules_path — the directory the runner bind-mounts.
+      config: zircolite_journald.yaml

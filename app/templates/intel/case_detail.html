@@ -1,0 +1,468 @@
+{% extends "base.html" %}
+{% from "partials/_tab_badge.html" import tab_badge, tab_icon %}
+{% block title %}{{ case.name }} – Case – LogsTotal{% endblock %}
+
+{% set status_meta = {
+  'open': {'label': 'Open', 'classes': 'bg-blue-900/50 text-blue-300 border-blue-700/40'},
+  'monitoring': {'label': 'Monitoring', 'classes': 'bg-amber-900/50 text-amber-300 border-amber-700/40'},
+  'closed': {'label': 'Closed', 'classes': 'bg-gray-800 text-gray-400 border-gray-700/40'},
+} %}
+
+{% block content %}
+<div class="max-w-7xl mx-auto">
+
+  <!-- Breadcrumb -->
+  <div class="flex items-center gap-2 text-sm text-gray-500 mb-6">
+    <a href="/intel/cases" class="hover:text-gray-300 transition">Cases</a>
+    <span class="text-gray-700">/</span>
+    <span class="text-white truncate max-w-[400px]">{{ case.name }}</span>
+  </div>
+
+  <!-- Header -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    <div class="flex items-start justify-between gap-4">
+      <div class="flex-1 min-w-0">
+        <div class="flex items-center gap-3 mb-2">
+          <h1 class="text-xl font-bold text-white">{{ case.name }}</h1>
+          <span class="text-xs px-2 py-0.5 rounded-full border font-medium {{ status_meta.get(case.status, status_meta.open).classes }}">
+            {{ status_meta.get(case.status, {'label': case.status}).label }}
+          </span>
+          {% if case.is_shared %}
+          <span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-900/40 text-emerald-300 border border-emerald-700/40">SHARED</span>
+          {% endif %}
+        </div>
+        <div class="flex flex-wrap gap-4 text-xs text-gray-500">
+          <span {% if case.created_at %}title="{{ case.created_at.strftime('%Y-%m-%d %H:%M UTC') }}"{% endif %}>created {{ case.created_at | time_ago }}</span>
+          <span {% if case.updated_at %}title="{{ case.updated_at.strftime('%Y-%m-%d %H:%M UTC') }}"{% endif %}>updated {{ case.updated_at | time_ago }}</span>
+          {% if case.severity %}<span>severity {{ case.severity }}</span>{% endif %}
+          {% if case.closed_at %}<span title="{{ case.closed_at.strftime('%Y-%m-%d %H:%M UTC') }}">closed {{ case.closed_at | time_ago }}</span>{% endif %}
+        </div>
+      </div>
+      <div class="flex items-center gap-2 flex-shrink-0">
+        {# The dialogs live outside the tab wrapper, so these work from any tab. #}
+        <button onclick="document.getElementById('add-job-dialog').showModal()"
+                class="lt-btn">+ Jobs</button>
+        <button onclick="document.getElementById('add-entity-dialog').showModal()"
+                class="lt-btn">+ Entities</button>
+        <div class="relative" x-data="{ exportOpen: false }">
+          <button type="button" @click="exportOpen = !exportOpen"
+                  :class="exportOpen ? 'border-blue-700/60 bg-blue-900/30 text-blue-300' : 'border-gray-700 bg-gray-800 text-gray-300 hover:text-white hover:border-gray-500'"
+                  class="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-xs transition">
+            <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            Export <span class="opacity-60">&#9662;</span>
+          </button>
+          <div x-show="exportOpen" x-cloak @click.outside="exportOpen = false"
+               class="lt-menu absolute right-0 mt-2 w-60">
+            <a href="/intel/cases/{{ case.id }}/stix" target="_blank" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">STIX 2.1 bundle</a>
+            <a href="/intel/cases/{{ case.id }}/misp" target="_blank" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">MISP event</a>
+            <button type="button" @click="exportOpen = false; copyCaseIocPack('/intel/cases/{{ case.id }}/ioc-pack')"
+                    class="block w-full text-left px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">Copy IOC pack</button>
+            <a href="/intel/cases/{{ case.id }}/graph.graphml" class="block px-3 py-1.5 text-xs text-gray-300 hover:bg-gray-800 hover:text-white transition">Graph (GraphML)</a>
+          </div>
+        </div>
+        {% if is_owner %}
+        <button onclick="document.getElementById('case-settings-dialog').showModal()"
+                class="lt-btn">
+          Settings
+        </button>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+
+  <!-- Tabbed workspace -->
+  <div x-data='resourceTabs({{ tabs | tojson }})'>
+
+    <!-- Tab strip -->
+    <div class="flex flex-wrap border-b border-gray-800 mb-6 gap-1">
+      {% for tab in tabs %}
+      <button @click="select('{{ tab.key }}')"
+              :class="tab === '{{ tab.key }}' ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'"
+              class="px-4 py-2 -mb-px border-b-2 text-sm font-medium transition flex items-center gap-2">
+        {{ tab_icon(tab) }} {{ tab.label }} {{ tab_badge(tab) }}
+      </button>
+      {% endfor %}
+    </div>
+
+    <!-- Overview (eager) -->
+    <div x-show="tab === 'overview'" x-cloak class="space-y-6">
+      {% if case.summary %}
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        <h2 class="text-sm font-medium text-gray-400 mb-2">Summary</h2>
+        <p class="text-sm text-gray-300 whitespace-pre-wrap">{{ case.summary }}</p>
+      </div>
+      {% endif %}
+      {# The running narrative, next to the fixed summary it continues. #}
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+        {% include "intel/partials/_case_notes.html" %}
+      </div>
+      <div id="case-summary-region"
+           hx-get="/intel/cases/{{ case.id }}/summary-partial"
+           hx-trigger="load"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading findings roll-up…
+        </div>
+      </div>
+      <div id="case-pivots-region"
+           hx-get="/intel/cases/{{ case.id }}/pivots-partial"
+           hx-trigger="load"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading pivot suggestions…
+        </div>
+      </div>
+    </div>
+
+    {% if site_settings.show_ai_analysis %}
+    <div x-show="tab === 'ai'" x-cloak>
+      <div hx-get="/intel/cases/{{ case.id }}/ai-analysis-partial"
+           hx-trigger="loadAiAnalysis from:body once" hx-swap="innerHTML">
+        <p class="py-12 text-center text-sm text-gray-500">Loading AI analysis…</p>
+      </div>
+    </div>
+    {% endif %}
+
+    <!-- Timeline (lazy via HTMX; loads on first activation of the tab) -->
+    <div x-show="tab === 'timeline'" x-cloak>
+      <div id="case-timeline-region"
+           hx-get="/intel/cases/{{ case.id }}/timeline-partial"
+           hx-trigger="loadTimeline from:body once"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading attack timeline…
+        </div>
+      </div>
+    </div>
+
+    {#
+      Entities and Jobs: static card, paged region inside.
+
+      The heading and "+ Add" sit OUTSIDE the swapped region on purpose — a page change
+      must not re-render the button that opens the dialog. The list itself is capped in
+      height and the pager sits below it, outside the scroll box, or you would scroll fifty
+      rows to reach "Next".
+    #}
+    <!-- Entities -->
+    <div x-show="tab === 'entities'" x-cloak>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+          <h2 class="text-sm font-medium text-gray-300">Entities <span class="text-gray-600">({{ entity_total }})</span></h2>
+          <button onclick="document.getElementById('add-entity-dialog').showModal()"
+                  class="lt-btn">+ Add</button>
+        </div>
+        <div id="case-entities-region"
+             hx-get="/intel/cases/{{ case.id }}/entities-partial"
+             hx-trigger="loadEntities from:body once"
+             hx-swap="innerHTML">
+          <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+            <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+            Loading entities…
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Jobs -->
+    <div x-show="tab === 'jobs'" x-cloak>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+        <div class="flex items-center justify-between px-5 py-3 border-b border-gray-800">
+          <h2 class="text-sm font-medium text-gray-300">Jobs <span class="text-gray-600">({{ job_total }})</span></h2>
+          <button onclick="document.getElementById('add-job-dialog').showModal()"
+                  class="lt-btn">+ Add</button>
+        </div>
+        <div id="case-jobs-region"
+             hx-get="/intel/cases/{{ case.id }}/jobs-partial"
+             hx-trigger="loadJobs from:body once"
+             hx-swap="innerHTML">
+          <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+            <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+            Loading jobs…
+          </div>
+        </div>
+      </div>
+    </div>
+
+    {# Processes: pick a job, get its process tree; an entity anchor then narrows it. The
+       whole partial (form included) swaps back into this region on every change — see
+       `_case_processes.html`, which mirrors the Timeline tab's shape. #}
+    <div x-show="tab === 'processes'" x-cloak>
+      <div id="case-processes-region"
+           hx-get="/intel/cases/{{ case.id }}/process-tree-partial"
+           hx-trigger="loadProcesses from:body once"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading process tree…
+        </div>
+      </div>
+    </div>
+
+    <!-- Graph (lazy via HTMX; only meaningful once the case has entities) -->
+    {# Gated on the COUNT, not on a row list: the Entities tab is lazy and paged, so the page
+       carries no row list, and whether the graph is worth drawing does not depend on
+       whether page 1 was loaded. #}
+    <div x-show="tab === 'graph'" x-cloak>
+      {% if entity_total %}
+      <div id="case-graph-region"
+           hx-get="/intel/cases/{{ case.id }}/graph-partial"
+           hx-trigger="loadGraph from:body once"
+           hx-swap="innerHTML">
+        <div class="flex items-center justify-center py-12 text-gray-500 text-sm">
+          <svg class="animate-spin h-4 w-4 mr-2" viewBox="0 0 24 24"><circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4" fill="none"/><path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.4 0 0 5.4 0 12h4z"/></svg>
+          Loading graph…
+        </div>
+      </div>
+      {% else %}
+      <p class="text-sm text-gray-500 text-center py-12">No entities to graph yet.</p>
+      {% endif %}
+    </div>
+
+    {#
+      Discussions: the thread only. The investigation narrative lives on Overview, beside
+      the summary it continues — same split as the entity page, and last in the strip for
+      the same reason.
+
+      Lazy on first activation rather than `hx-trigger="load"`: `x-show` only toggles CSS,
+      so `load` would fetch the thread on every case page view whether or not anyone opened
+      the tab.
+    #}
+    <div x-show="tab === 'discussion'" x-cloak>
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-6"
+           hx-get="/comments/case/{{ case.id }}"
+           hx-trigger="loadComments from:body once"
+           hx-swap="innerHTML">
+        <p class="text-sm text-gray-500">Loading discussion…</p>
+      </div>
+    </div>
+
+  </div>
+
+</div>
+
+<!-- Add Entity dialog: browse-or-search type-ahead, multi-select -->
+<dialog id="add-entity-dialog" class="rounded-xl bg-gray-900 border border-gray-800 p-0 backdrop:bg-gray-950/70">
+  <form method="POST" action="/intel/cases/{{ case.id }}/entities/bulk" class="w-[28rem] p-6 space-y-3" x-data="casePicker('entity')" x-ref="form" @submit="onSubmit($event)">
+    <h3 class="text-sm font-semibold text-white">Add entities</h3>
+    <input type="text" x-model="q" @input.debounce.300ms="search($refs.resultsBox)" @focus="search($refs.resultsBox)" autocomplete="off" autofocus
+           placeholder="Search by value, or leave empty to browse…"
+           class="lt-field lt-field--lg w-full">
+    <div x-ref="resultsBox" class="lt-scroll lt-scroll--sm divide-y divide-gray-800 border border-gray-800 rounded hidden"></div>
+    {% include "intel/partials/_picker_selection.html" %}
+    <input type="text" name="note" maxlength="500" placeholder="Why is this here? (optional)"
+           class="lt-field lt-field--lg w-full">
+    <div class="flex justify-end gap-2 pt-2">
+      <button type="button" onclick="this.closest('dialog').close()" class="lt-btn">Cancel</button>
+      <button type="submit" :disabled="!selected.length"
+              class="lt-btn lt-btn--primary">
+        Add <span x-show="selected.length" x-text="selected.length"></span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+<!-- Add Job dialog: browse-or-search type-ahead (filename or numeric id), multi-select -->
+<dialog id="add-job-dialog" class="rounded-xl bg-gray-900 border border-gray-800 p-0 backdrop:bg-gray-950/70">
+  <form method="POST" action="/intel/cases/{{ case.id }}/jobs/bulk" class="w-[28rem] p-6 space-y-3" x-data="casePicker('job')" x-ref="form" @submit="onSubmit($event)">
+    <h3 class="text-sm font-semibold text-white">Add jobs</h3>
+    <input type="text" x-model="q" @input.debounce.300ms="search($refs.resultsBox)" @focus="search($refs.resultsBox)" autocomplete="off" autofocus
+           placeholder="Search by filename or job ID, or leave empty to browse…"
+           class="lt-field lt-field--lg w-full">
+    <div x-ref="resultsBox" class="lt-scroll lt-scroll--sm divide-y divide-gray-800 border border-gray-800 rounded hidden"></div>
+    {% include "intel/partials/_picker_selection.html" %}
+    <input type="text" name="note" maxlength="500" placeholder="Why is this here? (optional)"
+           class="lt-field lt-field--lg w-full">
+    <label class="flex items-center gap-2 text-sm text-gray-300">
+      {# The hidden 0 goes first: an unticked box posts nothing, and the route defaults to 1. #}
+      <input type="hidden" name="include_entities" value="0">
+      <input type="checkbox" name="include_entities" value="1" checked class="lt-check">
+      Also add each job's entities
+    </label>
+    <div class="flex justify-end gap-2 pt-2">
+      <button type="button" onclick="this.closest('dialog').close()" class="lt-btn">Cancel</button>
+      <button type="submit" :disabled="!selected.length"
+              class="lt-btn lt-btn--primary">
+        Add <span x-show="selected.length" x-text="selected.length"></span>
+      </button>
+    </div>
+  </form>
+</dialog>
+
+{% if is_owner %}
+<dialog id="case-settings-dialog" class="rounded-xl bg-gray-900 border border-gray-800 p-0 backdrop:bg-gray-950/70">
+  <div class="w-[26rem] p-6 space-y-4">
+    <h3 class="text-base font-semibold text-white">Case settings</h3>
+    <form method="POST" action="/intel/cases/{{ case.id }}/edit" class="space-y-3 border-b border-gray-800 pb-4">
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Name</label>
+        <input type="text" name="name" required maxlength="200" value="{{ case.name }}"
+               class="lt-field lt-field--lg w-full">
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Summary</label>
+        <textarea name="summary" rows="3" maxlength="8000"
+                  class="lt-field lt-field--lg w-full">{{ case.summary or '' }}</textarea>
+      </div>
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Severity</label>
+        <select name="severity" class="lt-field lt-field--lg w-full">
+          <option value="">—</option>
+          <option value="critical" {% if case.severity == 'critical' %}selected{% endif %}>Critical</option>
+          <option value="high" {% if case.severity == 'high' %}selected{% endif %}>High</option>
+          <option value="medium" {% if case.severity == 'medium' %}selected{% endif %}>Medium</option>
+          <option value="low" {% if case.severity == 'low' %}selected{% endif %}>Low</option>
+          <option value="informational" {% if case.severity == 'informational' %}selected{% endif %}>Informational</option>
+        </select>
+      </div>
+      <div class="flex justify-end">
+        <button type="submit" class="lt-btn lt-btn--primary">Save details</button>
+      </div>
+    </form>
+    <form method="POST" action="/intel/cases/{{ case.id }}/status" class="space-y-3">
+      <div>
+        <label class="block text-xs text-gray-400 mb-1">Status</label>
+        <select name="status" class="lt-field lt-field--lg w-full">
+          {% for s in valid_statuses %}
+          <option value="{{ s }}" {% if case.status == s %}selected{% endif %}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <label class="flex items-center gap-2 text-sm text-gray-300">
+        <input type="checkbox" name="is_shared" value="1" {% if case.is_shared %}checked{% endif %} class="lt-check">
+        Shared with all members
+      </label>
+      <div class="flex justify-end gap-2">
+        <button type="button" onclick="this.closest('dialog').close()" class="lt-btn">Cancel</button>
+        <button type="submit" class="lt-btn lt-btn--primary">Save</button>
+      </div>
+    </form>
+    <div class="border-t border-gray-800 pt-3">
+      <form method="POST" action="/intel/cases/{{ case.id }}/delete"
+            data-confirm-title="Delete case"
+            data-confirm-message="Permanently delete this case and all its entity/job links?"
+            data-confirm-accept="Delete">
+        <button type="submit" class="text-xs text-red-400 hover:text-red-300">Delete case</button>
+      </form>
+    </div>
+  </div>
+</dialog>
+{% endif %}
+
+<script>
+  function copyCaseIocPack(url) {
+    fetch(url, { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : Promise.reject(r))
+      .then(pack => ltCopy(JSON.stringify(pack, null, 2)))
+      .then(() => {
+        const f = document.getElementById('flash');
+        if (f) {
+          f.innerHTML = '<div class="bg-emerald-900/40 border border-emerald-700/50 text-emerald-300 px-3 py-2 rounded text-sm">IOC pack copied to clipboard.</div>';
+          setTimeout(() => { f.innerHTML = ''; }, 3000);
+        }
+      })
+      .catch(() => {
+        const f = document.getElementById('flash');
+        if (f) {
+          f.innerHTML = '<div class="bg-red-900/40 border border-red-700/50 text-red-300 px-3 py-2 rounded text-sm">Failed to copy IOC pack.</div>';
+          setTimeout(() => { f.innerHTML = ''; }, 3000);
+        }
+      });
+  }
+
+  // Alpine component backing the entity/job search pickers in the "Add" dialogs.
+  // Result rows are DOM-built (createElement + textContent) rather than
+  // string-concatenated into innerHTML, since entity values / filenames are
+  // member-controlled. Pinned by
+  // tests/test_security_hardening.py::test_case_detail_pickers_use_dom_building.
+  function casePicker(kind) {
+    return {
+      q: '',
+      selected: [],
+      search(box) {
+        const query = this.q.trim();
+        const isNumeric = /^\d+$/.test(query);
+        // Empty query browses; 1 char waits (answering mid-keystroke with an unfiltered
+        // list is worse than answering with nothing); 2+ searches. Mirrors the server.
+        if (query.length > 0 && query.length < 2 && !isNumeric) {
+          box.innerHTML = ''; box.classList.add('hidden'); return;
+        }
+        const url = (kind === 'entity' ? '/intel/cases/pickers/entities.json' : '/intel/cases/pickers/jobs.json') + '?q=' + encodeURIComponent(query);
+        fetch(url, { credentials: 'same-origin' })
+          .then(r => r.ok ? r.json() : [])
+          .then(items => this.renderResults(box, items))
+          .catch(() => { box.innerHTML = ''; box.classList.add('hidden'); });
+      },
+      renderResults(box, items) {
+        box.innerHTML = '';
+        if (!items.length) { box.classList.add('hidden'); return; }
+        items.forEach(item => {
+          const row = document.createElement('button');
+          row.type = 'button';
+          row.className = 'w-full text-left px-3 py-2 text-sm hover:bg-gray-800/60 transition flex items-center gap-2';
+          if (kind === 'entity') {
+            const typeSpan = document.createElement('span');
+            typeSpan.className = 'text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 flex-shrink-0';
+            typeSpan.textContent = item.entity_type;
+            const valueSpan = document.createElement('span');
+            valueSpan.className = 'font-mono text-gray-200 truncate';
+            valueSpan.textContent = item.value;
+            row.appendChild(typeSpan);
+            row.appendChild(valueSpan);
+            row.addEventListener('click', () => this.choose(item.id, item.value, box));
+          } else {
+            const idSpan = document.createElement('span');
+            idSpan.className = 'text-xs font-mono text-gray-500 flex-shrink-0';
+            idSpan.textContent = '#' + item.id;
+            const nameSpan = document.createElement('span');
+            nameSpan.className = 'text-gray-200 truncate flex-1';
+            nameSpan.textContent = item.filename;
+            const dateSpan = document.createElement('span');
+            dateSpan.className = 'text-xs text-gray-600 flex-shrink-0';
+            dateSpan.textContent = item.created_at;
+            row.appendChild(idSpan);
+            row.appendChild(nameSpan);
+            row.appendChild(dateSpan);
+            row.addEventListener('click', () => this.choose(item.id, item.filename, box));
+          }
+          box.appendChild(row);
+        });
+        box.classList.remove('hidden');
+      },
+      choose(id, label, box) {
+        if (!this.selected.some(s => s.id === id)) this.selected.push({ id: id, label: label });
+        this.q = '';
+        box.innerHTML = '';
+        box.classList.add('hidden');
+        this.syncHidden();
+      },
+      remove(id) {
+        this.selected = this.selected.filter(s => s.id !== id);
+        this.syncHidden();
+      },
+      syncHidden() {
+        // Rebuild the id inputs from scratch via the DOM: the values are member-controlled,
+        // so nothing here goes through innerHTML. Pinned by
+        // tests/test_security_hardening.py::test_case_detail_pickers_use_dom_building.
+        const form = this.$refs.form;
+        const name = kind === 'entity' ? 'entity_ids' : 'job_ids';
+        form.querySelectorAll('input[type="hidden"][name="' + name + '"]').forEach(el => el.remove());
+        this.selected.forEach(item => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = name;
+          input.value = item.id;
+          form.appendChild(input);
+        });
+      },
+      onSubmit(event) {
+        // Nothing picked yet — block the submit rather than posting an empty id list.
+        if (!this.selected.length) event.preventDefault();
+      }
+    };
+  }
+
+</script>
+{% endblock %}

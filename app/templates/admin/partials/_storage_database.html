@@ -1,0 +1,45 @@
+{# The database's own accounting, never SUM(LENGTH(col)): on PostgreSQL that forces a TOAST
+   detoast per row across the largest table, ignores indexes, and counts characters rather
+   than bytes. Lazy-loaded because neither backend's answer belongs on the critical path of
+   a page an admin opens to check free space. #}
+<div>
+  {% if footprint.error %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-6">
+    <p class="text-sm text-red-400">Could not measure the database: {{ footprint.error }}</p>
+  </div>
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <div class="px-4 py-3 border-b border-gray-800 flex items-baseline justify-between">
+      <span class="text-sm text-gray-300">Total ({{ footprint.backend }})</span>
+      <span class="font-mono text-sm">{{ footprint.total_bytes | humanbytes }}</span>
+    </div>
+    {% if footprint.tables %}
+    <div class="lt-scroll lt-scroll--md">
+      <table class="w-full text-sm">
+        <thead class="border-b border-gray-800 sticky top-0 bg-gray-900">
+          <tr class="text-gray-400 text-left">
+            <th class="px-4 py-2.5 font-medium">Table</th>
+            <th class="px-4 py-2.5 font-medium text-right">Size</th>
+            {% if footprint.backend == 'postgresql' %}<th class="px-4 py-2.5 font-medium text-right">Indexes</th>{% endif %}
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          {% for row in footprint.tables %}
+          <tr class="hover:bg-gray-800/50 transition">
+            <td class="px-4 py-2 text-gray-300 font-mono text-xs">{{ row.name }}</td>
+            <td class="px-4 py-2 text-right font-mono text-xs">{{ row.bytes | humanbytes }}</td>
+            {% if footprint.backend == 'postgresql' %}<td class="px-4 py-2 text-right font-mono text-xs text-gray-500">{{ row.index_bytes | humanbytes }}</td>{% endif %}
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+    {% endif %}
+    {% if footprint.note %}
+    {# Says what it cannot measure rather than inventing a number — the same convention as
+       the graph's truncation banner. #}
+    <p class="px-4 py-3 text-xs text-gray-500 border-t border-gray-800">{{ footprint.note }}</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>

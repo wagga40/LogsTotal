@@ -1,0 +1,51 @@
+<div id="entity-enrichment-region">
+{% if services %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+  <h2 class="text-sm font-medium text-gray-400 mb-4">
+    Live Enrichment
+    <span class="text-gray-600 font-normal ml-1">· on-demand API lookups</span>
+  </h2>
+  <div class="space-y-3">
+    {% for s in services %}
+    {% set r = results.get(s.id) %}
+    <div class="border border-gray-800 rounded-lg p-4">
+      <div class="flex items-center gap-2 mb-2">
+        <span class="text-sm font-medium text-gray-200">{{ s.name }}</span>
+        {% if s.provider_key %}<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 border border-gray-700">{{ s.provider_key }}</span>{% endif %}
+        <div class="ml-auto flex items-center gap-2">
+          {% if r and r.fetched_at %}<span class="text-xs text-gray-600">{{ r.fetched_at.strftime('%Y-%m-%d %H:%M') }}</span>{% endif %}
+          <button type="button"
+                  hx-post="/intel/entities/{{ entity.id }}/enrich/{{ s.id }}"
+                  {% if r %}hx-vals='{"force":"1"}'{% endif %}
+                  hx-target="#entity-enrichment-region" hx-swap="outerHTML"
+                  class="lt-btn lt-btn--sm lt-btn--active">
+            {% if r %}Refresh{% else %}Fetch{% endif %}
+          </button>
+        </div>
+      </div>
+      {% if r %}
+        {% if r.ok and r.summary_json %}
+          {% set summary = r.summary_json | from_json %}
+          <div class="flex flex-wrap gap-x-6 gap-y-1 text-sm">
+            {% for k, v in summary.items() %}
+            <div>
+              <span class="text-gray-500">{{ k | replace('_', ' ') }}</span>
+              <span class="text-gray-200 font-mono ml-1">{% if v is iterable and v is not string %}{{ v | join(', ') }}{% else %}{{ v }}{% endif %}</span>
+            </div>
+            {% endfor %}
+          </div>
+        {% elif r.ok %}
+          <p class="text-xs text-gray-500">Fetched — no structured summary; raw response stored.</p>
+        {% else %}
+          <p class="text-xs text-red-400">{{ r.error_message or 'lookup failed' }}</p>
+        {% endif %}
+      {% else %}
+        <p class="text-xs text-gray-600">Not fetched yet.</p>
+      {% endif %}
+    </div>
+    {% endfor %}
+  </div>
+  <p class="text-[11px] text-gray-600 mt-3">Outbound requests are SSRF-filtered and rate-limited. API tokens are never displayed or logged.</p>
+</div>
+{% endif %}
+</div>

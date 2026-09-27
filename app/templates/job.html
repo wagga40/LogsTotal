@@ -1,0 +1,266 @@
+{% extends "base.html" %}
+{% from "partials/_copy_button.html" import copy_button with context %}
+{% from "partials/_tab_badge.html" import tab_badge, tab_icon %}
+{% block title %}Job #{{ job.id }} – LogsTotal{% endblock %}
+
+{% from "partials/_add_to_case_dialog.html" import add_to_case_dialog %}
+
+{#
+  No width class here on purpose: base.html's <main> already caps content at max-w-7xl.
+  A narrower cap here would make the job page narrower than /jobs, /intel and
+  /intel/cases for no structural reason — findings rows are
+  `justify-between` with an empty middle, and the analytics/MITRE panels are full-width.
+#}
+{% block content %}
+<div>
+{% set s = job.status.value if job.status.value is defined else job.status %}
+{% set is_terminal = s in ['completed', 'failed', 'partial', 'cancelled'] %}
+
+  <!-- Header card -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+
+    <!-- Top row: breadcrumb + action buttons -->
+    <div class="flex items-center justify-between gap-4 mb-4">
+      <div class="flex items-center gap-2 text-sm text-gray-500">
+        <a href="/jobs" class="hover:text-gray-300 transition">Jobs</a>
+        <span class="text-gray-700">/</span>
+        <span class="text-gray-300">#{{ job.id }}</span>
+      </div>
+      <div class="flex flex-wrap gap-2">
+        {% if user and user.is_superuser %}
+        <a href="/jobs/{{ job.id }}/download"
+           class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+          Artifact
+        </a>
+        <a href="/jobs/{{ job.id }}/export-raw"
+           class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition"
+           title="Download full raw tool output files (ZIP)">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+          RAW
+        </a>
+        {% endif %}
+        <a href="/jobs/{{ job.id }}/findings.json"
+           class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7H5a2 2 0 00-2 2v9a2 2 0 002 2h14a2 2 0 002-2V9a2 2 0 00-2-2h-3m-1 4l-3 3m0 0l-3-3m3 3V4"/></svg>
+          JSON
+        </a>
+        <span id="job-header-terminal-actions" class="inline-flex flex-wrap gap-2">
+          {% include "partials/_job_header_terminal_actions.html" %}
+        </span>
+        {# Member-gated: /jobs/{id} is anonymous-viewable but Intel is member-or-above,
+           so showing this to a basic user would just be a link to a 403. #}
+        {% if user and (user.is_superuser or user.role == 'member') %}
+        <a href="/intel?job={{ job.id }}"
+           class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition"
+           title="Show the entities this job produced in the Intel dashboard">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/></svg>
+          Entities
+        </a>
+        {% endif %}
+        {% if user and (user.is_superuser or user.role == 'member') %}
+        <button type="button" data-add-to-case-trigger="job-{{ job.id }}"
+                class="inline-flex items-center gap-1.5 text-xs bg-blue-900/20 hover:border-blue-600/50 border border-blue-700/50 rounded-lg px-3 py-1.5 text-blue-300 hover:text-blue-200 transition">
+          <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12h6m-3-3v6m-9 1V7a2 2 0 012-2h6l2 2h6a2 2 0 012 2v8a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>
+          Add to case
+        </button>
+        {% endif %}
+      </div>
+    </div>
+
+    <!-- Filename -->
+    <h1 class="text-xl font-bold font-mono text-blue-300 break-words mb-4" title="{{ job.filename }}">{{ job.filename }}</h1>
+
+    {% if user and user.is_superuser and not job.submitted_filename %}
+    <p class="text-xs text-gray-500 mb-4">Legacy stored filename (unverified): {{ job.log_file.original_filename }}</p>
+    {% endif %}
+
+    <!-- Metadata grid -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-3">
+      <div>
+        <div class="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Type</div>
+        <div class="text-sm text-gray-200">{{ job.effective_log_type.value }}{% if job.log_file.detected_type and job.log_file.detected_type != job.effective_log_type %}
+          <span class="text-xs text-gray-500 ml-1" title="Auto-detected as {{ job.log_file.detected_type.value }}">(detected: {{ job.log_file.detected_type.value }})</span>{% endif %}</div>
+      </div>
+      <div>
+        <div class="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Workflow</div>
+        <div class="text-sm text-gray-200">{{ job.workflow.name }}</div>
+        {% if job.workflow.description %}
+        {# Where a workflow declares limited coverage (journald, say), this is the only
+           place the reader sees it while staring at a low finding count — the upload
+           dropdown showed it, but that was before the results existed. #}
+        <div class="text-xs text-gray-500 mt-0.5">{{ job.workflow.description }}</div>
+        {% endif %}
+      </div>
+      <div>
+        <div class="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Size</div>
+        <div class="text-sm text-gray-200">{{ (job.log_file.size_bytes / 1048576) | round(2) }} MB</div>
+      </div>
+      <div>
+        <div class="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Submitted</div>
+        <div class="text-sm text-gray-200">{{ job.created_at.strftime('%Y-%m-%d %H:%M') }}</div>
+      </div>
+    </div>
+
+    <!-- SHA256 row -->
+    <div class="mt-3">
+      <div class="text-xs text-gray-500 uppercase tracking-wide mb-0.5">SHA256</div>
+      <div class="flex items-center gap-2">
+        <code class="text-xs font-mono text-gray-400 break-all" title="{{ job.log_file.sha256 }}">{{ job.log_file.sha256 }}</code>
+        {{ copy_button(source='code', title='Copy SHA256') }}
+      </div>
+    </div>
+
+    <!-- Admin-only: submitter info -->
+    {% if user and user.is_superuser %}
+    <div class="border-t border-gray-800 mt-4 pt-4">
+      <div class="grid grid-cols-2 sm:grid-cols-4 gap-x-8 gap-y-3">
+        <div>
+          <div class="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Submitter</div>
+          <div class="text-sm text-gray-400">{% if job.submitter %}{{ job.submitter.display_name or job.submitter.email }}{% else %}Anonymous{% endif %}</div>
+        </div>
+        <div>
+          <div class="text-xs text-gray-500 uppercase tracking-wide mb-0.5">Client IP</div>
+          <div class="text-sm text-gray-400 font-mono">{{ job.submitter_ip or '—' }}</div>
+        </div>
+      </div>
+    </div>
+    {% endif %}
+
+    {% include "partials/_case_backlinks.html" %}
+
+    {#
+      Tags live in the header card, deliberately outside `#job-status-region` — that region
+      morph-swaps every 3s while the job runs and would wipe a half-typed tag. Same rule the
+      comment thread follows, pinned by the same kind of test.
+
+      Member-gated: `/jobs` is anonymous-viewable, and the picker fetches /intel/tags.json,
+      which is member+. Rendered lower down it would be a silent 403 and an empty combobox.
+    #}
+    {% if user %}
+    <div class="mt-4 pt-4 border-t border-gray-800 flex flex-wrap items-center gap-3">
+      {% if user.is_superuser or user.role == 'member' %}
+      {% include "partials/_job_header_tags.html" %}
+      {% endif %}
+      <span class="ml-auto">{% include "partials/_job_watch_button.html" %}</span>
+    </div>
+    {% endif %}
+
+  </div>
+
+  <!-- Duplicate file banner -->
+  {% if is_duplicate %}
+  <div class="bg-yellow-950 border border-yellow-800 rounded-xl p-5 mb-6">
+    <div class="flex items-start gap-3">
+      <span class="text-yellow-400 text-lg flex-shrink-0">⚠</span>
+      <div class="flex-1">
+        <p class="text-yellow-300 font-semibold text-sm mb-1">This file was already analyzed</p>
+        {% if can_resubmit %}
+        <p class="text-yellow-600 text-xs mb-4">The file you submitted has the same SHA-256 as a previous upload. Showing the most recent result below. You can force a new analysis with a different workflow if needed.</p>
+        <form method="POST" action="/jobs/resubmit" class="flex flex-wrap gap-3 items-end">
+          <input type="hidden" name="file_id" value="{{ request.query_params.get('file_id') }}">
+          <div>
+            <label class="block text-xs text-yellow-600 mb-1">Workflow</label>
+            <select name="workflow_id"
+              class="bg-gray-900 border border-yellow-800 rounded px-3 py-1.5 text-sm focus:outline-none focus:border-yellow-600">
+              {% for wf in workflows %}
+              <option value="{{ wf.id }}" {% if wf.id | string == request.query_params.get('workflow_id') %}selected{% endif %}>
+                {{ wf.name }}
+              </option>
+              {% endfor %}
+            </select>
+          </div>
+          <button type="submit"
+            class="bg-yellow-700 hover:bg-yellow-600 rounded px-4 py-1.5 text-sm font-semibold transition">
+            Force re-analyze
+          </button>
+        </form>
+        {% else %}
+        <p class="text-yellow-600 text-xs">The file you submitted has the same SHA-256 as a previous upload. Showing the most recent result below.{% if not user %} <a href="/auth/login" class="underline hover:text-yellow-400">Sign in</a> to force a new analysis with a different workflow.{% endif %}</p>
+        {% endif %}
+      </div>
+    </div>
+  </div>
+  {% endif %}
+
+  {#
+    Tabs. The Results pane keeps `#job-status-region` exactly as it was — the 3s poll
+    runs whether or not the pane is showing, so findings still stream in while you're
+    reading the discussion. Discussion is a *separate pane*, never nested inside the
+    polling region, because that region morph-swaps and would wipe a half-typed comment.
+
+    Anonymous visitors get no Discussion tab, so they see the results with no tab strip
+    at all rather than a pointless single tab.
+  #}
+  {% if tabs | length > 1 %}
+  <div x-data='resourceTabs({{ tabs | tojson }})'>
+    <div class="flex flex-wrap border-b border-gray-800 mb-6 gap-1">
+      {% for tab in tabs %}
+      <button @click="select('{{ tab.key }}')"
+              :class="tab === '{{ tab.key }}' ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'"
+              class="px-4 py-2 -mb-px border-b-2 text-sm font-medium transition flex items-center gap-2">
+        {{ tab_icon(tab) }} {{ tab.label }} {{ tab_badge(tab) }}
+      </button>
+      {% endfor %}
+    </div>
+
+    <div x-show="tab === 'results'" x-cloak>
+      {% include "partials/_job_status.html" %}
+    </div>
+
+    {% if tabs | selectattr('key', 'equalto', 'ai') | list %}
+    <div x-show="tab === 'ai'" x-cloak>
+      <div id="ai-analysis-region"
+           hx-get="/jobs/{{ job.id }}/ai-analysis-partial"
+           hx-trigger="loadAiAnalysis from:body once"
+           hx-swap="outerHTML">
+        <p class="text-sm text-gray-500">Loading AI analysis…</p>
+      </div>
+    </div>
+    {% endif %}
+
+    <div x-show="tab === 'discussion'" x-cloak>
+      <div id="job-comments-region"
+           class="bg-gray-900 border border-gray-800 rounded-xl p-6"
+           hx-get="/comments/job/{{ job.id }}"
+           hx-trigger="loadComments from:body once"
+           hx-swap="innerHTML">
+        <p class="text-sm text-gray-500">Loading discussion…</p>
+      </div>
+    </div>
+  </div>
+  {% else %}
+  {% include "partials/_job_status.html" %}
+  {% endif %}
+
+  <script>
+    (function () {
+      if (window._logScrollInit) return;
+      window._logScrollInit = true;
+      window._logScrollTops = {};
+
+      document.addEventListener('scroll', function (ev) {
+        var el = ev.target;
+        if (el.nodeType === 1 && el.hasAttribute('data-log-task-id')) {
+          window._logScrollTops[el.getAttribute('data-log-task-id')] = el.scrollTop;
+        }
+      }, true);
+
+      document.body.addEventListener('htmx:afterSettle', function () {
+        var saved = window._logScrollTops;
+        if (!saved) return;
+        var region = document.getElementById('job-status-region');
+        if (!region) return;
+        region.querySelectorAll('[data-log-task-id]').forEach(function (el) {
+          var id = el.getAttribute('data-log-task-id');
+          if (saved[id]) el.scrollTop = saved[id];
+        });
+      });
+    })();
+  </script>
+</div>
+
+{% if user and (user.is_superuser or user.role == 'member') %}
+{{ add_to_case_dialog('job', job.id) }}
+{% endif %}
+{% endblock %}

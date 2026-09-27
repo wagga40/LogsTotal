@@ -1,0 +1,54 @@
+{#
+  A single job row on the case detail page — extracted from case_detail.html so it
+  can also be re-rendered standalone (outerHTML swap) by POST /{case_id}/jobs/{id}/note.
+
+  Expects in context: case, jl (a CaseJobLink with .job/.job.log_file and .added_by
+  eager-loaded), user, is_owner.
+#}
+{% set j = jl.job %}
+{% set can_edit_note = is_owner or (jl.added_by_user_id == user.id) %}
+<div id="case-job-row-{{ jl.id }}" class="px-5 py-3 hover:bg-gray-800/40 transition group" x-data="{ editingNote: false }">
+  <div class="flex items-center gap-3">
+    <span class="text-xs font-mono text-gray-500">#{{ j.id }}</span>
+    <a href="/jobs/{{ j.id }}" class="flex-1 min-w-0 text-sm text-gray-200 hover:text-white truncate">{{ j.filename if j.log_file else 'job ' ~ j.id }}</a>
+    <span class="text-xs text-gray-600">{{ j.created_at.strftime('%Y-%m-%d') if j.created_at else '' }}</span>
+    <a href="/intel/jobs/{{ j.id }}/findings" title="Show every finding from this job, with its entities"
+       class="text-xs text-gray-500 hover:text-blue-400 transition opacity-0 group-hover:opacity-100 focus:opacity-100">findings</a>
+    {% if can_edit_note %}
+    <button type="button" @click="editingNote = !editingNote"
+            class="text-xs text-gray-500 hover:text-blue-400 transition opacity-0 group-hover:opacity-100" title="Edit note">&#9998;</button>
+    {% endif %}
+    <form method="POST" action="/intel/cases/{{ case.id }}/jobs/{{ j.id }}/add-entities"
+          data-confirm-title="Add entities"
+          data-confirm-message="Add all of job #{{ j.id }}'s entities to this case?"
+          data-confirm-accept="Add entities" class="opacity-0 group-hover:opacity-100 transition">
+      <button type="submit" class="text-xs text-gray-500 hover:text-blue-400 transition" title="Add this job's entities to the case">+ entities</button>
+    </form>
+    {% if is_owner %}
+    <form method="POST" action="/intel/cases/{{ case.id }}/jobs/{{ j.id }}/remove"
+          data-confirm-title="Remove job"
+          data-confirm-message="Remove job #{{ j.id }} from this case?"
+          data-confirm-accept="Remove" class="opacity-0 group-hover:opacity-100 transition">
+      <button type="submit" class="text-xs text-gray-500 hover:text-red-400 transition" title="Remove from case">×</button>
+    </form>
+    {% endif %}
+  </div>
+  <div class="mt-1 text-xs text-gray-500">
+    added {{ jl.added_at | time_ago }} by {% if jl.added_by %}{{ jl.added_by.display_name or jl.added_by.email }}{% else %}unknown{% endif %}
+  </div>
+  {% if jl.note %}
+  <p class="mt-0.5 text-xs italic text-gray-500">{{ jl.note }}</p>
+  {% endif %}
+  {% if can_edit_note %}
+  <form x-show="editingNote" x-cloak
+        hx-post="/intel/cases/{{ case.id }}/jobs/{{ j.id }}/note"
+        hx-target="#case-job-row-{{ jl.id }}"
+        hx-swap="outerHTML"
+        class="mt-2 flex items-center gap-2">
+    <input type="text" name="note" maxlength="500" value="{{ jl.note or '' }}"
+           placeholder="Why is this here? (optional)"
+           class="lt-field lt-field--sm flex-1">
+    <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary">Save</button>
+  </form>
+  {% endif %}
+</div>

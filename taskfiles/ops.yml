@@ -1,0 +1,1335 @@
+# Operator tasks — running, deploying and upgrading an installation.
+#
+# Included by ./Taskfile.yml with `flatten: true`, so no task carries an `ops:` prefix:
+# `task deploy`. Run them from the repo root, or from the install directory a release
+# archive was extracted into.
+#
+# This is the half that ships. A release archive carries these tasks and their scripts, so
+# everything here has to work with no PDM, no venv and no .git — which is why the dual-use
+# tasks (doctor, backup, quickstart, docker:*, health:remote) are here rather than beside
+# the contributor ones.
+
+version: '3'
+
+# No `dotenv:` here — go-task refuses one in an included file outright: "Included
+# Taskfiles can't have dotenv declarations". The root's declaration covers these
+# tasks, with its mustache-versus-shell asymmetry: a {{.KEY}} template prefers the .env
+# value while the shell prefers the process environment. That is the trap the `env:`
+# bridges are written around.
+
+
+
+# ── Shared preconditions ─────────────────────────────────────────────────────
+# Not a task namespace — go-task ignores unknown top-level keys, and this one is
+# never reached by `task --list`. Every key carries its anchor *after* the colon
+# deliberately: two tests scan the raw file for a bare 2-space-indented
+# `name:` line, and a bare key here would register as a phantom task that then
+# needed a desc: and a docs mention.
+#
+# Preconditions run before a task's first command, fire through `cmds: - task: x`
+# calls, and are evaluated under --dry. What they buy is the difference between
+# mvdan/sh's `"pdm": executable file not found in $PATH` and a sentence naming the
+# thing to install.
+#
+# The pdm check is the binary only, not `[ -d .venv ]`. The venv's location is a
+# PDM configuration detail, and CI installs through an action rather than into a
+# checked-in .venv — betting on the layout would guard a fresh clone and break the
+# build. (The four stdlib-only python tasks still branch on .venv themselves, via
+# lib/common.sh::run_py, because they have somewhere to fall back to.)
+x-preconditions:
+  pdm: &needs-pdm
+    sh: command -v pdm >/dev/null 2>&1
+    msg: "ERROR: pdm not found. Install it: https://pdm-project.org/en/latest/#installation (macOS: brew install pdm). Then: ./logstotal setup"
+  docker: &needs-docker
+    # Binary only. `docker info` would catch a stopped daemon too, but it blocks for
+    # up to 10s, and every docker:* task would pay that on every invocation.
+    sh: command -v docker >/dev/null 2>&1
+    msg: "ERROR: docker not found. Install Docker Desktop (macOS) or docker.io + docker-compose-plugin (Linux)."
+  sqlite3: &needs-sqlite3
+    sh: command -v sqlite3 >/dev/null 2>&1
+    msg: "ERROR: sqlite3 not found. Install: brew install sqlite (macOS) or apt install sqlite3 (Linux)."
+  redis: &needs-redis
+    sh: command -v redis-server >/dev/null 2>&1
+    msg: "ERROR: redis-server not found. Install: brew install redis (macOS) or apt install redis-server (Linux) — or run it in Docker: ./logstotal redis:docker"
+  curl: &needs-curl
+    sh: command -v curl >/dev/null 2>&1
+    msg: "ERROR: curl not found. Install: apt install curl (Linux); macOS ships it."
+  perl: &needs-perl
+    sh: command -v perl >/dev/null 2>&1
+    msg: "ERROR: perl not found — ./logstotal css:prod and ./logstotal css:dev rewrite base.html with it."
+  shellcheck: &needs-shellcheck
+    sh: command -v shellcheck >/dev/null 2>&1
+    msg: "ERROR: shellcheck not found. Install: brew install shellcheck (macOS) or apt install shellcheck (Linux)."
+
+tasks:
+  validate-env:
+    desc: Pre-flight check — verify .env exists and required vars are set
+    summary: |
+      Checks that .env exists and SECRET_KEY is not the default placeholder, and
+      warns on a placeholder ADMIN_PASSWORD. An unset DATABASE_URL is fine — the
+      app defaults to SQLite. Run before ./logstotal dev to catch config issues early.
+    cmds:
+      - |
+        if [ ! -f .env ]; then
+          echo "ERROR: .env file not found. Run: ./logstotal setup"
+          exit 1
+        fi
+        if grep -qE "^SECRET_KEY=change-me" .env; then
+          echo "ERROR: SECRET_KEY is still the default placeholder."
+          echo "       Generate a key: python3 -c \"import secrets; print(secrets.token_hex(32))\""
+          exit 1
+        fi
+        if ! grep -qE "^SECRET_KEY=.{8,}" .env; then
+          echo "ERROR: SECRET_KEY appears to be missing or too short in .env."
+          exit 1
+        fi
+        if ! grep -qE "^DATABASE_URL=.+" .env; then
+          echo "INFO: DATABASE_URL not set — using the SQLite default (local: ./logstotal.db, Docker: /data/logstotal.db)."
+        fi
+        if grep -qE "^ADMIN_PASSWORD=changeme123$" .env; then
+          echo "WARNING: ADMIN_PASSWORD is still the default (changeme123). A fresh ./logstotal init will REFUSE to create the admin with it — set a strong one (./logstotal gen-secrets -- --write)."
+        fi
+        echo "OK: .env looks good. (Run ./logstotal doctor for the full preflight.)"
+
+  quickstart:
+    desc: "Guided first deploy (Docker): .env + secrets + preflight + up + health — one command"
+    summary: |
+      Everything a fresh Docker deployment needs, in order, idempotent (safe to
+      re-run — never overwrites existing .env values):
+        1. verify docker + compose + daemon, and validate the HTTPS request if any
+        2. create .env from .env.example (only if missing)
+        3. set COOKIE_INSECURE=true for plain HTTP on :8000 (skipped when DOMAIN is
+           set — step 4b writes it together with the ENABLE_HSTS its TLS mode needs)
+        4. QUICKSTART_PROFILE=postgres (optional): activate COMPOSE_PROFILES=postgres +
+           POSTGRES_PASSWORD in .env so the next step fills the password
+        4b. DOMAIN set (optional): put Caddy in front — the same seven .env keys
+           ./logstotal proxy:enable writes, so HTTPS needs no second step
+        5. generate all secrets incl. ADMIN_PASSWORD (gen-secrets --write;
+           fills only empty/placeholder keys — the admin password prints ONCE)
+        6. docker compose build
+        7. in-container doctor preflight (aborts before starting on FAIL)
+        8. docker compose up -d
+        9. poll /health until ready
+      Needs Docker and a host python3 — but no venv, no PDM and no dependency
+      install: the one Python step is scripts/gen_secrets.py, which is stdlib-only.
+      Everything else runs inside the container.
+        ./logstotal quickstart                               # SQLite, plain HTTP (default)
+        QUICKSTART_PROFILE=postgres ./logstotal quickstart   # PostgreSQL instead of SQLite
+        DOMAIN=logs.example.com ACME_EMAIL=you@example.com ./logstotal quickstart   # + HTTPS
+        DOMAIN=logs.internal QUICKSTART_TLS=internal ./logstotal quickstart   # + internal CA
+      QUICKSTART_TLS is acme (default) | internal | custom | off, and is read only
+      when DOMAIN is set. acme requires ACME_EMAIL; all four are checked up front,
+      before .env is created, so a typo cannot leave a half-configured deployment.
+    cmds:
+      - bash scripts/quickstart.sh
+
+  doctor:
+    desc: Full preflight — config, secrets, Redis, Docker, disk, ports, hardware, tool binaries
+    summary: |
+      One-stop readiness check for any deployment path. Prints a grouped
+      PASS / WARN / FAIL report where every failure includes the exact fix,
+      and exits non-zero if anything is broken. Run before ./logstotal dev
+      / ./logstotal docker:up, and as the first step after a deploy.
+        ./logstotal doctor              # auto-detects whether to run the Docker checks
+        ./logstotal doctor -- --docker  # force the Docker checks on
+        ./logstotal doctor -- --no-docker
+    # Its own precondition rather than the shared *needs-pdm anchor: on a Docker box
+    # there is no venv and never will be, and the answer there is not "install pdm"
+    # but task doctor:docker, which is the more truthful check anyway.
+    preconditions:
+      - sh: command -v pdm >/dev/null 2>&1
+        msg: "ERROR: pdm not found. On a Docker deployment run: ./logstotal doctor:docker (no host venv needed). For a local checkout install PDM — https://pdm-project.org/en/latest/#installation — then: ./logstotal setup"
+    cmds:
+      # NOT run_py, unlike gen-secrets / env:diff / recommend-scaling / proxy:enable.
+      # Those four are stdlib-only and verified to run on a system python as old as
+      # 3.9; doctor.py imports app.config and app.system_checks, which need >=3.11 and
+      # the project's dependencies. Falling back to a host python3 gets most of a
+      # report and then tracebacks on `from datetime import UTC`, which is worse than
+      # not starting.
+      - pdm run -- python3 scripts/doctor.py {{.CLI_ARGS}}
+
+  doctor:docker:
+    desc: Run the deployment doctor inside the web container (Docker paths — no host venv needed)
+    summary: |
+      Same checks as ./logstotal doctor, but executed inside the web container where
+      Redis/Postgres/storage are actually reachable — the truthful post-deploy
+      verification for Docker deployments (Paths B and C). Uses the running web
+      container when up, otherwise a one-off container.
+        ./logstotal doctor:docker
+    preconditions: [*needs-docker]
+    cmds:
+      # `exec -t` allocates a pseudo-TTY inside the container so cli_color's own isatty()
+      # returns True there and the report renders in colour. Without it every doctor:docker
+      # run is silently plain, however coloured the outer terminal is: LT_COLOR isn't
+      # propagated across `docker compose exec` (no shared shell), and the container's own
+      # isatty() then falls back to False on the non-TTY stdout compose gave it.
+      # `docker compose run` allocates a TTY by default when the caller's stdin has one, so
+      # nothing extra is needed on the one-off-container path.
+      #
+      # Through /docker-entrypoint.sh in env-only mode: an exec'd process does not inherit
+      # the DATABASE_URL the entrypoint derived at boot, and would check an empty
+      # ./logstotal.db inside the container instead of the real database.
+      - |
+        if docker compose ps --status running web 2>/dev/null | grep -q web; then
+          docker compose exec -t -e LOGSTOTAL_ENTRYPOINT_ENV_ONLY=1 web /docker-entrypoint.sh python3 scripts/doctor.py --in-container
+        else
+          docker compose run --rm web python3 scripts/doctor.py --in-container
+        fi
+
+  gen-secrets:
+    desc: Generate all deployment secrets (SECRET_KEY, DB/Redis/S3/Garage) at once
+    summary: |
+      Prints a copy-paste block of freshly generated secrets. With --write it
+      fills them into .env, but only for keys that are still empty or a known
+      placeholder — it never overwrites a real secret you have already set.
+      Stdlib-only — runs with plain python3 when no venv/PDM exists (Docker-only hosts).
+        ./logstotal gen-secrets             # print only
+        ./logstotal gen-secrets -- --write  # write empty/placeholder keys into .env
+    cmds:
+      # scripts/lib/common.sh::run_py is the venv-aware python3 runner — `pdm run --`
+      # when a .venv and pdm are both present, plain python3 otherwise. Sourcing it
+      # here rather than re-writing the if/else is what keeps the Docker-only host
+      # (no venv, stdlib-only script) working without another copy of the branch.
+      - . scripts/lib/common.sh && run_py scripts/gen_secrets.py {{.CLI_ARGS}}
+
+  env:diff:
+    desc: Diff .env against .env.example — new documented keys + unknown/typo'd keys
+    summary: |
+      Compares your .env against .env.example and prints two reports: keys
+      .env.example documents that your .env has never mentioned (new since an
+      upgrade — commented or set, either counts as "seen"), and keys your .env
+      sets that .env.example doesn't recognize at all (usually a typo, since
+      pydantic silently ignores unknown Settings fields). Exits 0 always unless
+      --strict, in which case it exits 1 when either report is non-empty. Never
+      prints a value from .env — key names only.
+        ./logstotal env:diff             # print both reports
+        ./logstotal env:diff -- --strict # exit 1 if either report is non-empty (CI)
+    cmds:
+      # scripts/lib/common.sh::run_py is the venv-aware python3 runner — `pdm run --`
+      # when a .venv and pdm are both present, plain python3 otherwise. Sourcing it
+      # here rather than re-writing the if/else is what keeps the Docker-only host
+      # (no venv, stdlib-only script) working without another copy of the branch.
+      - . scripts/lib/common.sh && run_py scripts/env_diff.py {{.CLI_ARGS}}
+
+  recommend-scaling:
+    desc: Recommend HUEY_WORKERS / TOOL_MAX_WORKERS / DB pool for this host's CPU and RAM
+    summary: |
+      Detects CPU cores and RAM, applies the documented sizing model, and prints
+      recommended worker/concurrency settings with the reasoning for each. With
+      --apply it writes the env-level knobs (HUEY_WORKERS, TOOL_MAX_WORKERS,
+      DB_POOL_SIZE) into .env after confirmation; --apply-workflows writes the
+      per-tool threads: into workflows/*.yml (then run: ./logstotal sync-workflows).
+      Recommendations are per host. Stdlib-only — runs with plain python3 when
+      no venv/PDM exists (Docker-only hosts).
+        ./logstotal recommend-scaling                      # print recommendations
+        ./logstotal recommend-scaling -- --apply           # also write env knobs into .env
+        ./logstotal recommend-scaling -- --apply-workflows # write per-tool threads: into workflows/*.yml
+    cmds:
+      # scripts/lib/common.sh::run_py is the venv-aware python3 runner — `pdm run --`
+      # when a .venv and pdm are both present, plain python3 otherwise. Sourcing it
+      # here rather than re-writing the if/else is what keeps the Docker-only host
+      # (no venv, stdlib-only script) working without another copy of the branch.
+      - . scripts/lib/common.sh && run_py scripts/recommend_scaling.py {{.CLI_ARGS}}
+
+  health:
+    desc: "Check the app's /health endpoint (works for local dev AND Docker deployments)"
+    summary: |
+      ./logstotal health:remote with http://localhost:8000 filled in — the same parsed
+      database/redis/storage/workers report the app itself sees, rather than a raw
+      redis-cli/curl probe from the host (which is misleading under Docker, since
+      Redis isn't reachable on the host there).
+      Override the target: HEALTH_URL=http://host:port ./logstotal health
+    # The default lives in env:, and the script is called directly rather than through
+    # `task health:remote`. A task's env: does not reach a sub-task, so delegating
+    # would mean exporting the default and spawning a second go-task process to re-read
+    # .env and re-resolve the same variable.
+    preconditions: [*needs-curl]
+    env:
+      HEALTH_URL: '{{.HEALTH_URL | default "http://localhost:8000"}}'
+    cmds:
+      - bash scripts/health-remote.sh
+
+  health:remote:
+    desc: "Probe /health on a running deployment (set HEALTH_URL; supports basic auth)"
+    summary: |
+      Calls ${HEALTH_URL}/health and reports the parsed status. Used by task upgrade:* and CI.
+      ./logstotal health is the localhost-default shorthand for this task.
+
+      Required:
+        HEALTH_URL              Base URL of the deployment (e.g. https://logs.example.com)
+      Optional:
+        BASIC_AUTH_USER         Basic-auth user when behind Caddy basicauth
+        BASIC_AUTH_PASS         Basic-auth password
+      Exits non-zero if the response is not 200 or if any subsystem reports error.
+    # A task-level env: block, not a `VAR="${VAR:-{{.VAR}}}"` line in the cmd. It
+    # covers all three invocation styles identically — `task <name> VAR=x`,
+    # `VAR=x task <name>`, and neither — because {{.VAR}} resolves from the caller's
+    # environment as well as from a CLI var, while a CLI var alone is never exported
+    # to the shell. Precedence note: {{.VAR}} prefers a dotenv value over the process
+    # environment, so this form is only safe for keys that are NOT in .env — none of
+    # REF/ARCHIVE/SKIP_BACKUP/BACKUP_FILE/HEALTH_URL are, and a test keeps them out
+    # of .env.example. It also keeps a BACKUP_FILE containing $(...) from being executed,
+    # which a shell-line bridge would do.
+    preconditions: [*needs-curl]
+    env:
+      HEALTH_URL: '{{.HEALTH_URL}}'
+    cmds:
+      - bash scripts/health-remote.sh
+
+  show-admin-password:
+    desc: "Print the admin login this deployment was created with"
+    summary: |
+      The password is generated once and printed once, into scrollback, at the end of a
+      quickstart that may have been days ago. After that the only instruction anywhere
+      was "it is in deploy-envs/*.env (ADMIN_PASSWORD)", which is a grep rather than an
+      answer.
+
+      Prints a secret to the terminal — deliberately, and only when asked. It reads .env
+      and never the database, so it reports what the account was CREATED with; if the
+      password was changed in the app since, it says so rather than pretending.
+
+        ./logstotal show-admin-password
+        ENV_FILE=deploy-envs/cp.example.com.env ./logstotal show-admin-password   # a fleet
+    cmds:
+      - bash scripts/show-admin-password.sh
+
+  version:
+    desc: "Print the running version, git SHA, and Alembic head"
+    summary: |
+      Single source of truth for "what am I running":
+        - VERSION file (canonical, read by app/config.py at startup) — the release number,
+          written only by ./logstotal release:prepare
+        - git short SHA + branch of the CURRENT CHECKOUT (live git, not a stored fact —
+          the only thing that disambiguates an ALLOW_UNRELEASED build, where two different
+          commits report the same version)
+        - alembic heads (migration revisions declared in alembic/versions/)
+      Warns if VERSION is missing or if multiple alembic heads exist (merge needed).
+    cmds:
+      - |
+        if [ -f VERSION ]; then
+          APP_VER=$(grep -E '^version:' VERSION | head -1 | cut -d':' -f2- | tr -d ' ')
+          printf "  version:    %s (from VERSION)\n" "${APP_VER:-unknown}"
+        else
+          echo "  version: VERSION file missing — falling back to app/config.py default."
+        fi
+        if command -v git >/dev/null 2>&1 && [ -d .git ]; then
+          WC_SHA=$(git rev-parse --short HEAD 2>/dev/null || echo "?")
+          WC_BR=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "?")
+          printf "  checkout:   %s\n" "$WC_SHA"
+          printf "  branch:     %s\n" "$WC_BR"
+        fi
+        if command -v pdm >/dev/null 2>&1 && [ -f alembic.ini ]; then
+          HEADS=$(pdm run -- python3 -m alembic heads 2>/dev/null | grep -E '\(head\)' || true)
+          HEAD_COUNT=$(printf "%s" "$HEADS" | grep -c . || true)
+          if [ "$HEAD_COUNT" = "0" ]; then
+            echo "  alembic:    no heads declared"
+          else
+            printf "  alembic:    %s\n" "$(printf "%s" "$HEADS" | head -1)"
+            if [ "$HEAD_COUNT" -gt 1 ]; then
+              echo "  WARN:       multiple alembic heads — run alembic merge before upgrading."
+            fi
+          fi
+        fi
+
+  backup:
+    desc: "Verified database backup: auto-detect backend → dump → verify that exact artifact → write receipt"
+    summary: |
+      The canonical backup command. One run:
+        1. Resolves the effective database backend (scripts/backup_lifecycle.py —
+           same precedence as the Docker entrypoint: explicit DATABASE_URL wins,
+           the legacy template SQLite line is ignored when POSTGRES_PASSWORD is set).
+        2. Runs ./logstotal backup:postgres or ./logstotal backup:sqlite.
+        3. Verifies the exact artifact it just created (./logstotal backup:verify).
+        4. Writes a non-secret receipt to backups/last-verified.json
+           (backend, artifact name, UTC timestamp, app version — no credentials).
+        5. Prints what a complete backup still needs (uploads + .env).
+      Upgrade tasks call this automatically. A failed dump or failed verify fails
+      the run — a backup that did not verify does not count as a backup.
+    cmds:
+      - bash scripts/backup.sh auto
+
+  backup:sqlite:
+    desc: "Create a timestamped SQLite backup in backups/"
+    summary: |
+      Uses the SQLite .backup command to create a consistent snapshot of the
+      database while the app may be running. Backup file is saved to
+      backups/logstotal-YYYYMMDD-HHMMSS.db.
+
+      Host sqlite3 is used when present; otherwise the snapshot is taken inside the
+      web container with Python's sqlite3 module and streamed out, so a Docker-only
+      host needs no sqlite3 client. BACKUP_CONTEXT=host or docker selects the
+      SQLite path context when both installations exist.
+    cmds:
+      - bash scripts/backup.sh sqlite
+
+  restore:sqlite:
+    desc: "Restore SQLite database from a backup file"
+    summary: |
+      Copies a backup .db file to the configured SQLite path. Use BACKUP_CONTEXT
+      to distinguish host and Docker paths. Refuses to run while the app or
+      worker is running (override with FORCE=yes), and verifies the selected
+      backup (./logstotal backup:verify) before overwriting anything.
+      Set BACKUP_FILE to the path of the backup to restore; defaults to the most
+      recent file in backups/.
+    prompt: "This will overwrite the SQLite database with a backup. Are you sure?"
+    env:
+      BACKUP_CONTEXT: '{{.BACKUP_CONTEXT}}'
+      BACKUP_FILE: '{{.BACKUP_FILE}}'
+    cmds:
+      - bash scripts/backup.sh restore-sqlite
+
+  backup:postgres:
+    desc: "Dump PostgreSQL database to backups/ (pg_dump, or the running postgres container)"
+    summary: |
+      Creates a compressed SQL dump of the PostgreSQL database using pg_dump.
+      When the configured target is the running compose postgres service, dumps through the container
+      (its port is usually not published to the host, and Docker-only hosts need
+      no postgresql-client); otherwise uses host pg_dump with connection info
+      from DATABASE_URL in .env (SQLAlchemy driver suffixes are stripped for
+      libpq) or the POSTGRES_* env vars — the no-Compose case.
+      A failed dump fails the task (no empty .sql.gz artifacts).
+      Output: backups/logstotal-pg-YYYYMMDD-HHMMSS.sql.gz
+    cmds:
+      - bash scripts/backup.sh postgres
+
+  restore:postgres:
+    desc: "Restore PostgreSQL database from a SQL dump (psql, or the running postgres container)"
+    summary: |
+      Restores a .sql.gz dump into PostgreSQL. The target must exist and be empty.
+      Refuses to run while the app or worker is running (override with FORCE=yes),
+      and verifies the selected dump (./logstotal backup:verify) before restoring.
+      When the configured target is the running compose postgres service, restores through the
+      container (see backup:postgres); otherwise uses host psql.
+      Set BACKUP_FILE to the path of the dump to restore; defaults to the most
+      recent pg backup in backups/.
+    prompt: "This will overwrite the PostgreSQL database with a backup. Are you sure?"
+    env:
+      BACKUP_CONTEXT: '{{.BACKUP_CONTEXT}}'
+      BACKUP_FILE: '{{.BACKUP_FILE}}'
+    cmds:
+      - bash scripts/backup.sh restore-postgres
+
+  backup:uploads:
+    desc: "Archive the uploads/ directory (stored log files) into backups/"
+    summary: |
+      The database backup does NOT include the uploaded log files — this task
+      covers them. Creates backups/logstotal-uploads-YYYYMMDD-HHMMSS.tar.gz.
+      S3/Garage deployments: back up the object store instead (this task will
+      tell you if the local uploads/ dir is empty). Remember to also keep a
+      copy of .env somewhere safe — it holds SECRET_KEY and is in no archive.
+    cmds:
+      - bash scripts/backup.sh uploads
+
+  backup:verify:
+    desc: "Check backup archive integrity (defaults to the newest in backups/)"
+    summary: |
+      Auto-detects the backup kind by file suffix (same naming convention as
+      backup:sqlite/backup:postgres/backup:uploads):
+        *.db      SQLite snapshot  — copies to a temp file (never opens the
+                                      original), then runs PRAGMA integrity_check;
+                                      PASS requires the single row "ok".
+        *.sql.gz  PostgreSQL dump  — gzip integrity check, non-empty, and the
+                                      decompressed head must contain the
+                                      "PostgreSQL database dump" header line.
+        *.tar.gz  Uploads archive  — tar -tzf must list its contents cleanly.
+      Defaults to the newest file in backups/; override with BACKUP_FILE=path.
+      ./logstotal backup runs this automatically against the artifact it just created.
+      Prints one PASS/FAIL line per check and exits non-zero on any FAIL.
+    env:
+      BACKUP_CONTEXT: '{{.BACKUP_CONTEXT}}'
+      BACKUP_FILE: '{{.BACKUP_FILE}}'
+    cmds:
+      - bash scripts/backup.sh verify
+
+  backup:prune:
+    desc: "Delete backup files older than BACKUP_RETENTION_DAYS (default 14)"
+    summary: |
+      Removes files in backups/ whose mtime is older than BACKUP_RETENTION_DAYS
+      days (default 14). Set BACKUP_RETENTION_DAYS=0 to prune everything in
+      backups/ regardless of age. This is a Taskfile-only var — it is not an
+      app Settings field and has no .env entry.
+      Prints the count and each file as it deletes it; a friendly no-op message
+      (exit 0) when nothing matches.
+    prompt: "This will permanently delete backup files in backups/ older than BACKUP_RETENTION_DAYS (default 14) days. Are you sure?"
+    cmds:
+      - bash scripts/backup.sh prune
+
+  # ── Clean ─────────────────────────────────────────────────────────────────────
+
+  docker:build:
+    desc: Build Docker images without starting services
+    summary: |
+      Runs docker compose build only. Useful for CI pipelines or
+      pre-caching the image before ./logstotal docker:up.
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose build
+
+  docker:up:
+    desc: Build and start all services (Redis, web, worker) detached
+    aliases: [up]
+    summary: |
+      Uses SQLite by default. To use PostgreSQL, set COMPOSE_PROFILES=postgres
+      and POSTGRES_PASSWORD in .env — the entrypoint auto-detects and switches.
+
+      Creates the bind-mount directories first. docker-compose.yml mounts ./data,
+      ./uploads, ./backups and ./certs, and a release archive ships none of them —
+      Docker then creates them itself, owned by root, and `./logstotal backup` cannot write
+      into backups/ nor Caddy read a PROXY_TLS=custom key out of certs/.
+      LOGSTOTAL_NO_BUILD=true skips the build and starts what is already loaded — the
+      bundle path, where every image arrived by `docker load` and there is no network to
+      build from. It also passes `--pull never`: --no-build alone is not enough, because
+      Compose's default pull policy still tries to FETCH an image it cannot find locally,
+      and fails with a registry error rather than an honest "that image is not here".
+    preconditions: [*needs-docker]
+    cmds:
+      - mkdir -p data uploads backups certs
+      - |
+        if [ -f data/.bundle-images ]; then
+          . data/.bundle-images
+          export LOGSTOTAL_IMAGE_TAG="$tag" LOGSTOTAL_NO_BUILD=true
+        fi
+        if [ "${LOGSTOTAL_NO_BUILD:-false}" = "true" ]; then
+          docker compose up -d --no-build --pull never
+        else
+          docker compose up --build -d
+        fi
+
+  docker:down:
+    desc: Stop and remove containers
+    aliases: [down]
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose down
+
+  docker:logs:
+    desc: Follow logs for all services
+    aliases: [logs]
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose logs -f
+
+  docker:logs:web:
+    desc: Follow web service logs only
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose logs -f web
+
+  docker:logs:worker:
+    desc: Follow worker service logs only
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose logs -f worker
+
+  docker:logs:proxy:
+    desc: Follow Caddy reverse proxy logs only
+    summary: |
+      Requires COMPOSE_PROFILES=proxy in .env. The caddy service is only
+      started when this profile is active; this command will fail otherwise.
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose logs -f caddy
+
+  docker:restart:
+    desc: Restart all services without rebuilding
+    summary: |
+      Restarts containers in-place. Does not rebuild images — use
+      ./logstotal docker:up to rebuild and restart.
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose restart
+
+  docker:shell:
+    desc: Open a shell in the running web container
+    summary: |
+      Opens an interactive bash shell in the running web container, as the application user
+      and with the database settings the application itself uses, so python3 -m app...
+      commands inside it reach the real database.
+      Requires the web service to be running (./logstotal docker:up).
+    preconditions: [*needs-docker]
+    # Hands the terminal to an interactive bash in the container — Task must not capture stdin/stdout.
+    interactive: true
+    cmds:
+      - docker compose exec -e LOGSTOTAL_ENTRYPOINT_ENV_ONLY=1 web /docker-entrypoint.sh /bin/bash
+
+  docker:clean:
+    desc: "DESTRUCTIVE — stop containers, remove volumes, images, and networks for LogsTotal"
+    summary: |
+      Stops and removes all LogsTotal containers, deletes named volumes (redis_data,
+      postgres_data, etc.), removes images built/used by this project, and removes
+      the project network. Use when you want a full Docker reset.
+      Next ./logstotal docker:up will rebuild and recreate everything.
+    prompt: "Remove all LogsTotal containers, volumes, images, and networks?"
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose down -v --rmi all
+
+  docker:worker-up:
+    desc: Build logstotal:latest and start standalone worker stack (multi-server workers)
+    summary: |
+      For machines that only run Huey workers against a remote control plane (see
+      docs/install/fleet.md). Builds the image tag expected by docker-compose.worker.yml then starts
+      the worker service. Run from the project directory (e.g. /opt/logstotal).
+      LOGSTOTAL_NO_BUILD=true starts the image already loaded instead of building one —
+      see ./logstotal docker:up for why `--pull never` goes with it.
+    preconditions: [*needs-docker]
+    cmds:
+      - |
+        if [ -f data/.bundle-images ]; then
+          . data/.bundle-images
+          export LOGSTOTAL_IMAGE_TAG="$tag" LOGSTOTAL_NO_BUILD=true
+        fi
+        if [ "${LOGSTOTAL_NO_BUILD:-false}" = "true" ]; then
+          docker compose -f docker-compose.worker.yml up -d --no-build --pull never
+        else
+          docker build -t "logstotal:${LOGSTOTAL_IMAGE_TAG:-latest}" .
+          docker compose -f docker-compose.worker.yml up -d
+        fi
+
+  docker:worker-down:
+    desc: Stop standalone worker stack (docker-compose.worker.yml)
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose -f docker-compose.worker.yml down
+
+  docker:worker-logs:
+    desc: Follow logs for standalone worker stack
+    preconditions: [*needs-docker]
+    cmds:
+      - docker compose -f docker-compose.worker.yml logs -f
+
+  # ── HTTPS / reverse proxy ────────────────────────────────────────────────────
+
+  proxy:enable:
+    desc: Put Caddy in front — sets COMPOSE_PROFILES=proxy, DOMAIN, PROXY_TLS, ACME_EMAIL, WEB_PORT, COOKIE_INSECURE, ENABLE_HSTS in .env
+    summary: |
+      Automates the .env edits HTTPS with Caddy otherwise asks you to make
+      by hand — miss one and you get silent login failures (Secure cookie over
+      plain HTTP) or a publicly-exposed :8000:
+        COMPOSE_PROFILES += proxy   (existing profiles preserved)
+        DOMAIN            = <value>
+        PROXY_TLS         = acme | internal | custom | off
+        ACME_EMAIL        = <value>   (acme only)
+        WEB_PORT          = 127.0.0.1:8000:8000
+        COOKIE_INSECURE   = follows PROXY_TLS
+        ENABLE_HSTS       = follows PROXY_TLS
+      The last two are why this is one command: each TLS mode needs a different
+      pair, and getting either wrong breaks login without saying so.
+        DOMAIN=logs.example.com ACME_EMAIL=you@example.com ./logstotal proxy:enable
+        DOMAIN=logs.internal ./logstotal proxy:enable -- --tls internal   # air-gapped
+      --tls internal uses Caddy's own CA: no DNS, no port 80, no internet. Copy
+      its root out and trust it on client machines:
+        docker compose cp caddy:/data/caddy/pki/authorities/local/root.crt .
+      Also runs a best-effort DNS check for --tls acme (warn-only — never fails
+      the run) and is idempotent: re-running with the same values changes nothing.
+      Then: ./logstotal docker:up.
+    cmds:
+      # scripts/lib/common.sh::run_py is the venv-aware python3 runner — `pdm run --`
+      # when a .venv and pdm are both present, plain python3 otherwise. Sourcing it
+      # here rather than re-writing the if/else is what keeps the Docker-only host
+      # (no venv, stdlib-only script) working without another copy of the branch.
+      - . scripts/lib/common.sh && run_py scripts/proxy_enable.py {{.CLI_ARGS}}
+
+  # ── Multi-server deploy (SSH / root / key) ───────────────────────────────────
+
+  deploy:env-scaffold:
+    desc: "Generate template .env files for control plane and workers into deploy-envs/"
+    summary: |
+      Creates deploy-envs/control-plane.env and deploy-envs/worker.env from .env.example
+      with deployment-ready defaults. Edit these then distribute to your hosts.
+      The directory is gitignored — never commit env files with secrets.
+
+      Uses values from .env (if present) for SECRET_KEY and ADMIN_EMAIL, and
+      auto-generates any missing deployment secrets (admin/passwords, Postgres,
+      Redis, S3 access/secret keys) so generated templates are ready to use.
+
+      Refuses to overwrite an existing scaffold: regenerating rotates SECRET_KEY,
+      POSTGRES_PASSWORD and the S3 keys, which logs every session out and leaves the
+      workers authenticating with the old credentials. Edit the files in place, or
+      override with FORCE=yes (and mean it).
+      For HTTPS/Caddy defaults in the same control-plane.env, run:
+      ./logstotal deploy:env-scaffold:proxy
+    cmds:
+      - bash scripts/deploy-env-scaffold.sh
+
+  deploy:env-scaffold:proxy:
+    desc: "Generate scaffold envs and apply Caddy/HTTPS defaults to control-plane.env"
+    summary: |
+      Linked scaffold flow for proxy deployments:
+        1) Generates control-plane.env + worker.env when they do not exist yet
+           (an existing scaffold is left alone — regenerating would rotate
+           SECRET_KEY, POSTGRES_PASSWORD and the S3 keys)
+        2) Applies proxy defaults into deploy-envs/control-plane.env
+      No separate proxy file is generated. Safe to re-run.
+    cmds:
+      # One script invocation, not `task: deploy:env-scaffold` followed by this.
+      # The scaffold refuses to overwrite itself, so the two-step form would fail on
+      # every run after the first; the script's proxy arm scaffolds only when
+      # control-plane.env is absent.
+      - bash scripts/deploy-env-scaffold.sh proxy
+
+  fleet:
+    desc: "Show the control plane's record of its own fleet — hosts, roles, versions, results"
+    summary: |
+      Every deploy writes this record to <install>/fleet/manifest.json on the control
+      plane, so the fleet's shape survives losing the machine you deployed from — and so
+      `./logstotal upgrade` on the control plane knows which hosts it is responsible for.
+
+      It separates what was ASKED FOR from what was FOUND: entry, role and options are
+      configuration; version, result and containers are measurements. Which is what lets
+      it say "the record names three workers and I can see two" rather than picking one.
+
+      A result of `unverified` means the deploy could not confirm that host, not that the
+      host is broken — see ./logstotal deploy:status to check it now.
+
+      Run on a machine that is not a control plane it says so, and points at fleet:pull.
+
+      Optional env (or deploy.env):
+        DEPLOY_REMOTE_DIR   Install dir to read from (default /opt/logstotal)
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+    cmds:
+      - bash scripts/fleet.sh show
+
+  fleet:pull:
+    desc: "Fetch a control plane's fleet record and write a local deploy.env from it"
+    summary: |
+      For a workstation that has never seen this fleet — or one that lost its deploy.env.
+
+        ./logstotal fleet:pull -- cp.example.com
+
+      Writes deploy.env from the record, so every later `task deploy:*` runs bare against
+      the right hosts with the right settings. Refuses to overwrite an existing file
+      (FORCE=yes overrides): yours may hold settings the record does not carry.
+
+      SECRETS ARE NOT FETCHED and are not in that file — they never leave the machine that
+      generated them. So a pulled configuration can deploy, inspect and remove; it cannot
+      regenerate per-host env files (`./logstotal deploy:env`).
+
+      Optional env (or deploy.env):
+        DEPLOY_HOSTS        Used when no host is named; the first entry is the control plane
+        DEPLOY_REMOTE_DIR   Install dir on the host (default /opt/logstotal)
+        SSH_IDENTITY        SSH key
+        FORCE=yes           Overwrite an existing deploy.env
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+    cmds:
+      - bash scripts/fleet.sh pull {{.CLI_ARGS}}
+
+  deploy:status:
+    desc: "Show compose ps + health on all DEPLOY_HOSTS"
+    summary: |
+      Per host: `docker compose ps` and the container-side /health. Read-only.
+      The first host is the control plane; the rest are workers, so a worker showing
+      containers up while /health is unreachable there is expected — only the control
+      plane serves it.
+
+      Required env (or deploy.env, or this host's fleet record):
+        DEPLOY_HOSTS     Comma-separated host list
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      DEPLOY_ACTION: status
+    cmds:
+      - bash scripts/deploy-multiserver.sh {{.CLI_ARGS}}
+
+  deploy:logs:
+    desc: "Tail recent Docker logs from each host"
+    summary: |
+      Control plane shows main stack logs; workers show worker stack logs.
+      Optional: DEPLOY_LOGS_LINES (default 120).
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      DEPLOY_ACTION: logs
+    cmds:
+      - bash scripts/deploy-multiserver.sh {{.CLI_ARGS}}
+
+  deploy:stop:
+    desc: "Stop LogsTotal stacks on all DEPLOY_HOSTS (workers first, control plane last)"
+    summary: |
+      Workers first, control plane last — the order that stops jobs being claimed by a
+      worker whose database is about to go away. Containers only: volumes, data and the
+      install directory are untouched (that is ./logstotal deploy:remove).
+
+      Required env (or deploy.env, or this host's fleet record):
+        DEPLOY_HOSTS     Comma-separated host list
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      DEPLOY_ACTION: stop-only
+    cmds:
+      - bash scripts/deploy-multiserver.sh {{.CLI_ARGS}}
+
+  deploy:start:
+    desc: "Start LogsTotal stacks on all DEPLOY_HOSTS (first host control plane, others workers)"
+    summary: |
+      Control plane first, then workers — the reverse of deploy:stop, because a worker
+      that starts before PostgreSQL and Redis are up spends its first minute failing.
+      Uses each host's existing .env and code; it deploys nothing.
+
+      Required env (or deploy.env, or this host's fleet record):
+        DEPLOY_HOSTS     Comma-separated host list
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      DEPLOY_ACTION: start-only
+    cmds:
+      - bash scripts/deploy-multiserver.sh {{.CLI_ARGS}}
+
+  deploy:shell:
+    desc: "Open interactive SSH shell on DEPLOY_HOST (or first in DEPLOY_HOSTS) at DEPLOY_REMOTE_DIR"
+    summary: |
+      Opens an interactive root bash session on the target host, cd'd to DEPLOY_REMOTE_DIR.
+      Set DEPLOY_HOST to target a specific host, otherwise uses the first from DEPLOY_HOSTS.
+    # Hands the terminal to an interactive ssh session — Task must not capture stdin/stdout.
+    interactive: true
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      DEPLOY_ACTION: shell
+    cmds:
+      - bash scripts/deploy-multiserver.sh {{.CLI_ARGS}}
+
+  deploy:exec:
+    desc: "Run DEPLOY_CMD on all DEPLOY_HOSTS (requires DEPLOY_CMD)"
+    summary: |
+      Runs an arbitrary command on every host from the project directory. Useful for debugging.
+      Example: DEPLOY_CMD="docker ps" DEPLOY_HOSTS=... SSH_IDENTITY=... ./logstotal deploy:exec
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      DEPLOY_ACTION: exec
+    cmds:
+      - bash scripts/deploy-multiserver.sh {{.CLI_ARGS}}
+
+  deploy:
+    desc: "Deploy a fleet — from fresh Ubuntu/Debian boxes to a working install, one command"
+    summary: |
+      The multi-host counterpart of ./logstotal quickstart, and safe to re-run: it converges
+      an existing fleet rather than rebuilding it. For ONE machine with no fleet, use
+      ./logstotal quickstart instead — it needs no SSH and no host list.
+
+        ./logstotal deploy -- cp.example.com w1.example.com w2.example.com
+
+      Named once, they are remembered in deploy.env and every later deploy task runs bare:
+        ./logstotal deploy
+
+      The first host is the control plane. An entry may be `host` (SSH as root),
+      `user@host`, or `local` — this machine, no SSH — which is how the whole thing
+      runs from the control plane itself.
+
+      Eight steps: local tools, a reachability gate BEFORE anything is installed,
+      bootstrap every host, optional WireGuard, generate and install one .env per host,
+      the full preflight, package + the five-phase deploy, smoke. Each is its own task, so
+      a fleet that is already up can use them individually.
+
+      Optional env (or set in deploy.env):
+        DEPLOY_VPN=wireconf         Build a WireGuard mesh first
+        DEPLOY_DOMAIN / DEPLOY_ACME_EMAIL          Put Caddy/HTTPS in front
+        DEPLOY_BASIC_AUTH_USER / DEPLOY_BASIC_AUTH_PASSWORD
+                                    HTTP basic auth; the password is hashed on the
+                                    control plane and only the hash reaches a host
+        DEPLOY_ONLY=<host>          Act on one host — how a worker joins a live fleet
+        DEPLOY_BOOTSTRAP=false      Skip package installation
+        DEPLOY_SKIP_SMOKE=true      Skip the post-deploy check
+        VERSION=0.9.15              Deploy that PUBLISHED release, downloaded once here,
+                                    rather than a repackaging of this tree
+        ARCHIVE=<path or URL>       Deploy exactly that archive — for a closed network,
+                                    or one you built yourself
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      VERSION: '{{.VERSION}}'
+      ARCHIVE: '{{.ARCHIVE}}'
+      BUNDLE: '{{.BUNDLE}}'
+      RELEASE_REPO_URL: '{{.RELEASE_REPO_URL}}'
+    cmds:
+      - bash scripts/deploy-fleet.sh {{.CLI_ARGS}}
+
+  deploy:vpn:
+    desc: "Build a WireGuard mesh across DEPLOY_HOSTS with Wireconf and record the addresses (on by default)"
+    summary: |
+      On by default: DEPLOY_VPN defaults to wireconf. Set DEPLOY_VPN=none to skip it,
+      and the fleet then reaches the control plane at its public address.
+
+      When it IS asked for, a tunnel that cannot be built STOPS the deploy. Falling back
+      to the public addresses is not a smaller version of the request — it puts Redis,
+      PostgreSQL and Garage on a routable interface, which is what asking for a VPN was
+      meant to prevent. DEPLOY_VPN_OPTIONAL=true restores best-effort.
+
+      Installs Wireconf into ~/.local if it is not already present, builds a
+      hub-and-spoke mesh with the control plane as hub, then records every host's VPN
+      address in deploy-envs/vpn.json — which ./logstotal deploy:env reads for all the
+      cross-host URLs. So the order is: deploy:vpn, then deploy:env.
+
+      A failed `verify` alone is only a warning, and only when every peer has completed
+      a WireGuard handshake: verify works by pinging, and a host dropping ICMP fails it
+      while carrying traffic perfectly well. No handshake is fatal.
+
+      DEPLOY_VPN=tailscale is accepted and points at the manual instructions —
+      `tailscale up` needs an interactive login, so it is documented, not automated.
+
+      Required env (or set in deploy.env — caller env always wins):
+        DEPLOY_HOSTS             Comma-separated host list; the first becomes the hub
+      Optional env:
+        DEPLOY_VPN               wireconf (default) | tailscale | none
+        DEPLOY_VPN_NETWORK       WireGuard CIDR (default 10.200.0.0/24)
+        DEPLOY_VPN_HUB_ENDPOINT  Public address peers dial (default: the first host)
+        DEPLOY_VPN_INSTALL       falsy to never install Wireconf
+        DEPLOY_VPN_RETRIES / DEPLOY_VPN_DELAY   Verify polling (default 12 x 5s)
+    cmds:
+      - bash scripts/deploy-vpn.sh
+
+  deploy:env:
+    desc: "Generate one ready-to-use .env per DEPLOY_HOST and install it on each"
+    summary: |
+      One step, because generating the files and putting them where they are read is one
+      job. Splitting it produced the failure it was meant to prevent: nothing pushed the
+      env files, so a fleet got as far as `env_file: .env` and stopped — with a preflight
+      that had WARNED about the missing file and continued.
+
+      Secrets are generated ONCE, into deploy-envs/secrets.json (0600), and never rotated
+      without DEPLOY_ENV_FORCE — rotating SECRET_KEY logs every session out and leaves the
+      workers authenticating with the old database password. Hand-added keys survive.
+
+      Every cross-host URL is resolved for you: each worker is pointed at the control
+      plane's address (the VPN one when there is a tunnel), and the relays are bound where
+      the workers can reach them.
+
+      It REFUSES to overwrite an .env already on a host, and names the keys that would be
+      lost — pushing over a hand-tuned production file is the most destructive thing this
+      tooling can do, and it is silent. DEPLOY_ENV_PUSH_FORCE=yes overrides.
+
+      Required env (or set in deploy.env — caller env always wins):
+        DEPLOY_HOSTS            Comma-separated host list
+      Optional env:
+        DEPLOY_REMOTE_DIR       Install dir on each host (default /opt/logstotal)
+        DEPLOY_ENV_DIR          Where the generated files live (default deploy-envs)
+        DEPLOY_ENV_FORCE        Regenerate the shared secrets (ROTATES SECRET_KEY)
+        DEPLOY_ENV_PUSH=false   Generate them and stop, without installing anything
+        DEPLOY_ENV_PUSH_FORCE   `yes`: replace an .env already on a host
+        DEPLOY_ADMIN_EMAIL / DEPLOY_HUEY_WORKERS / DEPLOY_DOMAIN / DEPLOY_PROXY_TLS
+        DEPLOY_CP_ADDRESS / DEPLOY_CP_BIND_ADDRESS
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+    cmds:
+      - bash scripts/deploy-env-fleet.sh
+      - |
+        if [ "${DEPLOY_ENV_PUSH:-true}" = "false" ]; then
+          echo ">>> generated only (DEPLOY_ENV_PUSH=false) — nothing was installed on a host"
+        else
+          bash scripts/deploy-env-push.sh
+        fi
+
+  deploy:bootstrap:
+    desc: "Install Docker, 7z and rsync on every DEPLOY_HOST and create the install directory"
+    summary: |
+      Turns fresh Ubuntu/Debian boxes into hosts the deploy can use. Idempotent —
+      a second run prints "already installed" and changes nothing, so it is also
+      how you prepare one new machine before adding it to DEPLOY_HOSTS.
+
+      Per host:
+        - reachability (SSH, or direct execution for a `local` entry)
+        - reads /etc/os-release and WARNS if the OS is outside the tested set
+          (Ubuntu/Debian) — it never refuses to continue
+        - Docker CE + compose plugin from the official repository
+        - p7zip, rsync, curl (+ wireguard-tools when DEPLOY_VPN=wireconf)
+        - DEPLOY_REMOTE_DIR with data/ uploads/ backups/, owned by the deploy user
+
+      On a host with no apt-get, or where elevating needs a password, it names what
+      to install by hand and moves on; ./logstotal deploy:preflight then reports what is
+      still missing.
+
+      Required env (or set in deploy.env — caller env always wins):
+        DEPLOY_HOSTS       Comma-separated host list; `host`, `user@host`, or `local`
+      Optional env:
+        DEPLOY_REMOTE_DIR  Install dir on each host (default /opt/logstotal)
+        DEPLOY_VPN         `wireconf` also installs wireguard-tools
+        SSH_IDENTITY       Path to SSH private key
+        DEPLOY_ENV_FILE    Path to defaults file (default: deploy.env in cwd)
+    cmds:
+      - bash scripts/deploy-bootstrap.sh
+
+  deploy:preflight:
+    desc: "Verify SSH, required tools, and readiness on all DEPLOY_HOSTS before deploying"
+    summary: |
+      Remote readiness check — run before ./logstotal deploy.
+      For each host in DEPLOY_HOSTS, verifies:
+        - SSH connectivity (BatchMode, no password)
+        - Required tools: docker, compose plugin, task (go-task), 7z (p7zip),
+          rsync (release snapshots + rollback)
+        - Target directory writable (DEPLOY_REMOTE_DIR, default /opt/logstotal)
+        - .env file presence on already-deployed hosts
+        - Disk space (warns below 5 GiB free)
+
+      Required env (or set in deploy.env — caller env always wins):
+        DEPLOY_HOSTS     Comma-separated host list; entries are `host` (SSH as
+                         root) or `user@host`
+      Optional env:
+        SSH_IDENTITY     Path to SSH private key
+        DEPLOY_REMOTE_DIR  Target dir on each server (default /opt/logstotal)
+        DEPLOY_ENV_FILE  Path to defaults file (default: deploy.env in cwd)
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+    cmds:
+      - bash scripts/deploy-preflight.sh {{.CLI_ARGS}}
+
+  deploy:network:
+    desc: "Print what must be reachable between the deploy hosts, and from where"
+    summary: |
+      The port list, derived from the fleet you actually configured rather than from
+      prose. Connects to nothing and changes nothing.
+
+      Says, per host, what it must accept and why:
+        22/tcp    every host, from the machine running the deploy
+        8000/tcp  the control plane — or 80+443 when DEPLOY_DOMAIN puts Caddy in front
+        6379,5432,3900/tcp  the control plane, from every worker: Redis, PostgreSQL,
+                  Garage. Without a VPN these sit on a routable interface protected
+                  only by their generated passwords.
+        51820/udp the hub only, with DEPLOY_VPN=wireconf — spokes dial out and need
+                  no inbound rule at all.
+
+      With a tunnel, every relay above moves onto it, which is the difference the VPN
+      actually buys and the reason to see both lists.
+
+      Required env (or deploy.env):
+        DEPLOY_HOSTS     Comma-separated host list; the first is the control plane
+      Optional env:
+        DEPLOY_VPN, DEPLOY_VPN_PORT, DEPLOY_DOMAIN, DEPLOY_PROXY_TLS
+        FORMAT=json      Machine-readable, for scripting
+    cmds:
+      - bash scripts/deploy-network.sh
+
+  deploy:init:
+    desc: "Write deploy.env from a host list — ./logstotal deploy:init -- cp.example.com w1 w2"
+    summary: |
+      Step one of the fleet workflow, and the step that gives you something to EDIT:
+
+        ./logstotal deploy:init -- cp.example.com w1.example.com w2.example.com
+        $EDITOR deploy.env      # the install directory, VPN, domain, workers…
+        ./logstotal deploy:plan        # what would happen, changing nothing
+        ./logstotal deploy             # do it
+
+      The first host is the control plane, the rest are workers. It names the fleet once
+      so every later deploy task runs bare, and writes the settings it can resolve now —
+      including the RESOLVED VPN mode, because an unwritten key is what leaves a fleet
+      "undecided" later.
+
+      `deploy.env.example` documents every knob; docs/reference/fleet.md is the full
+      reference. Refuses to overwrite an existing deploy.env, which may hold settings it
+      knows nothing about — FORCE=yes overrides.
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+    cmds:
+      - bash scripts/deploy-fleet.sh init {{.CLI_ARGS}}
+
+  deploy:plan:
+    desc: "Report what a deploy would do to each DEPLOY_HOST — changes nothing"
+    summary: |
+      Read-only. Runs the same checks as deploy:preflight, then compares each host's
+      installed release against the package this checkout would build and prints a
+      verdict per host:
+
+        FRESH INSTALL     nothing installed there yet
+        UPDATE a → b      installed, and older than this checkout
+        ALREADY CURRENT   same version and commit, containers up
+        PARTIAL           code present but stopped, or directories with no code
+                          (the shape a deploy that died half way leaves behind)
+        BLOCKED <reason>  something measured would stop a deploy
+
+      Always exits 0 — it is a report, not a gate. Safe against a live fleet.
+
+      Required env (or deploy.env, or this host's fleet record):
+        DEPLOY_HOSTS     Comma-separated host list
+      Optional env:
+        DEPLOY_REMOTE_DIR  Target dir on each server (default /opt/logstotal)
+        DEPLOY_VPN       wireconf → also check the hub's firewall and WireGuard
+        DEPLOY_PLAN_FORMAT  text (default) | json. `json` puts one document on stdout —
+                         settings, findings, per-host verdicts, counts — and the human
+                         check stream on stderr, so `./logstotal deploy:plan | jq` works.
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      # Bridged, so `task deploy:plan DEPLOY_PLAN_FORMAT=json` works as well as the
+      # environment form. go-task never exports a CLI variable to the shell, so without
+      # this the CLI spelling is accepted and silently ignored — the worst shape a knob
+      # can have. Safe because the script reads it with `${VAR:-…}`, which treats the
+      # empty value go-task exports for an unset key as absent.
+      DEPLOY_PLAN_FORMAT: '{{.DEPLOY_PLAN_FORMAT}}'
+      DEPLOY_PLAN_ONLY: "true"
+    cmds:
+      - bash scripts/deploy-preflight.sh {{.CLI_ARGS}}
+
+  deploy:remove:
+    desc: "Remove LogsTotal from all DEPLOY_HOSTS — containers, volumes, images, and the directory"
+    # The destructive counterpart to task deploy. DEPLOY_CLEAN tears down containers,
+    # volumes and images but leaves DEPLOY_REMOTE_DIR, so only this lets a deploy start
+    # from scratch rather than inherit whatever a half-finished one left behind. Guarded
+    # like every other task here that replaces live state — a confirm variable AND this
+    # prompt. -y for automation.
+    prompt: "Remove LogsTotal from every DEPLOY_HOST? This deletes containers, volumes, images and the install directory."
+    summary: |
+      Takes LogsTotal off each host: stacks down (workers first, control plane last),
+      volumes and images removed, then DEPLOY_REMOTE_DIR deleted.
+
+      Requires DEPLOY_REMOVE_CONFIRM=yes in addition to this prompt.
+
+      The fleet is resolved like every other deploy verb — positionals, then the
+      environment, then deploy.env, then this host's own fleet record — so a bare run on a
+      control plane removes the fleet that record names, the control plane last. Check
+      what that is first with `./logstotal fleet`, or narrow it with DEPLOY_ONLY.
+
+      Required env:
+        DEPLOY_REMOVE_CONFIRM   Must be exactly `yes`
+      Host list (or deploy.env, or this host's fleet record):
+        DEPLOY_HOSTS            Comma-separated host list
+      Optional env:
+        DEPLOY_REMOVE_KEEP_DATA yes → keep data/ uploads/ backups/, remove the rest
+        DEPLOY_REMOVE_VPN       truthy → also bring wg0 down, delete its config, and
+                                drop deploy-envs/vpn.json
+        DEPLOY_ONLY             Restrict to one host
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      DEPLOY_ACTION: remove
+    cmds:
+      - bash scripts/deploy-multiserver.sh {{.CLI_ARGS}}
+
+  deploy:smoke:
+    desc: "Post-deploy health and smoke checks against a running instance"
+    summary: |
+      Probes a running LogsTotal instance to verify it is healthy after deployment.
+      Checks /health (DB + Redis + storage) and the homepage (/).
+
+      URL resolution order (each also read from deploy.env when not in the env):
+        1. SMOKE_URL (explicit full URL, e.g. https://logs.example.com)
+        2. DOMAIN (proxy/HTTPS deployments — derives https://$DOMAIN; with the
+           proxy profile, :8000 is loopback-bound and unreachable remotely)
+        3. First host in DEPLOY_HOSTS (derives http://<host>:8000; a user@ prefix
+           is stripped)
+        4. http://localhost:8000 (fallback for local dev)
+
+      Each of DOMAIN, PROXY_TLS and the host list is also answered by this host's own
+      fleet record when neither the environment nor deploy.env has it — which is the
+      normal case ON a control plane, where deploy.env belongs to whoever ran the deploy.
+      Without that, a fleet behind Caddy smoke-tested http://localhost:8000, which is
+      loopback-bound on purpose, and reported SMOKE FAILED while perfectly healthy.
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+    cmds:
+      - bash scripts/deploy-smoke.sh
+
+  # ── Upgrade workflows ───────────────────────────────────────────────────────
+
+  upgrade:stage-code:
+    # NOT internal: the upgrade docker and multiserver flows re-enter this task via a
+    # `task upgrade:stage-code` shell subprocess, and go-task refuses internal tasks
+    # invoked through the CLI — even from inside another task's cmds.
+    summary: |
+      Shared code-staging step for ./logstotal upgrade, both scopes.
+      Git mode (default when .git exists): refuse dirty tree, fetch, checkout origin/$REF
+      detached when available (fixes stale local-branch tips), else checkout $REF directly.
+      Archive mode (ARCHIVE=path-or-https-URL): download if needed, extract (.zip/.tar.gz/.7z),
+      strip a single top-level dir when it wraps Taskfile.yml, rsync -a over the install dir
+      (no --delete — .env/data/uploads/backups are never touched). The staged tree's own
+      VERSION is used as-is; nothing regenerates it.
+    # env: bridge — see the note on health:remote for why this is not a shell line.
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      # No `| default` on REF, deliberately: an unset var renders as "", and empty is the
+      # signal "resolve the latest published release". A default here would make upgrades
+      # track a branch rather than a published release.
+      VERSION: '{{.VERSION}}'
+      REF: '{{.REF}}'
+      ALLOW_UNRELEASED: '{{.ALLOW_UNRELEASED}}'
+      RELEASE_REPO_URL: '{{.RELEASE_REPO_URL}}'
+      # No SKIP_IF_CURRENT here, deliberately: staging has no notion of "already current",
+      # so bridging it would make a key that looks wired and does nothing. A
+      # bridged-but-inert key beside a live one teaches the next reader that this block is
+      # decorative, which is the wrong lesson given how load-bearing the DEPLOY_HOSTS
+      # non-bridge is.
+      ARCHIVE: '{{.ARCHIVE}}'
+      SOURCE: '{{.SOURCE}}'
+    cmds:
+      - bash scripts/upgrade.sh stage-code
+
+  upgrade:
+    desc: "Upgrade to a published release — this host, or the whole fleet"
+    summary: |
+      One verb. Whether it upgrades this machine or a fleet is a fact about the machine,
+      not a choice: if a fleet is named — as arguments, in deploy.env, or in this host's
+      own fleet record — every host in it is upgraded. Otherwise this host alone.
+
+        ./logstotal upgrade                      # the newest published release
+        ./logstotal upgrade VERSION=0.9.14       # that one, including going back
+        ./logstotal upgrade ARCHIVE=/media/x.7z  # exactly that file; no release lookup
+        ./logstotal upgrade -- cp w1 w2          # name the fleet explicitly
+
+      Run it ON THE CONTROL PLANE. It backs up first (verified), snapshots the current
+      release, stages the new one beside the install and rsyncs it across, migrates on the
+      control plane only, and starts workers behind the control plane's health gate.
+
+      Three questions, one knob each — see docs/runbooks/upgrading.md:
+        VERSION=X.Y.Z    which release          (default: the newest published)
+        SOURCE=          where the code comes from: package (default) | git
+        ARCHIVE=<path>   an exact archive, for a host with no internet
+
+      Ask what it would do first, changing nothing:  ./logstotal upgrade:plan
+
+      Optional env:
+        SKIP_IF_CURRENT=true   exit 0 before the backup when already there and up (cron)
+        RESTAGE_IF_CURRENT=true  restage the release already installed AND running. Without
+                               it that is refused — re-running rebuilds and restarts for no
+                               change. Current with NOTHING running is the repair flow and
+                               always proceeds, with neither knob.
+        SKIP_BACKUP=true       NOT RECOMMENDED
+        SKIP_SNAPSHOT=true     no local rollback point
+        DEPLOY_ONLY=<host>     act on a subset of the fleet
+    preconditions: [*needs-docker]
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      REF: '{{.REF}}'
+      VERSION: '{{.VERSION}}'
+      SOURCE: '{{.SOURCE}}'
+      ALLOW_UNRELEASED: '{{.ALLOW_UNRELEASED}}'
+      RELEASE_REPO_URL: '{{.RELEASE_REPO_URL}}'
+      SKIP_IF_CURRENT: '{{.SKIP_IF_CURRENT}}'
+      RESTAGE_IF_CURRENT: '{{.RESTAGE_IF_CURRENT}}'
+      SKIP_BACKUP: '{{.SKIP_BACKUP}}'
+      SKIP_SNAPSHOT: '{{.SKIP_SNAPSHOT}}'
+      ARCHIVE: '{{.ARCHIVE}}'
+      BUNDLE: '{{.BUNDLE}}'
+      HEALTH_URL: '{{.HEALTH_URL}}'
+    cmds:
+      - bash scripts/upgrade.sh upgrade {{.CLI_ARGS}}
+
+  upgrade:plan:
+    desc: "What would an upgrade do? Read-only — resolves the release, names the source, checks the artifact"
+    # No `preconditions:` anywhere in this task, deliberately. A failed precondition exits
+    # 201, and this command's whole contract is that it always exits 0 and turns every
+    # failure into a printed verdict — the same discipline as task deploy:plan.
+    summary: |
+      Answers the three questions every upgrade answers, and runs nothing:
+
+        installed  what this install is on now
+        target     the release that would be staged
+        server     where releases are resolved from, and which source said so
+        source     package | git | archive, and why
+        artifact   whether the package can actually be fetched
+        restarts   this host, or a fleet
+        would run  the command to type
+
+      Always exits 0. Use it before ./logstotal upgrade, or when an
+      upgrade failed and you want to know what it was reaching for — previously that could
+      only be discovered by starting one, which takes a backup first.
+
+      Honours the same knobs as the upgrade itself: VERSION, SOURCE, ARCHIVE,
+      RELEASE_REPO_URL.
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      VERSION: '{{.VERSION}}'
+      REF: '{{.REF}}'
+      ALLOW_UNRELEASED: '{{.ALLOW_UNRELEASED}}'
+      ARCHIVE: '{{.ARCHIVE}}'
+      SOURCE: '{{.SOURCE}}'
+    cmds:
+      - bash scripts/upgrade.sh plan
+
+  upgrade:rollback:
+    desc: "Undo the last upgrade — restore the previous snapshot, rebuild, restart"
+    # Replaces a running deployment with an older release and consumes the snapshot doing
+    # it. Every task here that replaces live state asks first.
+    prompt: "Restore the previous release snapshot and restart?"
+    summary: |
+      One verb, both scopes — like ./logstotal upgrade, and decided the same way. If a fleet is
+      named (as arguments, in deploy.env, or in this host's own fleet record) every host
+      in it is rolled back; otherwise this host alone.
+
+        ./logstotal upgrade:rollback              # this host, or the fleet
+        ./logstotal upgrade:rollback -- cp w1     # name it explicitly
+
+      ./logstotal upgrade snapshots the installed tree to backups/releases/<stamp>-<version>/
+      before it stages anything, keeping DEPLOY_KEEP_RELEASES of them (default 3). This
+      restores the most recent one and CONSUMES it, so running it twice goes back two
+      releases.
+
+      Steps:
+        1. Refuse if the release being left behind applied migrations the snapshot does not
+           contain — restoring the code alone would leave the database stamped at a revision
+           the restored app cannot find, and it would not boot. Restore the pre-upgrade
+           database backup first.
+        2. rsync the snapshot back with --delete, so files the newer release ADDED are
+           removed. .env, data/, uploads/ and backups/ are excluded and never touched.
+        3. docker compose build && up -d — no code is bind-mounted, so restoring the tree
+           alone would leave the containers running the newer image.
+        4. health:remote against ${HEALTH_URL} (default http://localhost:8000).
+
+      It never touches the database. If the upgrade ran migrations you need undone, restore
+      the pre-upgrade backup with ./logstotal restore:sqlite / restore:postgres — see
+      docs/runbooks/upgrading.md#when-rollback-is-unsafe.
+    preconditions: [*needs-docker]
+    env:
+      FLEET_FROM: '{{.FLEET_FROM}}'
+      FLEET_REFRESH: '{{.FLEET_REFRESH}}'
+      HEALTH_URL: '{{.HEALTH_URL | default "http://localhost:8000"}}'
+    cmds:
+      - bash scripts/upgrade.sh rollback {{.CLI_ARGS}}
+
+  # ── Packaging / release ──────────────────────────────────────────────────────
+
+  bundle:
+    desc: "Build a self-contained bundle — the release plus every image, for a closed network"
+    summary: |
+      `ARCHIVE=` already installs on a host with no internet: the archive is copied from
+      the machine running the deploy, so hosts never reach the release server. What it does
+      NOT solve is the images. Every host still runs `docker compose build`, which pulls
+      python:3.14-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI; Compose
+      then pulls Redis, PostgreSQL, Caddy and socat; and Zircolite — used by five of the six
+      shipped workflows — is pulled LAZILY INSIDE THE FIRST WINDOWS JOB. So a closed-network
+      install passes every check, reports healthy, and fails hours later.
+
+      A bundle is the archive plus all of that, saved with `docker save`.
+
+        ./logstotal bundle                        # from this tree, on a machine WITH a network
+        ./logstotal bundle:verify -- <bundle.7z>  # before you carry it through the airlock
+        ./logstotal deploy  BUNDLE=/media/usb/logstotal-bundle-<v>-<arch>.7z
+        ./logstotal upgrade BUNDLE=/media/usb/logstotal-bundle-<v>-<arch>.7z
+
+      It is deliberately NOT a release asset: ~430 MB against the archive's 125 MB, and
+      single-ARCHITECTURE, because `docker save` records one. The filename says which.
+
+      Optional env:
+        VERSION=X.Y.Z     the release to bundle (default: this tree's)
+        ARCHIVE=<path>    use this .7z instead of building one
+        BUNDLE_OUT=<path> where to write it
+    preconditions: [*needs-docker]
+    env:
+      VERSION: '{{.VERSION}}'
+      ARCHIVE: '{{.ARCHIVE}}'
+      BUNDLE_OUT: '{{.BUNDLE_OUT}}'
+    cmds:
+      - bash scripts/bundle.sh build
+
+  bundle:verify:
+    desc: "Check a bundle before you carry it anywhere — works on a machine with no Docker"
+    summary: |
+      Reads the tar and its manifest: the checksum beside it, the release archive, the
+      application image, the runtime image count, and the architecture.
+
+      It needs no Docker on purpose — an operator has to be able to check a bundle before
+      carrying it through an airlock, and the machine they check it on is not necessarily
+      one that runs containers.
+
+        ./logstotal bundle:verify -- logstotal-bundle-1.2.3-x86_64.tar
+    cmds:
+      - bash scripts/bundle.sh verify {{.CLI_ARGS}}

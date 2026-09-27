@@ -1,0 +1,170 @@
+# Forgejo CI — the same checks as .github/workflows/ci.yml, on a self-hosted Forgejo runner.
+#
+# Forgejo ignores .github/workflows/ entirely when .forgejo/ exists, so this file is the
+# whole of what runs here and needs no `if:` guards.
+#
+# ── What this file may and may not contain ───────────────────────────────────
+#
+# It says how to PROVISION a runner. It never says what to CHECK — every check is a
+# `task ci:*`, defined once in Taskfile.yml and called identically by GitHub. A comment
+# asking people to keep two CI files in step is not a mechanism; `tests/test_ci_workflows.py`
+# is.
+#
+# The upside for a human: any red job below reproduces locally with one command.
+#
+# ── Four facts about this runner ─────────────────────────────────────────────
+#
+#   * `ubuntu-latest` is a node:22-bookworm CONTAINER with no Docker daemon; `self-hosted`
+#     is the HOST executor (Ubuntu, user `runner` in the docker group) and is the only
+#     label that can build an image. Everything runs there.
+#   * `pdm-project/setup-pdm` and `arduino/setup-task` do not resolve on data.forgejo.org.
+#     ./logstotal uses the `task` preinstalled on the host; everything else comes from
+#     ci-provision.sh.
+#   * `services:` schedules on the host executor but the service container is NOT reachable
+#     from the job, so PostgreSQL is started with a plain `docker run`.
+#   * No sudo means no apt. ci-provision.sh downloads static binaries into ~/.local/bin,
+#     which persists between runs — so the first run downloads and the rest are no-ops.
+#
+# Jobs are independent and carry no `needs:`, so they run in parallel up to the runner's
+# `capacity`. At capacity 1 they queue and the wall clock is their sum.
+
+name: CI
+
+on:
+  push:
+    # `branches: ['**']` rather than a bare `push:`, which also fires on TAG pushes. A tag
+    # would otherwise start this suite twice — once from its own push trigger and once as
+    # release.yml's gate.
+    branches: ['**']
+  # Callable, so release.yml gates publishing on the *same* jobs rather than a duplicated
+  # subset. Mirrors .github/workflows/ci.yml.
+  workflow_call:
+    inputs:
+      # What to check out: a manual release re-run builds an existing tag, not the default
+      # branch. Empty for every other trigger. See .github/workflows/ci.yml.
+      ref:
+        type: string
+        required: false
+        default: ""
+  workflow_dispatch:
+
+# One run per branch, so a second push in quick succession does not queue behind the
+# first on a runner that executes one job at a time. Deliberately NOT set on release.yml: a
+# cancelled release is worse than a slow one.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PDM_CHECK_UPDATE: "false"
+  PYTHONUNBUFFERED: "1"
+  # Makes tests/test_postgres_sql_compat.py fail rather than skip if its server is missing.
+  CI: "true"
+
+jobs:
+  # ── The test suite ─────────────────────────────────────────────────────────
+  test:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+          # Tags, not just history: `test_the_declared_version_has_a_git_tag` skips only
+          # when `.git` is absent, and a shallow checkout leaves `.git` present with zero
+          # tags — so it fails rather than skips. `fetch-depth: 0` rather than GitHub's
+          # `fetch-tags`, because the action version here is whatever data.forgejo.org
+          # currently mirrors, and a full clone from a self-hosted server is cheap.
+          fetch-depth: 0
+
+      - name: Provision
+        run: bash scripts/ci-provision.sh --report pdm shellcheck sqlite3
+
+      - name: PostgreSQL
+        # The only service the suite needs. No Redis: conftest points app.redis_client at
+        # fakeredis and Huey's queue at MemoryStorage, so nothing reaches a broker.
+        #
+        # PostgreSQL is needed because the rest of the suite runs on SQLite, which is
+        # permissive exactly where PostgreSQL is strict — an enum-vs-VARCHAR comparison
+        # passes there and 500s on PostgreSQL.
+        #
+        # Named and published per run so two concurrent jobs cannot collide on 5432.
+        run: |
+          set -euo pipefail
+          name="logstotal-ci-pg-${GITHUB_RUN_ID:-local}"
+          docker rm -f "$name" >/dev/null 2>&1 || true
+          docker run -d --name "$name" -p 127.0.0.1::5432 \
+            -e POSTGRES_USER=pgtest -e POSTGRES_PASSWORD=pgtest -e POSTGRES_DB=pgtest \
+            postgres:16-alpine >/dev/null
+          for _ in $(seq 1 40); do
+            docker exec "$name" pg_isready -U pgtest -q 2>/dev/null && break
+            sleep 1
+          done
+          docker exec "$name" pg_isready -U pgtest -q || { echo "::error::postgres did not become ready"; exit 1; }
+          port=$(docker port "$name" 5432 | head -1 | sed 's/.*://')
+          echo "POSTGRES_TEST_URL=postgresql://pgtest:pgtest@127.0.0.1:${port}/pgtest" >> "$GITHUB_ENV"
+          echo "PG_CONTAINER=${name}" >> "$GITHUB_ENV"
+
+      - name: Install dependencies
+        run: pdm install
+
+      - name: Lint + format check
+        # Not folded into ci:test: GitHub runs the suite as a Python matrix and lint is
+        # version-independent, so it is a separate job there. Splitting it here would cost
+        # a second checkout and `pdm install` (~12s) to save 5s.
+        run: ./logstotal check
+
+      - name: Test suite
+        run: ./logstotal ci:test
+
+      - name: Stop PostgreSQL
+        if: always()
+        run: docker rm -f "${PG_CONTAINER:-}" >/dev/null 2>&1 || true
+
+  # ── What a release hands to an operator ────────────────────────────────────
+  artifacts:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Provision
+        run: bash scripts/ci-provision.sh 7z tailwind
+
+      - name: Compose parses, image builds, archive builds, neither ships a secret
+        run: ./logstotal ci:artifacts
+
+  # ── The deployment actually runs ───────────────────────────────────────────
+  #
+  # Everything above reasons *about* the deployment. This starts it: the real entrypoint,
+  # init_db.py, migrations in a container, a worker registering, and a log going in and
+  # findings coming out. Docker-path failures are environment-shaped and invisible to both
+  # code review and the test suite.
+  deploy-smoke:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Boot the stack, smoke it, analyse a log
+        run: ./logstotal ci:deploy
+
+  # ── The deploy chain, without a fleet ──────────────────────────────────────
+  #
+  # What it can prove: the chain completes, in order, touching no network. What it cannot:
+  # anything about a real remote shell. The fish login-shell tests skip here — this runner
+  # has no sudo, so no apt, so no fish — and faking that with a stub would only test the
+  # stub. A real multi-host rehearsal owns that, deliberately.
+  dry-run:
+    runs-on: self-hosted
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.ref }}
+
+      - name: Provision
+        run: bash scripts/ci-provision.sh shellcheck
+
+      - name: Shellcheck, then the whole chain against nothing
+        run: ./logstotal ci:dry-run

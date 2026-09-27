@@ -1,0 +1,33 @@
+# Zircolite field-mapping config for journald JSON exports (`journalctl -o json`).
+#
+# Passed with `-c` by workflows/linux_journald.yml (via the task's `options.config`,
+# which resolves filenames in this directory — the one the runner bind-mounts).
+#
+# WHY THIS EXISTS
+# The compiled Linux SIGMA ruleset in rules_linux.json is written against sysmon and
+# auditd field names: CommandLine (529 rule references), Image (353), comm, exe. A
+# journald export carries the same facts under _CMDLINE / _EXE / _COMM, so without a
+# mapping essentially no rule fires and the job reports "0 findings" — which reads as
+# *clean* rather than *not analysed*. Measured on an 8-event journald sample against
+# this exact ruleset: 0 detections before, 6 after.
+#
+# HOW `alias` BEHAVES
+# It adds a SECOND column carrying the same value; the original journald field is kept,
+# so the raw output that app/intel/event_timeline.py and app/intel/lineage.py re-parse is
+# unchanged. Zircolite strips non-alphanumeric characters from column names (_EXE -> EXE)
+# but looks an alias up under BOTH the raw and the sanitised name, so the underscored
+# journald name is the safe key to write here.
+#
+# `-c` REPLACES the shipped config rather than merging with it. That is intentional and
+# was measured: pairing these aliases with a full copy of upstream's 53 KB config.yaml
+# produced identical detections, so vendoring that copy would only add drift.
+useless:
+  - null
+  - ""
+
+alias:
+  _EXE: Image # process path — the most-referenced field in the ruleset
+  _CMDLINE: CommandLine # full command line
+  _COMM: comm # short name, used by the auditd-shaped rules
+  _HOSTNAME: Computer # also what app/analytics.py reads for computer entities
+  _UID: User

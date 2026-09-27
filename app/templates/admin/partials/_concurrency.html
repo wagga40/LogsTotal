@@ -1,0 +1,66 @@
+<!-- Effective-concurrency card body — lazy-loaded via /admin/concurrency-partial -->
+<div class="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-gray-500 mb-3">
+  <span>Parallel tool execution
+    {% if parallel_execution %}
+    <span class="text-emerald-400 font-mono">ON</span>
+    {% else %}
+    <span class="text-gray-400 font-mono">OFF</span>
+    {% endif %}
+  </span>
+  <span>TOOL_MAX_WORKERS <span class="text-gray-300 font-mono">{{ tool_max_workers }}</span></span>
+  <span>threads/tool <span class="text-gray-300 font-mono">{{ threads_per_tool }}</span></span>
+  <span>max tools/workflow <span class="text-gray-300 font-mono">{{ max_tools_per_workflow }}</span></span>
+</div>
+
+{% if hosts %}
+<div class="overflow-x-auto">
+  <table class="w-full text-sm">
+    <thead>
+      <tr class="text-xs text-gray-500 uppercase tracking-wide text-left border-b border-gray-800">
+        <th class="py-1.5 pr-3 font-medium">Host</th>
+        <th class="py-1.5 px-3 font-medium text-right">HUEY_WORKERS</th>
+        <th class="py-1.5 px-3 font-medium text-right">Rec.</th>
+        <th class="py-1.5 px-3 font-medium text-right">Cores</th>
+        <th class="py-1.5 px-3 font-medium text-right">Threads/tool</th>
+        <th class="py-1.5 px-3 font-medium text-right">Peak (serial)</th>
+        {% if parallel_execution %}
+        <th class="py-1.5 pl-3 font-medium text-right">Peak (parallel)</th>
+        {% endif %}
+      </tr>
+    </thead>
+    <tbody class="divide-y divide-gray-800">
+      {% for h in hosts %}
+      <tr>
+        <td class="py-1.5 pr-3 font-mono text-gray-300 truncate max-w-[12rem]" title="{{ h.hostname }}">{{ h.hostname }}</td>
+        <td class="py-1.5 px-3 font-mono text-gray-300 text-right">{{ h.huey_workers }}</td>
+        {% set rec = recommended_workers.get(h.hostname) if recommended_workers else none %}
+        <td class="py-1.5 px-3 font-mono text-right {% if rec and rec != h.huey_workers %}text-yellow-300/90{% else %}text-gray-400{% endif %}"
+            title="Recommended HUEY_WORKERS for this host's cores (./logstotal recommend-scaling)">{{ rec if rec else '—' }}</td>
+        <td class="py-1.5 px-3 font-mono text-gray-400 text-right">{{ h.cpu_count if h.cpu_count else '?' }}</td>
+        <td class="py-1.5 px-3 font-mono text-gray-400 text-right">{{ h.threads_per_tool }}</td>
+        <td class="py-1.5 px-3 font-mono text-right {% if not parallel_execution and h.over_provisioned %}text-red-400{% else %}text-gray-300{% endif %}">{{ h.serial_peak }}</td>
+        {% if parallel_execution %}
+        <td class="py-1.5 pl-3 font-mono text-right {% if h.over_provisioned %}text-red-400{% else %}text-gray-300{% endif %}">{{ h.parallel_peak }}</td>
+        {% endif %}
+      </tr>
+      {% if h.over_provisioned %}
+      <tr>
+        <td colspan="{{ 7 if parallel_execution else 6 }}" class="pb-2 pl-3">
+          <div class="text-xs text-yellow-300/90">
+            peak {{ h.effective_peak }} &gt; {{ h.cpu_count }} cores — tools will fight for CPU.
+            See <a href="{{ docs_url('scaling.md') }}" class="underline hover:text-yellow-200" target="_blank" rel="noopener">capacity planning</a>,
+            or run <code class="font-mono text-gray-400">./logstotal recommend-scaling</code>.
+          </div>
+        </td>
+      </tr>
+      {% endif %}
+      {% endfor %}
+    </tbody>
+  </table>
+</div>
+<p class="text-xs text-gray-500 mt-2">
+  Peak CPU pressure per host &asymp; HUEY_WORKERS &times; ({% if parallel_execution %}min(TOOL_MAX_WORKERS, tools/workflow){% else %}1{% endif %}) &times; threads/tool.
+</p>
+{% else %}
+<div class="text-sm text-gray-500">Start a worker to see live capacity (no workers currently connected).</div>
+{% endif %}

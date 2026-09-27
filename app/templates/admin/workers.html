@@ -1,0 +1,32 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}Workers – Admin – LogsTotal{% endblock %}
+
+{% block content %}
+{{ page_header("Worker fleet", "/admin#manage", "Manage",
+               pills=[('%d live' % (active_workers | length), 'green' if active_workers else 'yellow')]) }}
+
+{% if request.query_params.get('recovered') %}
+<div class="bg-green-950/50 border border-green-800 rounded-xl p-4 mb-6">
+  <p class="text-sm text-green-300">Recovered {{ request.query_params.get('recovered') }} stuck job(s).</p>
+</div>
+{% endif %}
+
+{% if request.query_params.get('priority_saved') %}
+<div class="bg-green-950/50 border border-green-800 rounded-xl p-4 mb-6">
+  <p class="text-sm text-green-300">Updated capacity for {{ request.query_params.get('priority_saved') }} worker(s).</p>
+</div>
+{% endif %}
+
+{# The gate is owned by `ltWorkersCapacity` in app.js, and undefined reads as "poll". Never
+   a <script> here: this element is outside the swapped region, so a reset placed here is
+   reached only by a form submit or a full page load, and one keystroke in a capacity box
+   would stop the refresh for the life of the page. See
+   tests/js/workers-capacity-gate.test.mjs. #}
+<div id="workers-region"
+  hx-get="/admin/workers/partial"
+  hx-trigger="every 5s[!window.__workersPriorityDirty]"
+  hx-swap="innerHTML">
+  {% include "admin/partials/_workers_table.html" %}
+</div>
+{% endblock %}

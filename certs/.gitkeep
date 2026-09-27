@@ -1,0 +1,3 @@
+Put PROXY_TLS=custom certificate and key here; the caddy container reads them read-only at
+/etc/caddy/certs. Nothing else in this directory is tracked, packaged, or copied into an
+image — it holds private keys.

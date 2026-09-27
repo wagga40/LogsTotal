@@ -1,0 +1,60 @@
+{% if job_links %}
+<div class="space-y-1 lt-scroll lt-scroll--md pr-1">
+  {% for jl in job_links %}
+  {% set job = jl.job %}
+  {% if job %}
+  {# A row, not one big <a>: it carries two destinations — the job itself and the Intel
+     dashboard filtered to that job — and an anchor cannot nest another anchor. #}
+  <div class="flex items-center gap-3 px-3 py-2 rounded-lg hover:bg-gray-800/50 transition group text-sm">
+    <a href="/jobs/{{ job.id }}" class="text-gray-500 font-mono text-xs w-10 flex-shrink-0 hover:text-gray-300">#{{ job.id }}</a>
+    <a href="/jobs/{{ job.id }}" class="text-blue-300 group-hover:text-blue-200 font-mono truncate flex-1" title="{{ log_files_map.get(job.id, '') }}">
+      {{ log_files_map.get(job.id, 'Unknown file') }}
+    </a>
+    <a href="/intel?job={{ job.id }}" title="Show every entity from this job"
+       class="flex-shrink-0 text-xs text-gray-600 hover:text-blue-300 transition opacity-0 group-hover:opacity-100 focus:opacity-100">entities</a>
+    <a href="/intel/jobs/{{ job.id }}/findings" title="Show every finding from this job, with its entities"
+       class="flex-shrink-0 text-xs text-gray-600 hover:text-blue-300 transition opacity-0 group-hover:opacity-100 focus:opacity-100">findings</a>
+    <a href="/intel/entities/{{ entity.id }}?job={{ job.id }}" title="Scope this entity's tabs to this job"
+       class="flex-shrink-0 text-xs text-gray-600 hover:text-blue-300 transition opacity-0 group-hover:opacity-100 focus:opacity-100">scope</a>
+    {% if job.status %}
+    <span class="flex-shrink-0 text-xs px-2 py-0.5 rounded-full
+      {% if job.status.value == 'completed' %}bg-green-900/40 text-green-400 border border-green-700/40
+      {% elif job.status.value == 'failed' %}bg-red-900/40 text-red-400 border border-red-700/40
+      {% elif job.status.value == 'running' %}bg-blue-900/40 text-blue-400 border border-blue-700/40
+      {% elif job.status.value == 'partial' %}bg-yellow-900/40 text-yellow-400 border border-yellow-700/40
+      {% else %}bg-gray-800 text-gray-400 border border-gray-700{% endif %}">
+      {{ job.status.value }}
+    </span>
+    {% endif %}
+    {% if job.score_ratio %}
+    <span class="text-gray-400 text-xs flex-shrink-0">{{ job.score_ratio }}</span>
+    {% endif %}
+    <span class="text-gray-600 text-xs flex-shrink-0">
+      {% if job.created_at %}{{ job.created_at.strftime('%Y-%m-%d') }}{% endif %}
+    </span>
+  </div>
+  {% endif %}
+  {% endfor %}
+</div>
+
+{% if total_pages > 1 %}
+<div class="flex items-center justify-between pt-3 text-xs text-gray-500">
+  <span>Page {{ page }} of {{ total_pages }}</span>
+  <div class="flex gap-1">
+    {% if page > 1 %}
+    <button hx-get="/intel/entities/{{ entity.id }}/jobs-partial?page={{ page - 1 }}"
+            hx-target="#entity-jobs-region" hx-swap="innerHTML"
+            class="lt-btn lt-btn--sm">&laquo;</button>
+    {% endif %}
+    {% if page < total_pages %}
+    <button hx-get="/intel/entities/{{ entity.id }}/jobs-partial?page={{ page + 1 }}"
+            hx-target="#entity-jobs-region" hx-swap="innerHTML"
+            class="lt-btn lt-btn--sm">&raquo;</button>
+    {% endif %}
+  </div>
+</div>
+{% endif %}
+
+{% else %}
+<p class="text-sm text-gray-500 italic py-4 text-center">No linked jobs found.</p>
+{% endif %}

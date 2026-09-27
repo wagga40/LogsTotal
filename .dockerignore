@@ -1,0 +1,72 @@
+# Secrets and operator state. The build is `COPY . .`, and the resulting image is
+# `docker save`d and shipped to worker hosts — anything listed here would otherwise
+# travel with it. deploy-envs/ holds generated SECRET_KEY/S3/Postgres credentials and
+# backups/ holds full database dumps, so both are excluded outright rather than by
+# extension.
+.env
+.env.*
+# …but the template must ship: it is what the docs tell operators to copy.
+!.env.example
+deploy.env
+deploy-envs/
+backups/
+data/
+__pycache__/
+*.pyc
+*.pyo
+# Recursive on purpose. A bare `.git/` matches only the repository root, and the vendored
+# rule sets under tools/ arrive as clones — tools/hayabusa/rules/.git alone is 103 MB of
+# pack files that `COPY . .` would bake into every image shipped to a worker host.
+# scripts/package.sh uses the recursive `-xr!.git` for the same reason.
+**/.git
+**/.gitignore
+uploads/
+*.db
+*.log
+# …except the shipped samples. `*.log` is meant to exclude *runtime* logs, but it is a
+# recursive pattern, so it would also strip the Linux samples out of every image — while
+# the in-app docs at /docs tell the reader to try `samples/linux/syslog_intrusion.log`.
+# Negations must come after the pattern they undo.
+!samples/**/*.log
+.pdm-python
+# The Tailwind standalone CLI is ~46 MB of build tooling, gitignored but present in the
+# build context on any machine where `task tailwind:install` has run — and `COPY . .`
+# reads the context, not git. scripts/package.sh excludes it too.
+tools/tailwind/
+# The go-task copy ./logstotal runs on the host, and the tarballs a release carries for it:
+# nothing inside a container runs a task.
+.bin/
+tools/go-task/
+# The built documentation website.
+site/
+.venv/
+logs/
+.vscode/
+.claude/
+.github/
+.forgejo/
+# Local development notes, gitignored — but `COPY . .` reads the build context, not git,
+# so a build from a working checkout would bake them into the image. Keep this list in
+# step with scripts/package.sh, and name BOTH files: `task ci:artifacts` fails on any
+# checkout that has the second one.
+CLAUDE.md
+CLAUDE-internals.md
+AGENTS.md
+.cursor/
+.superpowers/
+security-review/
+tests/
+.pytest_cache/
+.ruff_cache/
+logstotal-*.7z
+.DS_Store
+.__*
+__MACOSX/
+.Spotlight-V100/
+.Trashes/
+.fseventsd/
+
+# Private keys for PROXY_TLS=custom — mounted at runtime, never baked into an image.
+certs/
+
+.env.deploy.sha256

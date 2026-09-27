@@ -1,0 +1,41 @@
+{#
+  The one count pill.
+
+  The geometry is `.lt-chip` in base.html; only the colour varies, and a five-way palette is
+  exactly the thing that belongs in one place.
+
+  `tests/test_control_primitives.py` forbids an `lt-chip` element from also carrying
+  `text-xs px-1.5 py-0.5 rounded-full border`, and exempts `border-<colour>-<n>` for
+  `lt-chip` specifically. That exemption is what this macro is built on.
+
+  The classes are written out as literals, never assembled from `tone` — `tailwind.config.js`
+  scans `app/templates/**/*.html` for class names, so `bg-{{ tone }}-900/40` renders
+  unstyled in a production CSS build no matter what the safelist says.
+
+      {% from "partials/_count_pill.html" import count_pill %}
+      {{ count_pill('4 live', 'green') }}
+#}
+
+{% macro pill_tone(tone) -%}
+{%- if tone == 'green' -%}bg-green-900/40 text-green-400 border-green-800
+{%- elif tone == 'blue' -%}bg-blue-900/40 text-blue-300 border-blue-800
+{%- elif tone == 'yellow' -%}bg-yellow-900/40 text-yellow-300 border-yellow-800
+{%- elif tone == 'red' -%}bg-red-900/40 text-red-300 border-red-800
+{%- else -%}bg-gray-800 text-gray-400 border-gray-700
+{%- endif -%}
+{%- endmacro %}
+
+{% macro count_pill(label, tone='gray', title='') -%}
+<span class="lt-chip {{ pill_tone(tone) }}"{% if title %} title="{{ title }}"{% endif %}>{{ label }}</span>
+{%- endmacro %}
+
+{#
+  A list of `(label, tone)` pairs, for the `pills=` argument on `page_header` and for card
+  headings that carry more than one. A bare string is accepted and reads as neutral, so the
+  common single-count case needs no tuple.
+#}
+{% macro count_pills(pills) -%}
+{%- for p in (pills or []) -%}
+{%- if p is string %}{{ count_pill(p) }}{% else %}{{ count_pill(p[0], p[1] if p | length > 1 else 'gray', p[2] if p | length > 2 else '') }}{% endif -%}
+{%- endfor -%}
+{%- endmacro %}

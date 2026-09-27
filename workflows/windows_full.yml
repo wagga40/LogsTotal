@@ -1,0 +1,36 @@
+name: "Windows Full Analysis"
+description: "Full analysis of Windows system logs — auto-selects binaries for the host architecture"
+is_default: true
+log_types:
+  - evtx
+  - json_evtx
+  - json_winlogbeat
+
+tasks:
+  - tool: hayabusa
+    tool_path:
+      x86_64-linux: tools/hayabusa/hayabusa-intel-lin
+      aarch64-linux: tools/hayabusa/hayabusa-arm-lin
+      aarch64-darwin: tools/hayabusa/hayabusa-mac
+    rules_path: tools/hayabusa/rules/
+    timeout: 300
+    threads: 2
+  - tool: chainsaw
+    tool_path:
+      x86_64-linux: tools/chainsaw/chainsaw-intel-lin
+      aarch64-linux: tools/chainsaw/chainsaw-arm-lin
+      aarch64-darwin: tools/chainsaw/chainsaw-mac
+    # SigmaHQ's curated rule directories, named individually. tools/chainsaw/sigma/ also
+    # carries rules-dfir/ and rules-compliance/, which you may add here; the sets upstream
+    # says must not run (deprecated/, unsupported/, rules-placeholder/) are not vendored.
+    rules_path:
+      - tools/chainsaw/sigma/rules
+      - tools/chainsaw/sigma/rules-emerging-threats
+      - tools/chainsaw/sigma/rules-threat-hunting
+    timeout: 300
+    threads: 2
+  - tool: zircolite
+    # Pinned by digest — see docs/runbooks/detection-tools.md#updating-rule-sets to move it.
+    docker_image: wagga40/zircolite:4.0.0@sha256:552f1900fb5533a58fdad1ae61f46c09018271787d5d7a2d08cb318d3221461f
+    rules_path: tools/zircolite/rules/rules_windows_merged.json
+    timeout: 300

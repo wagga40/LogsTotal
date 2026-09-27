@@ -1,0 +1,275 @@
+{% from "partials/_help_popover.html" import help_popover %}
+{% from "partials/_copy_button.html" import copy_button with context %}
+{% set stats = forest.stats %}
+
+{% macro node(n) %}
+{% set kids = n.children | length %}
+<div class="lt-node" data-has-children="{{ 'true' if kids else 'false' }}">
+  {# `computer` and `image_full` are in the haystack so a multi-host job can be searched by
+     hostname and by full path. `hashes`
+     is cheap and lets an analyst paste one straight in. `guid` stays out (opaque) and so
+     does `time` (every date-ish substring would match everything).
+
+     `lt-entity-match` is the *server-side* anchor highlight, distinct from `lt-match`,
+     which the client filter toggles as you type — the two must not fight over one class. #}
+  <div class="lt-row group flex items-start gap-2 py-1.5 px-2 rounded-lg transition-colors hover:bg-gray-800/50 transition{% if not n.hit %} lt-inferred{% endif %}{% if n.match %} lt-entity-match{% endif %}"
+       data-search="{{ ((n.image or '') ~ ' ' ~ (n.image_full or '') ~ ' ' ~ (n.cmdline or '') ~ ' ' ~ (n.user or '') ~ ' ' ~ (n.computer or '') ~ ' ' ~ (n.pid or '') ~ ' ' ~ (n.hashes | join(' ') if n.hashes else '')) | lower }}">
+
+    {# toggle / leaf marker #}
+    {% if kids %}
+    <button type="button" @click="toggle($el)"
+      class="mt-0.5 w-5 h-5 flex-shrink-0 flex items-center justify-center rounded text-gray-500 hover:text-gray-100 hover:bg-gray-700/60 transition"
+      aria-label="Toggle children">
+      <svg class="lt-chevron w-3.5 h-3.5"><use href="#lt-i-chevron"/></svg>
+    </button>
+    {% else %}
+    <span class="mt-0.5 w-5 h-5 flex-shrink-0 flex items-center justify-center">
+      <span class="w-1.5 h-1.5 rounded-full bg-gray-700"></span>
+    </span>
+    {% endif %}
+
+    <div class="min-w-0 flex-1">
+      {# line 1: process name + badges + time #}
+      <div class="flex items-center gap-2 flex-wrap">
+        {# process glyph #}
+        <svg class="w-3.5 h-3.5 flex-shrink-0 {{ 'text-blue-400/80' if n.hit else 'text-gray-600' }}"><use href="#lt-i-proc"/></svg>
+
+        {% if n.hit %}
+        <span class="font-mono text-sm text-blue-200 font-semibold truncate">{{ n.image or '(process)' }}</span>
+        <span class="inline-flex items-center px-1.5 py-px rounded text-[10px] font-bold tracking-wide bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-500/30">HIT</span>
+        {% else %}
+        <span class="font-mono text-sm text-gray-400 italic truncate">{{ n.image or '[ancestor]' }}</span>
+        <span class="inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium bg-gray-700/40 text-gray-400 ring-1 ring-inset ring-gray-600/40" title="Parent inferred from a matched child event — not itself a rule match">inferred</span>
+        {% endif %}
+
+        {% if kids %}
+        <span class="lt-count inline-flex items-center px-1.5 py-px rounded-full text-[10px] font-medium bg-gray-700/50 text-gray-400" title="{{ kids }} child process{{ '' if kids == 1 else 'es' }}">{{ kids }}</span>
+        {% endif %}
+
+        {% if n.pid %}<span class="text-[11px] text-gray-500 font-mono">PID&nbsp;{{ n.pid }}</span>{% endif %}
+        {% if n.time %}<span class="text-[11px] text-gray-500 font-mono ml-auto whitespace-nowrap pl-2">{{ n.time }}</span>{% endif %}
+      </div>
+
+      {# command line #}
+      {% if n.cmdline %}
+      {# `sprite=true`: the icons come from the <symbol>s below rather than the `icon()`
+         dictionary, because this runs once per node up to the 2,000-node cap. The button
+         is a *sibling* of the <code>, so `data-copy-from="code"` resolves it and nothing
+         bubbles into the expand toggle, so no `@click.stop` is needed. #}
+      <div x-data="{ full: false }" class="mt-1 relative">
+        <code @click="full = !full"
+          class="block text-xs text-gray-400 font-mono leading-relaxed bg-gray-950/60 ring-1 ring-inset ring-gray-800 rounded pl-2 pr-8 py-1 cursor-pointer hover:text-gray-200 hover:ring-gray-700 transition"
+          :class="full ? 'whitespace-pre-wrap break-all' : 'truncate'"
+          title="Click to expand command line">{{ n.cmdline }}</code>
+        {{ copy_button(source='code', variant='tight', sprite=true, title='Copy command line') }}
+      </div>
+      {% endif %}
+
+      {# owner / host #}
+      {% if n.user or n.computer %}
+      <div class="text-[11px] text-gray-600 mt-1 flex items-center gap-2 flex-wrap">
+        {% if n.user %}<span class="inline-flex items-center gap-1"><svg class="w-3 h-3"><use href="#lt-i-user"/></svg><span class="text-gray-500">{{ n.user }}</span></span>{% endif %}
+        {% if n.computer %}<span class="inline-flex items-center gap-1"><svg class="w-3 h-3"><use href="#lt-i-host"/></svg><span class="text-gray-500">{{ n.computer }}</span></span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+  </div>
+
+  {% if kids %}
+  <div class="lt-children ml-[1.4rem] pl-3 border-l border-gray-800/80">
+    {% for c in n.children %}{{ node(c) }}{% endfor %}
+  </div>
+  {% endif %}
+</div>
+{% endmacro %}
+
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+  {# Icon sprite, emitted once per tree.
+
+     Inlined per node, these paths measured 5.2 <svg> elements per node and 40.8% of the
+     partial's bytes — at 500 nodes the process glyph's 193-byte
+     `d` alone shipped 1,002 times. Presentation attributes live on the <symbol> because
+     they are inheritable and reach the cloned content through <use>'s shadow tree, so a
+     node only carries the size and colour classes it actually varies. #}
+  <svg class="hidden" aria-hidden="true">
+    <symbol id="lt-i-chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M19 9l-7 7-7-7"/></symbol>
+    <symbol id="lt-i-proc" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25"/></symbol>
+    <symbol id="lt-i-copy" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.666 3.888A2.25 2.25 0 0013.5 2.25h-3c-1.03 0-1.9.693-2.166 1.638m7.332 0c.055.194.084.4.084.612v0a.75.75 0 01-.75.75H9a.75.75 0 01-.75-.75v0c0-.212.03-.418.084-.612m7.332 0c.646.049 1.288.11 1.927.184 1.1.128 1.907 1.077 1.907 2.185V19.5a2.25 2.25 0 01-2.25 2.25H6.75A2.25 2.25 0 014.5 19.5V6.257c0-1.108.806-2.057 1.907-2.185a48.208 48.208 0 011.927-.184"/></symbol>
+    <symbol id="lt-i-check" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 12.75l6 6 9-13.5"/></symbol>
+    <symbol id="lt-i-user" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15.75 6a3.75 3.75 0 11-7.5 0 3.75 3.75 0 017.5 0zM4.5 20.25a7.5 7.5 0 0115 0"/></symbol>
+    <symbol id="lt-i-host" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25"/></symbol>
+  </svg>
+
+  <style>
+    .lt-collapsed > .lt-children { display: none; }
+    .lt-hidden { display: none; }
+    .lt-chevron { transition: transform .15s ease; }
+    .lt-collapsed > .lt-row .lt-chevron { transform: rotate(-90deg); }
+    /* the child-count chip is only useful when the node is collapsed */
+    .lt-node:not(.lt-collapsed) > .lt-row .lt-count { display: none; }
+    .lt-match { background: rgba(59,130,246,.12); box-shadow: inset 2px 0 0 0 #3b82f6; }
+    .lt-inferred { opacity: .92; }
+    /* The anchored entity, marked server-side. Amber rather than the filter's blue so a
+       client-side search over a pruned tree stays visually distinguishable from it. */
+    .lt-entity-match { background: rgba(245,158,11,.12); box-shadow: inset 2px 0 0 0 #f59e0b; }
+  </style>
+
+  <script>
+    window.lineageTree = window.lineageTree || function () {
+      return {
+        // A server-pruned tree is already *about* something, so it opens expanded —
+        // collapsing it would hide the very path the prune was performed to reveal. Read
+        // off a data attribute rather than a factory argument, so the component keeps its
+        // zero-argument signature.
+        // `x-ref="tree"` lives inside the `forest.roots` guard, so an empty forest leaves it
+        // undefined and an unguarded read throws `reading 'dataset'` — which aborts Alpine's
+        // init for the whole component and takes every control on the panel with it. The case
+        // tab draws for any job the analyst picks, so a job with no process-creation events
+        // is an ordinary outcome.
+        init() {
+          this.$nextTick(() => {
+            const tree = this.$refs.tree;
+            if (!tree) return;
+            if (tree.dataset.expand === '1') this.expandAll();
+            else this.collapseAll();
+          });
+        },
+        _all() { return this.$refs.tree ? this.$refs.tree.querySelectorAll('.lt-node') : []; },
+        toggle(btn) { btn.closest('.lt-node').classList.toggle('lt-collapsed'); },
+        expandAll() { this._all().forEach((w) => w.classList.remove('lt-collapsed')); },
+        collapseAll() {
+          this._all().forEach((w) => {
+            if (w.dataset.hasChildren === 'true') w.classList.add('lt-collapsed');
+          });
+        },
+        filter(q) {
+          q = (q || '').trim().toLowerCase();
+          const tree = this.$refs.tree;
+          if (!q) {
+            this._all().forEach((w) => {
+              w.classList.remove('lt-hidden');
+              w.querySelector(':scope > .lt-row').classList.remove('lt-match');
+            });
+            this.collapseAll();
+            return;
+          }
+          const visit = (w) => {
+            const row = w.querySelector(':scope > .lt-row');
+            const self = (row.dataset.search || '').includes(q);
+            const cc = w.querySelector(':scope > .lt-children');
+            let childMatch = false;
+            if (cc) cc.querySelectorAll(':scope > .lt-node').forEach((c) => { if (visit(c)) childMatch = true; });
+            const sub = self || childMatch;
+            w.classList.toggle('lt-hidden', !sub);
+            row.classList.toggle('lt-match', self);
+            // reveal the path down to a match; otherwise keep collapsed
+            if (childMatch) w.classList.remove('lt-collapsed');
+            else if (w.dataset.hasChildren === 'true') w.classList.add('lt-collapsed');
+            return sub;
+          };
+          tree.querySelectorAll(':scope > .lt-node').forEach(visit);
+        },
+      };
+    };
+  </script>
+
+  <div x-data="lineageTree()">
+    {# header #}
+    <div class="flex items-center gap-2 mb-3 flex-wrap">
+      <svg class="w-4 h-4 text-blue-400/80 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 6.878V6a2.25 2.25 0 012.25-2.25h7.5A2.25 2.25 0 0118 6v.878m-12 0c.235-.083.487-.128.75-.128h10.5c.263 0 .515.045.75.128m-12 0A2.25 2.25 0 004.5 9v.878m13.5-3A2.25 2.25 0 0119.5 9v.878m0 0a2.246 2.246 0 00-.75-.128H5.25c-.263 0-.515.045-.75.128m15 0A2.25 2.25 0 0121 12v6a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 18v-6c0-.98.626-1.813 1.5-2.122"/></svg>
+      <h3 class="text-sm font-semibold text-gray-200">Process Tree</h3>
+      {# Present exactly when an entity anchor is in play, which is what prunes the forest.
+         The predicate is the anchor, not the calling surface: the job page never sets one,
+         the entity Processes tab always does, and the case tab sets it only once you pick
+         one — unanchored, it renders the full job forest exactly as the job page does. #}
+      {% if scope_label %}
+      <span class="lt-chip lt-chip--square bg-amber-900/40 text-amber-200 border-amber-700/40">{{ scope_label }}</span>
+      {% endif %}
+      {% call help_popover('How to read this process tree', width='md') %}
+          Parent&rarr;child process lineage reconstructed from rule-matched process-creation events
+          (Sysmon Event&nbsp;ID&nbsp;1 / Security 4688), ordered by creation time. <strong class="text-white">HIT</strong>
+          nodes matched a rule; <em>inferred</em> nodes are parents seen only in a child's event. This is a
+          lineage-first view of suspicious processes, not the full host process tree.
+      {% endcall %}
+
+      {% if stats.processes %}
+      <div class="ml-auto flex items-center gap-1.5 text-[11px]">
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-red-500/10 text-red-300 ring-1 ring-inset ring-red-500/20 font-medium">{{ stats.hits }} hit{{ '' if stats.hits == 1 else 's' }}</span>
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-700/40 text-gray-400 ring-1 ring-inset ring-gray-600/30">{{ stats.roots }} chain{{ '' if stats.roots == 1 else 's' }}</span>
+        {% if stats.inferred %}<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-700/40 text-gray-400 ring-1 ring-inset ring-gray-600/30">{{ stats.inferred }} inferred</span>{% endif %}
+        {% if stats.entity_pruned %}<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 ring-1 ring-inset ring-amber-500/20 font-medium" title="Processes that name this entity; the rest of each chain is ancestry and descendants">{{ stats.matched }} anchored</span>{% endif %}
+      </div>
+      {% endif %}
+    </div>
+
+    {% if forest.roots %}
+    {# toolbar #}
+    <div class="flex items-center gap-2 mb-3">
+      <div class="relative flex-1 min-w-0">
+        <svg class="w-4 h-4 text-gray-600 absolute left-2.5 top-1/2 -translate-y-1/2 pointer-events-none" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-5.197-5.197m0 0A7.5 7.5 0 105.196 5.196a7.5 7.5 0 0010.607 10.607z"/></svg>
+        {# Debounced because the filter walks every node and toggles `display`, so its cost
+           scales with tree size: measured in headless Chromium, one broad-match keystroke
+           costs 10ms at 500 nodes but 97ms at the 2000-node cap — enough to lag typing.
+           120ms is below the threshold where search-as-you-type stops feeling live, and
+           Alpine's own modifier avoids hand-rolling a timer in the component. #}
+        <input type="text" @input.debounce.120ms="filter($event.target.value)" placeholder="Filter by image, path, command, user, host, hash, PID…"
+          class="w-full bg-gray-950 border border-gray-700 rounded-lg pl-8 pr-3 py-1.5 text-xs text-gray-200 placeholder-gray-600 focus:outline-none focus:border-blue-500/60 focus:ring-1 focus:ring-blue-500/40">
+      </div>
+      <button type="button" @click="expandAll()"
+        class="text-xs text-gray-400 hover:text-white bg-gray-800/60 hover:bg-gray-700/60 border border-gray-700 rounded-lg px-2.5 py-1.5 transition whitespace-nowrap">Expand all</button>
+      <button type="button" @click="collapseAll()"
+        class="text-xs text-gray-400 hover:text-white bg-gray-800/60 hover:bg-gray-700/60 border border-gray-700 rounded-lg px-2.5 py-1.5 transition whitespace-nowrap">Collapse all</button>
+    </div>
+
+    {% if stats.depth_capped %}
+    {# Severing re-roots the remainder rather than dropping it, so the process is still on
+       the page — but its parent link is gone, and a chain that silently looks like a root
+       when it is not would misread as the start of an attack. #}
+    <p class="text-[11px] text-amber-400/80 mb-2">
+      A process chain ran deeper than this view renders and was split; the continuation appears as a separate chain below.
+    </p>
+    {% endif %}
+
+    <div x-ref="tree" data-expand="{{ '1' if stats.entity_pruned else '0' }}"
+         class="font-sans lt-scroll lt-scroll--lg overflow-x-auto -mx-1 px-1 space-y-0.5">
+      {% for r in forest.roots %}{{ node(r) }}{% endfor %}
+    </div>
+    {% else %}
+    <div class="flex items-start gap-3 text-sm text-gray-500 mt-2 bg-gray-950/40 border border-gray-800 rounded-lg p-4">
+      <svg class="w-5 h-5 flex-shrink-0 text-gray-600 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M11.25 11.25l.041-.02a.75.75 0 011.063.852l-.708 2.836a.75.75 0 001.063.853l.041-.021M21 12a9 9 0 11-18 0 9 9 0 0118 0zm-9-3.75h.008v.008H12V8.25z"/></svg>
+      {#
+        Three different problems, three sentences. `source_processes` is what the job had
+        *before* the entity prune, so "this entity is not in a process tree" can be told
+        apart from "this job has no process tree at all" — they have different answers, and
+        hedging across both teaches the analyst to distrust the panel.
+      #}
+      {% if stats.entity_pruned and stats.source_processes %}
+      <p>This job's lineage has <strong class="text-gray-400">{{ stats.source_processes }}</strong>
+      process{{ '' if stats.source_processes == 1 else 'es' }}, and none of them names this entity.
+      It was observed in some other kind of event — a network connection, a logon, an image load,
+      a registry write — which carries no process ancestry to reconstruct.</p>
+      {% elif stats.entity_pruned %}
+      <p>This job produced no process-creation events (Sysmon&nbsp;1 / Security&nbsp;4688) at all,
+      so there is no lineage to anchor this entity in. Its raw outputs may also have been cleaned up.</p>
+      {% else %}
+      <p>No process-creation events (Sysmon&nbsp;1 / Security&nbsp;4688) were found among the matched events for this job. The process tree may also be empty if the job's raw outputs were cleaned up.</p>
+      {% endif %}
+    </div>
+    {% endif %}
+
+    {#
+      Outside the `forest.roots` guard, deliberately. Truncation happens during the parse,
+      *before* the entity prune — so a pruned-to-nothing view is exactly where the fact that
+      the source forest was capped matters most, and it was the one place that never said so.
+    #}
+    {% if stats.truncated %}
+    <p class="text-[11px] text-amber-400/80 mt-2">
+      {% if stats.entity_pruned %}
+      The job's lineage was capped at {{ stats.max_nodes }} processes before this filter was applied, so chains beyond that cap are not represented here.
+      {% else %}
+      Showing the first {{ stats.hits }} processes — tree truncated for size.
+      {% endif %}
+    </p>
+    {% endif %}
+  </div>
+</div>

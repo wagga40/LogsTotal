@@ -1,0 +1,115 @@
+{% from "intel/partials/_tag_chip.html" import tag_dot_class, alpine_tag_classes, alpine_tag_dot %}
+{#
+  Tag picker. A chosen tag becomes a **coloured pill inside the field**, not a string of
+  text — the Select2 shape. Typing a name nobody has used yet still works and is still an
+  explicit act, with its own colour swatches.
+
+  **It takes several tags.** The caller sets `tagCombobox({ max: N })`; the input stays in
+  the field until N pills are in it, Enter/Tab/comma each commit one, and Backspace on an
+  empty box removes the last. `max: 1` is a single-tag control, which is what the rename
+  and merge fields want — those genuinely name one tag.
+
+  Each pill carries **its own colour**, and the field posts two index-aligned CSVs. One
+  colour for the whole field would repaint every existing tag picked into it, because a tag
+  name carries one colour instance-wide.
+
+  Why a pill rather than text: a tag *is* a coloured chip everywhere else in the app, and a
+  field that renders it as plain characters makes "I picked the existing apt28" and "I am
+  about to coin apt-28" look identical at the moment it matters. Coining near-duplicates is
+  precisely what makes a vocabulary worthless.
+
+  Why not a native <datalist>: browser chrome renders it as plain text, so a tag's colour
+  cannot be shown, counts only fit as a label hack, and there is no way to distinguish the
+  two cases above at all.
+
+  **The submitted value is a hidden input written imperatively**, never a bound `:value`.
+  Several of these live in htmx forms, and htmx serialises a form synchronously inside the
+  submit event while Alpine applies bindings on its own scheduler, so a binding can send the
+  previous selection. Every state change calls
+  `sync()`, so what is in the DOM is what the server gets.
+
+  Call inside an element carrying `x-data="tagCombobox({...})"`.
+
+  XSS: option labels are bound with `x-text`, never interpolated into markup.
+#}
+{% macro tag_combobox(name='tag', color_name='color', size='', placeholder='Search or create a tag…', more_placeholder='another…', width='w-56') %}
+{#
+  `focusout` on the container, not `blur` on the input. Closing on the input's own blur is
+  what broke colour picking: clicking anything inside the panel blurs the input, and the
+  deferred close unmounted the control before it could be used. `relatedTarget` tells us
+  whether focus actually left the combobox.
+#}
+<div class="relative {{ width }}"
+     @focusout="if (!$event.currentTarget.contains($event.relatedTarget)) open = false">
+
+  {# The field chrome. `.lt-combo` mirrors `.lt-field`'s border/radius/height but lets its
+     content be a pill rather than text — it must be defined after `.lt-field` in base.html
+     to win on `height`. #}
+  <div class="lt-combo {{ size }}" :class="open ? 'lt-combo--open' : ''" @click="if (canAdd()) focusInput()">
+
+    {# One pill per chosen tag, each in its OWN colour. A single colour for the whole field
+       would repaint every existing tag you picked, and a tag name carries one colour
+       instance-wide — so the field would quietly recolour the vocabulary. #}
+    <template x-for="(v, i) in values" :key="v.tag">
+      <span class="lt-combo-pill" {{ alpine_tag_classes('v.color') }}>
+        <span class="w-1.5 h-1.5 rounded-full shrink-0" {{ alpine_tag_dot('v.color') }}></span>
+        <span x-text="v.tag"></span>
+        {# Removing one puts the caret back in the box — otherwise changing your mind about
+           the second of three tags means reloading the page. #}
+        <button type="button" @click.stop="removeAt(i)" class="ml-0.5 opacity-60 hover:opacity-100" aria-label="Remove tag">&times;</button>
+      </span>
+    </template>
+
+    {# `x-show="canAdd()"`, which at max: 1 is exactly `!selected`. #}
+    <input type="text" x-ref="tagInput" x-model="query" maxlength="50" x-show="canAdd()"
+           autocomplete="off" spellcheck="false" :placeholder="values.length ? '{{ more_placeholder }}' : '{{ placeholder }}'"
+           @focus="show()" @input="onInput()" @keydown="onKey($event)"
+           class="lt-combo-input">
+  </div>
+
+  {# What the form actually posts. Written by `sync()`, never bound — see the header. #}
+  <input type="hidden" name="{{ name }}" x-ref="value">
+  <input type="hidden" name="{{ color_name }}" x-ref="colorValue">
+
+  <div x-show="open" x-cloak
+       class="lt-menu absolute left-0 right-0 top-full mt-1 lt-scroll lt-scroll--sm">
+    <template x-if="!matches().length && !canCreate()">
+      <p class="px-3 py-2 text-xs text-gray-500">No tags yet — type a name to create one.</p>
+    </template>
+
+    <template x-for="(t, i) in matches()" :key="t.tag">
+      <button type="button" @mousedown.prevent="pick(t)" @mouseenter="highlight = i"
+              :class="highlight === i ? 'bg-gray-800' : ''"
+              class="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-gray-800 transition">
+        <span class="lt-chip" {{ alpine_tag_classes('t.color') }}
+              ><span class="w-1.5 h-1.5 rounded-full shrink-0" {{ alpine_tag_dot('t.color') }}></span><span x-text="t.tag"></span></span>
+        <span class="ml-auto text-[10px] text-gray-600" x-text="t.count + (t.count === 1 ? ' use' : ' uses')"></span>
+      </button>
+    </template>
+
+    <template x-if="canCreate()">
+      <div class="border-t border-gray-800 mt-1 pt-1 px-3 py-1.5">
+        <div class="flex items-center gap-2 mb-1.5">
+          <span class="text-[10px] text-gray-500 uppercase tracking-wide">New tag</span>
+          <span class="lt-chip" {{ alpine_tag_classes('color') }}
+                ><span class="w-1.5 h-1.5 rounded-full shrink-0" {{ alpine_tag_dot('color') }}></span><span x-text="normalized()"></span></span>
+          <button type="button" @mousedown.prevent="create()" class="ml-auto lt-btn lt-btn--xs lt-btn--primary">Use this</button>
+        </div>
+        {#
+          Swatches, not a <select>. A native select inside a dropdown fights the panel for
+          focus, and it also cannot show the colour it is choosing. `@mousedown.prevent`
+          keeps focus on the input throughout, exactly like the option rows above.
+        #}
+        <div class="grid grid-cols-6 gap-1.5 w-fit">
+          {% for c in tag_colors %}
+          <button type="button" @mousedown.prevent="setColor('{{ c }}')"
+                  :class="color === '{{ c }}' ? 'ring-2 ring-offset-1 ring-offset-gray-900 ring-white' : ''"
+                  class="w-4 h-4 rounded-full {{ tag_dot_class(c) }} hover:brightness-125"
+                  title="{{ c }}"></button>
+          {% endfor %}
+        </div>
+      </div>
+    </template>
+  </div>
+</div>
+{% endmacro %}

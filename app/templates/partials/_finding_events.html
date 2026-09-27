@@ -1,0 +1,14 @@
+{% from "partials/_copy_button.html" import copy_button with context %}
+{% if details %}
+{% if finding.count > details | length %}
+<p class="text-xs text-gray-600 italic mb-2">Showing {{ details | length }} of {{ finding.count }} matched events.</p>
+{% endif %}
+<div class="relative">
+  {{ copy_button(source='pre', variant='overlay', title='Copy all events') }}
+  <pre class="language-json p-3 pr-10 max-h-96 overflow-y-auto"><code class="language-json">{% for event in details %}{{ event | tojson(indent=2) }}{% if not loop.last %}
+
+{% endif %}{% endfor %}</code></pre>
+</div>
+{% else %}
+<p class="text-xs text-gray-500 italic">No event details available.</p>
+{% endif %}

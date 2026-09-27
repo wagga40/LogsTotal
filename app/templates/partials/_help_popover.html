@@ -1,0 +1,48 @@
+{#
+  The "?" that explains a control — one implementation for every one of them.
+
+  The geometry lives in `.lt-help` / `.lt-help-panel` (base.html), so a call site cannot
+  drift by editing a class string.
+
+  **Click, not hover.** A hover panel cannot be opened on a touch device and cannot be
+  selected from, and these panels hold query syntax — the text people most want to copy.
+  That is also why the panel is not `pointer-events-none`, which a hover panel needs so it
+  cannot swallow a click aimed at the field underneath.
+
+  Two shapes, and they compose:
+
+    {{ help_popover('Search help', rows=syntax_help, intro='Terms are AND-ed.') }}
+
+    {% call help_popover('Help', width='md') %}
+      Free prose about whatever this control does.
+    {% endcall %}
+
+  `rows` is a list of `(syntax, meaning)` 2-tuples — the shape `jobs_query.SYNTAX_HELP` and
+  `intel.queries.SYNTAX_HELP` both already have, so a help panel is generated from the list
+  the parser reads rather than hand-maintained beside it.
+
+  `align='right'` when the button sits at the right-hand end of a bar, or the panel hangs
+  off the viewport. `width` is `''` (18rem) / `'md'` (22rem) / `'lg'` (26rem).
+#}
+{% macro help_popover(label, rows=[], intro='', footnote='', align='left', width='', cls='') %}
+<span class="lt-help-wrap {{ cls }}" x-data="{ help: false }" @keydown.escape="help = false">
+  <button type="button"
+          @click.prevent="help = !help" @click.outside="help = false"
+          :aria-expanded="help ? 'true' : 'false'" aria-label="{{ label }}"
+          class="lt-help">?</button>
+  <div x-show="help" x-cloak
+       class="lt-help-panel{% if width %} lt-help-panel--{{ width }}{% endif %}{% if align == 'right' %} lt-help-panel--right{% endif %}">
+    {% if intro %}<p class="text-gray-200 font-medium mb-2">{{ intro }}</p>{% endif %}
+    {% if rows %}
+    <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+      {% for syntax, meaning in rows %}
+      <dt class="font-mono text-[11px] text-blue-300 whitespace-nowrap">{{ syntax }}</dt>
+      <dd class="text-gray-400">{{ meaning }}</dd>
+      {% endfor %}
+    </dl>
+    {% endif %}
+    {% if caller is defined %}{{ caller() }}{% endif %}
+    {% if footnote %}<p class="mt-2 text-gray-500">{{ footnote }}</p>{% endif %}
+  </div>
+</span>
+{% endmacro %}

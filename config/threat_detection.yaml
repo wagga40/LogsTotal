@@ -1,0 +1,559 @@
+# Threat Detection — behavioral heuristic patterns for finding detail events.
+# Each category has checks that flag suspicious indicators in log event fields.
+# Precision-biased config: prefer higher-confidence matches over broad coverage.
+# Check types: regex, basename_in_set, keyword_in_value, port_in_set, entropy, masquerade
+
+categories:
+  lolbin_usage:
+    label: "LOLBin Usage"
+    description: "Living-off-the-land binary usage — legitimate Windows tools commonly abused by attackers."
+    default_severity: "high"
+    # Binaries from LOLBAS (https://lolbas-project.github.io/#) — Living-off-the-land executables.
+    checks:
+      - type: basename_in_set
+        fields: [Image, ParentImage, OriginalFileName, NewProcessName, Process, CallerProcessName]
+        values:
+          - aspnet_compiler.exe
+          - at.exe
+          - atbroker.exe
+          - bitsadmin.exe
+          - certreq.exe
+          - certutil.exe
+          - cipher.exe
+          - cmstp.exe
+          - csc.exe
+          - cscript.exe
+          - datasvcutil.exe
+          - diantz.exe
+          - diskshadow.exe
+          - dnscmd.exe
+          - esentutl.exe
+          - eventvwr.exe
+          - expand.exe
+          - extrac32.exe
+          - findstr.exe
+          - finger.exe
+          - fltmc.exe
+          - forfiles.exe
+          - fsutil.exe
+          - ftp.exe
+          - hh.exe
+          - iediagcmd.exe
+          - ieexec.exe
+          - ilasm.exe
+          - installutil.exe
+          - jsc.exe
+          - ldifde.exe
+          - makecab.exe
+          - mavinject.exe
+          - microsoft.workflow.compiler.exe
+          - mpcmdrun.exe
+          - msbuild.exe
+          - msdt.exe
+          - mshta.exe
+          - msiexec.exe
+          - netsh.exe
+          - ngen.exe
+          - odbcconf.exe
+          - pcalua.exe
+          - pktmon.exe
+          - pnputil.exe
+          - printbrm.exe
+          - rasautou.exe
+          - rdrleakdiag.exe
+          - reg.exe
+          - regasm.exe
+          - regini.exe
+          - register-cimprovider.exe
+          - regsvcs.exe
+          - regsvr32.exe
+          - rpcping.exe
+          - rundll32.exe
+          - sc.exe
+          - schtasks.exe
+          - sftp.exe
+          - ssh.exe
+          - stordiag.exe
+          - tar.exe
+          - ttdinject.exe
+          - tttracer.exe
+          - vbc.exe
+          - wbadmin.exe
+          - wbemtest.exe
+          - winget.exe
+          - wmic.exe
+          - wscript.exe
+          - wuauclt.exe
+          - xwizard.exe
+
+
+  cmdline_obfuscation:
+    label: "Command-Line Obfuscation"
+    description: "Obfuscation techniques in command lines — base64, caret insertion, hex encoding, tick obfuscation."
+    default_severity: "high"
+    checks:
+      - type: regex
+        fields: [CommandLine, ScriptBlockText, Payload, ParentCommandLine, proctitle, cmd]
+        patterns:
+          - name: base64_encoded_command
+            pattern: '(?i)-e(nc(odedcommand)?|c)\s+[A-Za-z0-9+/=]{40,}'
+            severity: high
+          - name: base64_frombase64
+            pattern: '(?i)(FromBase64String|ToBase64String|ConvertTo-SecureString)'
+            severity: high
+          - name: caret_insertion
+            pattern: '(\^.){5,}'
+            severity: high
+          - name: hex_strings
+            pattern: '(?i)(0x[0-9a-f]{8,}([,\s+]|$)){3,}'
+            severity: low
+          - name: tick_obfuscation
+            pattern: '(?i)(`[a-z]){3,}'
+            severity: high
+          - name: char_array_obfuscation
+            pattern: '(?i)\[char\]\s*\d+.*\[char\]\s*\d+.*\[char\]\s*\d+'
+            severity: high
+          - name: concat_obfuscation
+            pattern: "(?i)('(?:[^']{0,8})'\\s*\\+\\s*){4,}'(?:[^']{0,8})'"
+            severity: low
+
+  credential_access:
+    label: "Credential Access"
+    description: "Credential theft indicators — registry hive access, LSASS, browser credentials, credential tools."
+    default_severity: "critical"
+    checks:
+      - type: regex
+        fields: [CommandLine, TargetFilename, Image, ObjectName, AccessList, ParentCommandLine]
+        patterns:
+          - name: sam_hive
+            pattern: '(?i)(\\config\\(sam|system|security)\b|hk(lm|ey_local_machine)\\(sam|system|security)\b)'
+            severity: critical
+          - name: reg_save_hive
+            pattern: '(?i)reg(.exe)?\s+(save|export)\s+hk(lm|ey_local_machine)\\(sam|system|security)'
+            severity: critical
+          - name: ntds_dit
+            pattern: '(?i)ntds\.dit'
+            severity: critical
+          - name: lsass_access
+            pattern: '(?i)(lsass\.dmp|procdump.*lsass|comsvcs.*MiniDump|rundll32.*comsvcs.*MiniDump|sekurlsa|OpenProcess.*lsass|ReadProcessMemory.*lsass)'
+            severity: critical
+          - name: browser_credentials
+            pattern: '(?i)(AppData[/\\].*(Login Data|Cookies|Web Data)|Mozilla[/\\].*(logins\.json|key[34]\.db|cert9\.db))'
+            severity: high
+          - name: credential_tools
+            pattern: '(?i)(mimikatz|lazagne|rubeus|kerberoast|secretsdump|procdump.*lsass|comsvcs.*MiniDump)'
+            severity: critical
+          - name: ssh_key_access
+            pattern: '(?i)(\.ssh[/\\](id_rsa|id_ed25519|authorized_keys|known_hosts)|\.ssh[/\\]config)'
+            severity: high
+
+  suspicious_network:
+    label: "Suspicious Network"
+    description: "Network anomalies — known C2 ports, DGA-like domains, suspicious TLDs."
+    default_severity: "medium"
+    checks:
+      - type: port_in_set
+        fields: [DestinationPort, SourcePort, dst_port, src_port]
+        values: [4444, 5555, 31337, 6667, 7777, 50501]
+        severity: medium
+      - type: entropy
+        fields: [QueryName, DestinationHostname, dns_question_name]
+        threshold: 4.1
+        min_length: 20
+        name: dga_domain
+        severity: medium
+      - type: keyword_in_value
+        fields: [QueryName, DestinationHostname, dns_question_name]
+        values: [".tk", ".top", ".pw", ".bit", ".onion"]
+        name: suspicious_tld
+        severity: medium
+
+  execution_anomalies:
+    label: "Execution Anomalies"
+    description: "Process masquerading, staging directories, double file extensions."
+    default_severity: "medium"
+    checks:
+      - type: masquerade
+        fields: [Image, NewProcessName]
+        system_binaries:
+          - svchost.exe
+          - csrss.exe
+          - smss.exe
+          - wininit.exe
+          - lsass.exe
+          - services.exe
+          - winlogon.exe
+          - spoolsv.exe
+          - dllhost.exe
+          - taskhostw.exe
+          - taskhostex.exe
+        legitimate_paths:
+          - 'c:\windows\system32\'
+          - 'c:\windows\syswow64\'
+          - 'c:\windows\'
+          - 'c:\windows\explorer.exe'
+        severity: critical
+      - type: keyword_in_value
+        fields: [Image, CommandLine, TargetFilename, ParentImage]
+        values:
+          - '\Users\Public\'
+          - '\PerfLogs\'
+          - '\Windows\Temp\'
+          - '\$Recycle'
+          - '\AppData\Local\Temp\'
+          - '\Microsoft\Windows\Start Menu\Programs\Startup\'
+          - '\System32\spool\drivers\color\'
+        name: staging_directory
+        severity: medium
+      - type: regex
+        fields: [Image, TargetFilename, CommandLine]
+        patterns:
+          - name: double_extension
+            pattern: '\.\w{2,4}\.(exe|dll|scr|bat|cmd|ps1|vbs|js|hta)$'
+            severity: high
+
+  persistence:
+    label: "Persistence Mechanisms"
+    description: "Registry run keys, startup folder, WMI persistence, service/task creation."
+    default_severity: "high"
+    checks:
+      - type: regex
+        fields: [CommandLine, TargetObject, ObjectName, ParentCommandLine]
+        patterns:
+          - name: registry_run_key
+            pattern: '(?i)(currentversion\\(run|runonce)|\\policies\\explorer\\run)'
+            severity: high
+          - name: startup_folder
+            pattern: '(?i)(\\Start Menu\\Programs\\Startup|\\shell:startup)'
+            severity: high
+          - name: wmi_persistence
+            pattern: '(?i)(__EventFilter|__EventConsumer|CommandLineEventConsumer|ActiveScriptEventConsumer)'
+            severity: high
+          - name: service_creation
+            pattern: '(?i)(sc(.exe)?\s+(create|config)\s|New-Service\s)'
+            severity: high
+          - name: scheduled_task_creation
+            pattern: '(?i)(schtasks(.exe)?\s+/(create|change)|Register-ScheduledTask|New-ScheduledTask)'
+            severity: high
+
+  defense_evasion:
+    label: "Defense Evasion"
+    description: "AMSI bypass, ETW patching, log clearing, Defender disabling, timestomping."
+    default_severity: "high"
+    checks:
+      - type: regex
+        fields: [CommandLine, ScriptBlockText, Payload, ParentCommandLine, proctitle, cmd]
+        patterns:
+          - name: amsi_bypass
+            pattern: '(?i)(amsi(init(failed)?|utils|context|scanBuffer)|SetPreferredUILanguages.*kernel32|AmsiScanBuffer)'
+            severity: critical
+          - name: etw_patching
+            pattern: '(?i)(EtwEventWrite|ntdll.*EtwEvent|EventWrite.*patch|NtTraceEvent)'
+            severity: high
+          - name: log_clearing
+            pattern: '(?i)(wevtutil(.exe)?\s+(cl|clear-log)|Clear-EventLog|Remove-EventLog)'
+            severity: critical
+          - name: disable_defender
+            pattern: '(?i)(Set-MpPreference\s+-Disable|DisableRealtimeMonitoring|DisableBehaviorMonitoring|DisableAntiSpyware)'
+            severity: critical
+          - name: timestomping
+            pattern: '(?i)(SetFileTime|TimeStomp|\$StandardInformation|\$FileName.*Modified)'
+            severity: high
+
+  data_staging:
+    label: "Data Staging & Exfiltration"
+    description: "Download cradles, archive creation, upload indicators, network file copy."
+    default_severity: "medium"
+    checks:
+      - type: regex
+        fields: [CommandLine, ScriptBlockText, Payload, ParentCommandLine, proctitle, cmd]
+        patterns:
+          - name: download_cradle
+            pattern: '(?i)(DownloadString|DownloadFile|DownloadData|Net\.WebClient|Start-BitsTransfer|Invoke-WebRequest\s.*-Uri)'
+            severity: high
+          - name: bitsadmin_download
+            pattern: '(?i)bitsadmin(.exe)?\s+/(transfer|rawdata)'
+            severity: high
+          - name: certutil_download
+            pattern: '(?i)certutil(.exe)?\s+(-urlcache|-verifyctl)\s'
+            severity: high
+          - name: archive_creation
+            pattern: '(?i)(rar\s+a\s|7z\s+a\s|Compress-Archive|zip\s+-r\s|tar\s+(c|-(c|x)z)f)'
+            severity: low
+          - name: upload_indicator
+            pattern: '(?i)(curl(.exe)?\s+.*-X\s+POST|Invoke-WebRequest\s+.*-Method\s+Post|curl(.exe)?\s+.*--data)'
+            severity: high
+          - name: network_copy
+            pattern: '(?i)(robocopy|xcopy|copy)\s+.*\\\\[a-zA-Z0-9]'
+            severity: medium
+
+  typosquatting:
+    label: "Typosquatting"
+    description: "Executables with names that are visual tricks on legitimate Windows binaries — digit/letter swaps (0↔o, 1↔l), transposed chars (ssms↔smss), extra/missing letters."
+    default_severity: "high"
+    checks:
+      - type: typosquat
+        fields: [Image, ParentImage, OriginalFileName, NewProcessName, Process]
+        max_distance: 2
+        min_length: 4
+        severity: high
+        targets:
+          - svchost.exe
+          - csrss.exe
+          - smss.exe
+          - wininit.exe
+          - lsass.exe
+          - services.exe
+          - explorer.exe
+          - winlogon.exe
+          - taskhost.exe
+          - taskhostw.exe
+          - spoolsv.exe
+          - conhost.exe
+          - dllhost.exe
+          - lsm.exe
+          - dwm.exe
+          - cmd.exe
+          - powershell.exe
+          - rundll32.exe
+          - regsvr32.exe
+          - msiexec.exe
+          - notepad.exe
+          - calc.exe
+        # Well-known Windows binaries that are close in edit distance to targets
+        # but are NOT typosquats — exclude them from detection
+        exclude:
+          - csrs.exe
+          - smss.exe
+          - lsm.exe
+          - sms.exe
+          - mmc.exe
+          - mstsc.exe
+          - msinfo32.exe
+          - mspaint.exe
+          - msg.exe
+          - tasklist.exe
+          - taskeng.exe
+          - taskmgr.exe
+          - taskkill.exe
+          - consent.exe
+          - conime.exe
+          - control.exe
+          - cmdkey.exe
+          - cmdl32.exe
+          - cmstp.exe
+          - csrss.exe
+          - dllhst3g.exe
+          - dwwin.exe
+          - dxcap.exe
+          - lsaiso.exe
+          - lsass.exe
+          - services.exe
+          - svchost.exe
+          - msiexec.exe
+          - regsvr32.exe
+          - rundll32.exe
+          - explorer.exe
+          - notepad.exe
+          - calc.exe
+          - powershell.exe
+          - powershell_ise.exe
+          - pwsh.exe
+          - winlogon.exe
+          - wininit.exe
+          - spoolsv.exe
+          - conhost.exe
+          - dllhost.exe
+          - taskhost.exe
+          - taskhostw.exe
+          - taskhostex.exe
+
+  # ── Linux categories ──────────────────────────────────────────────────────
+
+  gtfobins_usage:
+    label: "GTFOBins Usage"
+    description: "Living-off-the-land Linux binaries — legitimate tools with shell-escape, download or file-write capabilities commonly abused by attackers."
+    default_severity: "high"
+    # Curated from GTFOBins (https://gtfobins.github.io/) — binaries with shell,
+    # command, reverse-shell or file-write functions. Plain shells and everyday
+    # coreutils are deliberately excluded to stay precision-biased.
+    checks:
+      - type: basename_in_set
+        fields: [exe, comm, a0, Image]
+        values:
+          - nmap
+          - vim
+          - rvim
+          - vi
+          - view
+          - nano
+          - pico
+          - emacs
+          - find
+          - awk
+          - gawk
+          - mawk
+          - nawk
+          - sed
+          - perl
+          - python
+          - python2
+          - python3
+          - ruby
+          - irb
+          - php
+          - node
+          - nodejs
+          - lua
+          - tclsh
+          - expect
+          - socat
+          - nc
+          - ncat
+          - netcat
+          - telnet
+          - openssl
+          - scp
+          - sftp
+          - rsync
+          - curl
+          - wget
+          - ftp
+          - tftp
+          - busybox
+          - env
+          - ionice
+          - nice
+          - stdbuf
+          - strace
+          - ltrace
+          - gdb
+          - valgrind
+          - script
+          - screen
+          - tmux
+          - less
+          - more
+          - man
+          - pg
+          - xxd
+          - base64
+          - base32
+          - openvpn
+          - docker
+          - lxc
+          - kubectl
+          - crontab
+          - at
+          - batch
+          - timeout
+          - watch
+          - flock
+          - taskset
+          - setarch
+          - unshare
+          - nsenter
+          - chroot
+          - capsh
+          - dd
+          - install
+          - split
+          - tee
+          - mksquashfs
+          - apt
+          - apt-get
+          - dpkg
+          - yum
+          - dnf
+          - rpm
+          - pip
+          - pip3
+          - gem
+          - npm
+          - make
+          - gcc
+          - cc
+
+  linux_download_exec:
+    label: "Linux Download & Execute"
+    description: "Download-to-shell pipelines, reverse-shell primitives and decode-and-run patterns on Linux command lines."
+    default_severity: "critical"
+    checks:
+      - type: regex
+        fields: [proctitle, cmd, CommandLine, a1, a2, a3]
+        patterns:
+          - name: download_pipe_shell
+            pattern: '(?i)\b(curl|wget)\b[^|;&]{0,200}\|\s*(ba|z|da|a)?sh\b'
+            severity: critical
+          - name: dev_tcp_redirect
+            pattern: '/dev/(tcp|udp)/'
+            severity: critical
+          - name: base64_decode_pipe
+            pattern: '(?i)base64\s+(-d|--decode)[^|]{0,40}\|'
+            severity: high
+          - name: chmod_then_exec
+            pattern: '(?i)chmod\s+(\+|u\+)x\b'
+            severity: medium
+          - name: python_inline_shell
+            pattern: '(?i)python[23]?\s+-c\s+.{0,200}(socket|pty|subprocess)'
+            severity: critical
+
+  linux_persistence:
+    label: "Linux Persistence"
+    description: "Persistence via cron, systemd units, shell profiles, SSH keys, ld.so.preload and udev rules."
+    default_severity: "high"
+    checks:
+      - type: regex
+        fields: [proctitle, cmd, CommandLine, name, a1, a2, a3]
+        patterns:
+          - name: cron_modification
+            pattern: '(?i)/etc/cron|/var/spool/cron|crontab\s+-'
+            severity: high
+          - name: systemd_unit
+            pattern: '(?i)(/etc|/usr/lib)/systemd/system|systemctl\s+enable'
+            severity: high
+          - name: shell_profile
+            pattern: '(?i)\.bashrc|\.bash_profile|\.zshrc|\.profile\b'
+            severity: medium
+          - name: authorized_keys
+            pattern: '(?i)authorized_keys'
+            severity: high
+          - name: ld_preload
+            pattern: '(?i)/etc/ld\.so\.preload|LD_PRELOAD='
+            severity: high
+          - name: rc_local
+            pattern: '(?i)/etc/rc\.local'
+            severity: medium
+          - name: udev_rule
+            pattern: '(?i)/etc/udev/rules\.d'
+            severity: medium
+
+  linux_priv_esc:
+    label: "Linux Privilege Escalation"
+    description: "SUID manipulation, sudoers edits, privileged group additions and root-shell shortcuts."
+    default_severity: "high"
+    checks:
+      - type: regex
+        fields: [proctitle, cmd, CommandLine, a1, a2, a3]
+        patterns:
+          - name: setuid_chmod
+            pattern: '(?i)chmod\s+(u\+s|[24][0-7]{3})\b'
+            severity: high
+          - name: suid_search
+            pattern: '(?i)find\s.{0,80}-perm\s+(-|/)?(4000|u\+s|u=s)'
+            severity: high
+          - name: sudoers_edit
+            pattern: '(?i)/etc/sudoers|visudo'
+            severity: high
+          - name: admin_group_add
+            pattern: '(?i)usermod\s+(-a\s+)?-G\s+(sudo|wheel|admin)|gpasswd\s+-a\s+\S+\s+(sudo|wheel)'
+            severity: high
+          - name: pkexec_invocation
+            pattern: '(?i)\bpkexec\b'
+            severity: medium
+          - name: sudo_shell
+            pattern: '(?i)sudo\s+(su\b|-i\b|bash\b|sh\b)'
+            severity: medium
+          - name: passwd_shadow_write
+            pattern: '(?i)>>?\s*/etc/(passwd|shadow)'
+            severity: critical

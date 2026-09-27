@@ -1,0 +1,132 @@
+{# Relationship-graph legend.
+
+   **Every swatch is rendered from `schema.colors`**, which the server builds in
+   `app/intel/graph_payload.py::client_schema()` from `constants.ENTITY_TYPE_COLORS`,
+   `constants.SEVERITY_COLORS`, `constants.GRAPH_EDGE_KIND_COLORS` and
+   `tactics.TACTIC_COLORS`. Hardcoded hexes are exactly how a legend swatch and the node it
+   describes drift apart. A test greps this file
+   for hex literals; see `test_graph_client_declares_no_palette`.
+
+   Opened from the switcher in `_graph_overlay.html`, which keeps exactly one of
+   Legend/Help/Pivots open — they share this corner, and two at once meant one covered the
+   other's close button.
+#}
+<div x-show="activePanel === 'legend'" x-cloak
+     class="w-[20rem] lt-scroll lt-scroll--md bg-gray-900/95 backdrop-blur-sm border border-gray-800 rounded-lg text-xs shadow-2xl">
+  <div class="sticky top-0 flex items-center gap-2 px-3 py-1.5 bg-gray-900/95 border-b border-gray-800">
+    <span class="font-medium text-gray-200">Legend</span>
+    <button type="button" @click="activePanel = ''" class="ml-auto text-gray-500 hover:text-white" title="Close">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M6 18L18 6"/></svg>
+    </button>
+  </div>
+  <div class="px-3 pb-3 pt-2 space-y-3">
+
+      <div x-show="colorBy === 'type'">
+        <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Entity types</div>
+        <div class="grid grid-cols-2 gap-y-1.5 gap-x-4">
+          <template x-for="t in schema.types" :key="t">
+            <div class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full ring-1 ring-black/40" :style="`background:${schema.colors.type[t]}`"></span>
+              <span class="text-gray-300" x-text="schema.labels.types[t] || t"></span>
+            </div>
+          </template>
+        </div>
+      </div>
+
+      <div x-show="colorBy === 'severity'">
+        <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Worst finding severity</div>
+        <div class="space-y-1.5">
+          <template x-for="s in schema.severities" :key="s">
+            <div class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full ring-1 ring-black/40" :style="`background:${schema.colors.severity[s]}`"></span>
+              <span class="text-gray-300" x-text="s"></span>
+            </div>
+          </template>
+        </div>
+        <p class="text-gray-600 text-[10px] mt-1.5">Only findings in jobs you can see.</p>
+      </div>
+
+      <div x-show="colorBy === 'tactic'">
+        <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Dominant MITRE tactic</div>
+        <div class="space-y-1">
+          <template x-for="t in schema.tactics" :key="t">
+            <div class="flex items-center gap-2">
+              <span class="w-3 h-3 rounded-full ring-1 ring-black/40" :style="`background:${schema.colors.tactic[t]}`"></span>
+              <span class="text-gray-300" x-text="schema.labels.tactics[t] || t"></span>
+            </div>
+          </template>
+        </div>
+        <p class="text-gray-600 text-[10px] mt-1.5">Fourteen hues cannot be made colourblind-safe — read the panel, not the hue.</p>
+      </div>
+
+      <div x-show="colorBy === 'verdict'">
+        <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Enrichment verdict</div>
+        <div class="space-y-1.5">
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full ring-1 ring-black/40" :style="`background:${schema.colors.severity.critical}`"></span><span class="text-gray-300" x-text="schema.labels.verdicts.malicious"></span></div>
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full ring-1 ring-black/40" :style="`background:${schema.colors.severity.high}`"></span><span class="text-gray-300" x-text="schema.labels.verdicts.suspicious"></span></div>
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full ring-1 ring-black/40" :style="`background:${schema.colors.severity.informational}`"></span><span class="text-gray-300" x-text="schema.labels.verdicts.unknown"></span></div>
+          <div class="flex items-center gap-2"><span class="w-3 h-3 rounded-full ring-1 ring-black/40" :style="`background:${schema.colors.severity.low}`"></span><span class="text-gray-300" x-text="schema.labels.verdicts.clean"></span></div>
+        </div>
+        <p class="text-gray-600 text-[10px] mt-1.5">Shodan and urlscan report facts, not verdicts, so they colour nothing.</p>
+      </div>
+
+      <div x-show="colorBy === 'community'">
+        <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Communities</div>
+        <p class="text-gray-400">Louvain clusters, one hue each. <span class="text-gray-600">Hues are generated, so they carry no meaning beyond "same cluster".</span></p>
+      </div>
+
+      <div class="border-t border-gray-800 pt-2.5">
+        <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Edges</div>
+        <div class="space-y-1.5">
+          <div class="flex items-center gap-2">
+            <span class="block w-7 h-px shrink-0" :style="`background:${schema.colors.kind.job}`"></span>
+            <span class="text-gray-300" x-text="schema.labels.kinds.job"></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="block w-7 h-[2px] shrink-0" :style="`background:${schema.colors.kind.finding}`"></span>
+            <span class="text-gray-300" x-text="schema.labels.kinds.finding"></span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="relative block w-7 h-[2px] shrink-0" :style="`background:${schema.colors.kind.typed}`">
+              <span class="absolute -right-0.5 -top-1 w-0 h-0"
+                    :style="`border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:5px solid ${schema.colors.kind.typed}`"></span>
+            </span>
+            <span class="text-gray-300">Typed relationship <span class="text-gray-500">(directed)</span></span>
+          </div>
+          <p class="text-gray-600 text-[10px] pt-0.5">
+            A job edge means only “named in the same log file”. It never carries a path.
+          </p>
+        </div>
+      </div>
+
+      <div class="border-t border-gray-800 pt-2.5">
+        <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Node rings</div>
+        <div class="space-y-1.5">
+          <div class="flex items-center gap-2" x-show="scope === 'entity'">
+            <span class="w-4 h-4 rounded-full shrink-0" :style="`background:${schema.colors.type.user};border:2px solid ${schema.colors.ui.focal}`"></span>
+            <span class="text-gray-300">Focal entity</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full shrink-0" :style="`background:${schema.colors.type.user};border:2px solid ${schema.colors.ui.selection}`"></span>
+            <span class="text-gray-300">Selected</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full shrink-0" :style="`background:${schema.colors.type.user};border:2px solid ${schema.colors.ui.watchlist}`"></span>
+            <span class="text-gray-300">Watchlisted</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full shrink-0" :style="`background:${schema.colors.type.user};border:2px solid ${schema.colors.severity.critical}`"></span>
+            <span class="text-gray-300">Critical / high finding</span>
+          </div>
+          <div class="flex items-center gap-2">
+            <span class="w-3 h-3 rounded-full shrink-0 opacity-40" :style="`background:${schema.colors.type.user}`"></span>
+            <span class="text-gray-300">Allowlisted <span class="text-gray-500">(dimmed)</span></span>
+          </div>
+          <p class="text-gray-600 text-[10px] pt-0.5">
+            One ring, in that order: selection wins over focal, focal over watchlist, watchlist over threat.
+            Rings are shape and luminance only — colour stays free for the colour-by mode.
+          </p>
+        </div>
+      </div>
+  </div>
+</div>

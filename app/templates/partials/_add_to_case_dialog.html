@@ -1,0 +1,175 @@
+{#
+  Shared "Add to case" dialog for entity/job detail pages.
+
+  Usage:
+    {% from "partials/_add_to_case_dialog.html" import add_to_case_dialog %}
+    ...
+    <button type="button" data-add-to-case-trigger="entity-{{ entity.id }}">Add to case</button>
+    ...
+    {{ add_to_case_dialog('entity', entity.id) }}
+
+  The trigger button lives with the caller (placement/styling stays page-specific); this
+  macro owns the <dialog>, the case list + quick-create fetch, and the submit wiring. Any
+  element with data-add-to-case-trigger="{{ kind }}-{{ item_id }}" opens the dialog.
+
+  XSS rule: case names come from other members and MUST be rendered via textContent, never
+  string-concatenated into innerHTML. Pinned by
+  tests/test_security_hardening.py::test_entity_add_to_case_uses_dom_option_builder.
+#}
+{% macro add_to_case_dialog(kind, item_id) %}
+{% set dialog_id = "add-to-case-dialog-" ~ kind ~ "-" ~ item_id %}
+{% set form_id = "add-to-case-form-" ~ kind ~ "-" ~ item_id %}
+{% set field_name = "entity_id" if kind == "entity" else "job_id" %}
+{% set existing_action_suffix = "entities" if kind == "entity" else "jobs" %}
+<dialog id="{{ dialog_id }}" class="rounded-xl bg-gray-900 border border-gray-800 p-0 backdrop:bg-gray-950/70">
+  <form id="{{ form_id }}" method="POST" action="" class="w-96 p-6 space-y-4">
+    <h3 class="text-sm font-semibold text-white">Add this {{ 'entity' if kind == 'entity' else 'job' }} to a case</h3>
+    <input type="hidden" name="{{ field_name }}" value="{{ item_id }}">
+
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Existing case</label>
+      <select class="add-to-case-select w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">
+        <option value="">Loading…</option>
+      </select>
+    </div>
+
+    <div class="flex items-center gap-2 text-xs text-gray-600">
+      <span class="flex-1 border-t border-gray-800"></span>or<span class="flex-1 border-t border-gray-800"></span>
+    </div>
+
+    <div>
+      <label class="block text-xs text-gray-400 mb-1">Create a new case</label>
+      <input type="text" class="add-to-case-name w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+             maxlength="200" placeholder="Case name">
+    </div>
+
+    {#
+      Separated by a rule, and captioned. The note applies to *either* path — the submit
+      handler below sends it to quick-create and to the existing-case route alike — but it
+      sat flush under "Create a new case" with nothing between them, so it read as a field
+      of that block and went untyped whenever an existing case was picked.
+    #}
+    <div class="border-t border-gray-800 pt-4">
+      <label class="block text-xs text-gray-400 mb-1">Note (optional) <span class="text-gray-600">— saved on the link, whichever case you pick</span></label>
+      <input type="text" class="add-to-case-note w-full bg-gray-950 border border-gray-700 rounded px-3 py-2 text-sm text-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
+             maxlength="500" placeholder="Why is this here? (optional)">
+    </div>
+
+    {% if kind == 'job' %}
+    {# Checked by default: importing a job's observables is what you almost always want.
+       The *server* default stays 0 — see cases.py::case_add_job — so scripted callers
+       that never opted in keep their existing behaviour. #}
+    <label class="flex items-center gap-2 text-sm text-gray-300">
+      <input type="checkbox" checked class="add-to-case-include-entities lt-check">
+      Also add this job's entities
+    </label>
+    {% endif %}
+
+    <div class="flex justify-end gap-2 pt-2">
+      <button type="button" onclick="this.closest('dialog').close()"
+              class="lt-btn">Cancel</button>
+      <button type="submit" class="lt-btn lt-btn--primary">Add</button>
+    </div>
+  </form>
+</dialog>
+
+<script>
+(function() {
+  const dialog = document.getElementById('{{ dialog_id }}');
+  const form = document.getElementById('{{ form_id }}');
+  const select = form.querySelector('.add-to-case-select');
+  const nameInput = form.querySelector('.add-to-case-name');
+  const noteInput = form.querySelector('.add-to-case-note');
+
+  function loadCases() {
+    select.innerHTML = '';
+    const loading = document.createElement('option');
+    loading.textContent = 'Loading…';
+    select.appendChild(loading);
+    fetch('/intel/cases/list.json', { credentials: 'same-origin' })
+      .then(r => r.ok ? r.json() : [])
+      .then(cases => {
+        select.innerHTML = '';
+        if (!cases.length) {
+          const opt = document.createElement('option');
+          opt.value = '';
+          opt.disabled = true;
+          opt.selected = true;
+          opt.textContent = 'No open cases';
+          select.appendChild(opt);
+          return;
+        }
+        const placeholder = document.createElement('option');
+        placeholder.value = '';
+        placeholder.textContent = 'Select a case…';
+        select.appendChild(placeholder);
+        // Built via the DOM so member-controlled case names cannot inject HTML
+        // (textContent is auto-escaped by the browser).
+        cases.forEach(c => {
+          const opt = document.createElement('option');
+          opt.value = c.id;
+          opt.textContent = c.name + (c.is_shared ? ' (shared)' : '');
+          select.appendChild(opt);
+        });
+      })
+      .catch(() => {
+        select.innerHTML = '';
+        const opt = document.createElement('option');
+        opt.value = '';
+        opt.textContent = 'Failed to load cases';
+        select.appendChild(opt);
+      });
+  }
+
+  document.querySelectorAll('[data-add-to-case-trigger="{{ kind }}-{{ item_id }}"]').forEach(function(btn) {
+    btn.addEventListener('click', function() {
+      loadCases();
+      dialog.showModal();
+    });
+  });
+
+  function setHiddenField(name, value) {
+    let field = form.querySelector('input[name="' + name + '"]');
+    if (!value) {
+      if (field) field.remove();
+      return;
+    }
+    if (!field) {
+      field = document.createElement('input');
+      field.type = 'hidden';
+      field.name = name;
+      form.appendChild(field);
+    }
+    field.value = value;
+  }
+
+  form.addEventListener('submit', function(e) {
+    const newName = nameInput.value.trim();
+    const noteValue = noteInput.value.trim();
+    {% if kind == 'job' %}
+    const includeCb = form.querySelector('.add-to-case-include-entities');
+    const includeChecked = includeCb && includeCb.checked;
+    {% endif %}
+    if (newName) {
+      form.action = '/intel/cases/quick-create';
+      setHiddenField('name', newName);
+      setHiddenField('note', noteValue);
+      {% if kind == 'job' %}
+      setHiddenField('include_job_entities', includeChecked ? '1' : '');
+      {% endif %}
+    } else {
+      if (!select.value) {
+        e.preventDefault();
+        return;
+      }
+      form.action = '/intel/cases/' + select.value + '/{{ existing_action_suffix }}';
+      setHiddenField('name', '');
+      setHiddenField('note', noteValue);
+      {% if kind == 'job' %}
+      setHiddenField('include_entities', includeChecked ? '1' : '');
+      {% endif %}
+    }
+  });
+})();
+</script>
+{% endmacro %}

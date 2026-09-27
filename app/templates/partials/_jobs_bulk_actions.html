@@ -1,0 +1,181 @@
+{#
+  "N selected" bar for the jobs list. Member+ only — /jobs is anonymous-viewable, so the
+  caller gates this include, and the row checkboxes carry the same gate.
+
+  **Verbs first, one form at a time.** The bar offers verbs — Tag, Add to case, Delete —
+  and the one you pick opens its own panel underneath. Every control on a single line (a case
+  picker, a note field, an "also add entities" checkbox, a tag combobox, Tag, Untag, Clear
+  and Delete) makes everything visible and nothing legible, and puts the two most
+  destructive controls beside the two most routine ones.
+
+  Lives OUTSIDE #jobs-table-body (the 5s HTMX swap target) so the counter never blinks;
+  selection state itself lives in Alpine.store('jobSelection') for the same reason.
+
+  Case names come from other members, so the <option> elements are built with
+  createElement + textContent — never innerHTML. Same rule as _add_to_case_dialog.html.
+#}
+{# `with context`: the combobox macro renders its colour swatches from `tag_colors`, and a
+   Jinja macro cannot see the caller's context without it. #}
+{% from "intel/partials/_tag_combobox.html" import tag_combobox with context %}
+<div x-data="jobsBulkAdd()" class="mb-4"
+     {#
+       Two jobs, one effect. Clearing the selection closes whatever panel was open (an
+       "Add to case" form floating over an empty selection is a dead control), and starting
+       a new selection clears the last confirmation ("Tagged 3 jobs" otherwise hangs off the
+       idle hint for the rest of the page's life, reading as part of that sentence).
+
+       Assigning to `panel` from a descendant scope is safe: Alpine v3's merged-proxy `set`
+       trap finds the ancestor that owns the property and writes there rather than shadowing.
+     #}
+     x-effect="$store.jobSelection.ids.length ? ($refs.tagResult.innerHTML = '') : (panel = '')"
+     @keydown.escape="panel = ''">
+
+  {# Idle hint: without it the checkbox column reads as an unexplained control. #}
+  <p x-show="!$store.jobSelection.ids.length" x-cloak class="text-xs text-gray-500">
+    Tick jobs to add them to a case{% if user and user.is_superuser %} or delete them in bulk{% endif %}.
+  </p>
+
+  <div x-show="$store.jobSelection.ids.length" x-cloak
+       class="bg-gray-900 border border-blue-800/50 rounded-xl">
+
+    {# ── The verb row ─────────────────────────────────────────────────────── #}
+    <div class="px-4 py-3 flex items-center gap-2 flex-wrap">
+      <span class="text-sm text-gray-300">
+        <span class="font-semibold text-white" x-text="$store.jobSelection.ids.length"></span> selected
+      </span>
+
+      <span class="w-px h-5 bg-gray-800 mx-1"></span>
+
+      <button type="button" @click="panel = (panel === 'tag' ? '' : 'tag')"
+              :class="panel === 'tag' ? 'lt-btn lt-btn--sm lt-btn--primary' : 'lt-btn lt-btn--sm'">Tag</button>
+      <button type="button" @click="openCase()"
+              :class="panel === 'case' ? 'lt-btn lt-btn--sm lt-btn--primary' : 'lt-btn lt-btn--sm'">Add to case</button>
+
+      <div class="ml-auto flex items-center gap-2">
+        <button type="button" @click="$store.jobSelection.clear()" class="lt-btn lt-btn--sm lt-btn--ghost">Clear</button>
+        {% if user and user.is_superuser %}
+        {# Destructive, so it goes through the shared confirm dialog rather than window.confirm.
+           Kept out of the panel set: a delete needs no options, and putting it behind the
+           same disclosure as the routine verbs would hide it one click deeper for no gain. #}
+        <form method="POST" action="/jobs/bulk-delete" x-ref="deleteForm" @submit="onDeleteSubmit($event)"
+              data-confirm-title="Delete jobs"
+              data-confirm-message="Permanently delete the selected jobs, their findings, and their stored output?"
+              data-confirm-accept="Delete">
+          <button type="submit" class="lt-btn lt-btn--sm lt-btn--danger">
+            Delete <span x-text="$store.jobSelection.ids.length"></span>
+          </button>
+        </form>
+        {% endif %}
+      </div>
+    </div>
+
+    {# ── Tag panel ────────────────────────────────────────────────────────── #}
+    {#
+      No auto-focus here, deliberately. The combobox input opens its dropdown on focus and
+      fetches the vocabulary, so focusing it would drop an absolutely-positioned panel over
+      the first table rows before the analyst has typed anything.
+
+      The ids reach the server as one comma-separated field, written imperatively on click:
+      htmx serialises the form synchronously inside the submit event while Alpine applies
+      :value on its own scheduler, so a binding would send the previous selection. (The case
+      form below writes *repeated* hidden inputs instead — each idiom matches what its own
+      endpoint accepts, rather than one of them being wrong.)
+    #}
+    <div x-show="panel === 'tag'" x-cloak class="px-4 pb-3 pt-1 border-t border-gray-800">
+      <form class="lt-bar" x-data="tagCombobox({ max: {{ tag_write_max }} })"
+            hx-post="/jobs/bulk-tag" hx-target="#jobs-bulk-tag-result" hx-swap="innerHTML"
+            @htmx:after-request="if ($event.detail.successful) { window.tagVocabChanged(); reset(); $store.jobSelection.clear(); htmx.trigger('#jobs-table-body', 'jobsRefresh'); }">
+        <input type="hidden" name="job_ids" x-ref="tagIds">
+        {{ tag_combobox(size='lt-field--sm', width='w-72', placeholder='Search or create a tag…') }}
+        <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary" :disabled="isEmpty()" title="Type or pick a tag first"
+                @click="$refs.tagIds.value = $store.jobSelection.ids.join(',')">Tag</button>
+        <button type="submit" class="lt-btn lt-btn--sm" :disabled="isEmpty()" title="Type or pick a tag first"
+                hx-post="/jobs/bulk-untag"
+                @click="$refs.tagIds.value = $store.jobSelection.ids.join(',')">Untag</button>
+      </form>
+    </div>
+
+    {# ── Add-to-case panel ────────────────────────────────────────────────── #}
+    <div x-show="panel === 'case'" x-cloak class="px-4 pb-3 pt-1 border-t border-gray-800">
+      <form method="POST" :action="'/intel/cases/' + caseId + '/jobs/bulk'" x-ref="form" @submit="onSubmit($event)"
+            class="lt-bar">
+        <select x-ref="caseSelect" x-model="caseId" @focus="loadCases()"
+                class="lt-field lt-field--sm w-56">
+          <option value="">Select a case…</option>
+        </select>
+
+        {# The same 500-char link note the dialog and the case-detail pickers offer. #}
+        <input type="text" name="note" maxlength="500" placeholder="Why is this here? (optional)"
+               class="lt-field lt-field--sm w-64">
+
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+          {# The hidden 0 goes first: an unticked box posts nothing, and the route defaults to 1. #}
+          <input type="hidden" name="include_entities" value="0">
+          <input type="checkbox" name="include_entities" value="1" checked class="lt-check">
+          Also add each job's entities
+        </label>
+
+        <button type="submit" :disabled="!caseId" class="lt-btn lt-btn--sm lt-btn--primary">Add to case</button>
+      </form>
+    </div>
+  </div>
+
+  {# The confirmation from a tag write. Its own line, outside the bar, because the bar is
+     hidden the moment the selection clears — which the tag form does on success, so a
+     result rendered inside it would vanish in the same frame it arrived. #}
+  <p id="jobs-bulk-tag-result" x-ref="tagResult" class="text-xs mt-1"></p>
+</div>
+
+<script>
+  function jobsBulkAdd() {
+    return {
+      // '' | 'tag' | 'case' — at most one open, so the bar is a row of verbs rather than
+      // every form at once.
+      panel: '',
+      caseId: '',
+      loaded: false,
+      openCase() {
+        this.panel = this.panel === 'case' ? '' : 'case';
+        if (this.panel === 'case') {
+          this.loadCases();
+          // Safe to focus, unlike the tag combobox: a <select> opens nothing on focus.
+          this.$nextTick(() => this.$refs.caseSelect && this.$refs.caseSelect.focus());
+        }
+      },
+      loadCases() {
+        if (this.loaded) return;
+        this.loaded = true;
+        fetch('/intel/cases/list.json', { credentials: 'same-origin' })
+          .then(r => r.ok ? r.json() : [])
+          .then(cases => {
+            const sel = this.$refs.caseSelect;
+            cases.forEach(c => {
+              const opt = document.createElement('option');
+              opt.value = c.id;
+              opt.textContent = c.name + (c.is_shared ? ' (shared)' : '');
+              sel.appendChild(opt);
+            });
+          })
+          .catch(() => { this.loaded = false; });
+      },
+      _fillIds(form) {
+        form.querySelectorAll('input[type="hidden"][name="job_ids"]').forEach(el => el.remove());
+        this.$store.jobSelection.ids.forEach(id => {
+          const input = document.createElement('input');
+          input.type = 'hidden';
+          input.name = 'job_ids';
+          input.value = id;
+          form.appendChild(input);
+        });
+      },
+      onSubmit(event) {
+        if (!this.caseId || !this.$store.jobSelection.ids.length) { event.preventDefault(); return; }
+        this._fillIds(this.$refs.form);
+      },
+      onDeleteSubmit(event) {
+        if (!this.$store.jobSelection.ids.length) { event.preventDefault(); return; }
+        this._fillIds(this.$refs.deleteForm);
+      }
+    };
+  }
+</script>

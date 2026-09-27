@@ -1,0 +1,63 @@
+{# Overlay shell for the relationship graph: the corner controls and the floating panels.
+
+   **The three panels are mutually exclusive**, and that is a fix, not a preference. Legend,
+   Pivots and Help all want the same corner of the canvas; with two open at once the Pivots
+   card covered the Legend's own toggle button, so the legend could be opened and then not
+   closed. One `activePanel` value, one open panel, plus an explicit close button on each and
+   an Escape branch — three ways out instead of none.
+
+   The property is `activePanel`, not `panel`, and that is load-bearing — see the note on its
+   declaration in graph.js.
+
+   Placed inside a `position:relative` wrapper that also hosts the canvas.
+#}
+
+<!-- Panel switcher — bottom-left, always reachable -->
+<div class="absolute bottom-2 left-2 z-30 flex items-end gap-2 pointer-events-auto">
+  <div class="flex flex-col gap-1">
+    <button type="button" @click="togglePanel('help')" title="How to read this graph"
+            class="lt-btn lt-btn--xs" :class="activePanel === 'help' ? 'lt-btn--active' : ''">? Help</button>
+    <button type="button" @click="togglePanel('legend')"
+            class="lt-btn lt-btn--xs" :class="activePanel === 'legend' ? 'lt-btn--active' : ''">Legend</button>
+    <button type="button" @click="togglePanel('pivots')" x-show="pivots.length" x-cloak
+            class="lt-btn lt-btn--xs" :class="activePanel === 'pivots' ? 'lt-btn--active' : ''">Pivots</button>
+  </div>
+
+  {% include "intel/partials/_graph_legend.html" %}
+  {% include "intel/partials/_graph_help.html" %}
+  {% include "intel/partials/_graph_pivots.html" %}
+</div>
+
+<!-- Camera toolbar — top-right -->
+<div class="absolute top-2 right-2 z-20 flex flex-col gap-1 pointer-events-auto">
+  <button type="button" @click="zoomIn()" title="Zoom in"
+          class="w-8 h-8 flex items-center justify-center rounded border border-gray-700 bg-gray-900/90 backdrop-blur-sm text-gray-300 hover:text-white hover:bg-gray-800 transition">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 5v14M5 12h14"/></svg>
+  </button>
+  <button type="button" @click="zoomOut()" title="Zoom out"
+          class="w-8 h-8 flex items-center justify-center rounded border border-gray-700 bg-gray-900/90 backdrop-blur-sm text-gray-300 hover:text-white hover:bg-gray-800 transition">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M5 12h14"/></svg>
+  </button>
+  <button type="button" @click="fitToView()" title="Fit to view"
+          class="w-8 h-8 flex items-center justify-center rounded border border-gray-700 bg-gray-900/90 backdrop-blur-sm text-gray-300 hover:text-white hover:bg-gray-800 transition">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M4 8V4h4M16 4h4v4M20 16v4h-4M8 20H4v-4"/></svg>
+  </button>
+  <button type="button" @click="recenter()" title="Recenter on focal" x-show="scope === 'entity'"
+          class="w-8 h-8 flex items-center justify-center rounded border border-gray-700 bg-gray-900/90 backdrop-blur-sm text-gray-300 hover:text-white hover:bg-gray-800 transition">
+    <svg class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path stroke-linecap="round" d="M12 3v3M12 18v3M3 12h3M18 12h3"/></svg>
+  </button>
+  <button type="button" @click="toggleTall()" :title="tall ? 'Shrink the canvas' : 'Give the graph more room'"
+          class="w-8 h-8 flex items-center justify-center rounded border transition backdrop-blur-sm"
+          :class="tall ? 'border-blue-700/60 bg-blue-900/40 text-blue-200' : 'border-gray-700 bg-gray-900/90 text-gray-300 hover:text-white hover:bg-gray-800'">
+    <svg x-show="!tall" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M12 4v16M8 8l4-4 4 4M8 16l4 4 4-4"/></svg>
+    <svg x-show="tall" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M8 9l4-4 4 4M8 15l4 4 4-4"/></svg>
+  </button>
+  <button type="button" @click="toggleLock()" :title="locked ? 'Unlock the camera (pan and zoom)' : 'Lock the camera'"
+          class="w-8 h-8 flex items-center justify-center rounded border transition backdrop-blur-sm"
+          :class="locked ? 'border-amber-700/60 bg-amber-900/40 text-amber-200' : 'border-gray-700 bg-gray-900/90 text-gray-300 hover:text-white hover:bg-gray-800'">
+    <svg x-show="locked" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path stroke-linecap="round" d="M8 11V8a4 4 0 018 0v3"/></svg>
+    <svg x-show="!locked" class="w-4 h-4" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><rect x="5" y="11" width="14" height="9" rx="2"/><path stroke-linecap="round" d="M8 11V8a4 4 0 017.5-2"/></svg>
+  </button>
+</div>
+
+{% include "intel/partials/_graph_panel.html" %}

@@ -1,0 +1,8 @@
+{#
+  What `GET /intel/rules/{id}/form-partial` returns: the form alone, swapped into the row's
+  `#rule-form-{id}` container. Separate from `_rule_form.html` so that file stays a macro
+  definition and nothing else — importing a template that also emits would render it, and
+  discard the output, on every import.
+#}
+{% from "intel/partials/_rule_form.html" import rule_form with context %}
+{{ rule_form(rule) }}

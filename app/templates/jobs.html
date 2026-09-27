@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% from "partials/_tab_badge.html" import tab_badge, tab_icon %}
+{% block title %}Jobs – LogsTotal{% endblock %}
+
+{% block content %}
+{% call page_header("Analysis Jobs", "/", "Home") %}
+<a href="/" class="lt-btn lt-btn--lg lt-btn--primary">+ New Analysis</a>
+{% endcall %}
+
+{#
+  Section tabs. Built server-side by
+  `_build_jobs_page_tabs`, so gating is in the *list* rather than an `x-show` on a rendered
+  tab: `/jobs` is anonymous-viewable, and a tab whose pane 403s is worse than no tab.
+
+  Anonymous gets a one-entry list and falls through to the bare table, the `job.html` idiom.
+
+  The panes are lazy: each container carries the `hx-trigger="… from:body once"` and is
+  itself replaced by the fragment (whose root carries the id but no trigger), so a tab
+  switch cannot refetch what is already there.
+#}
+{% if tabs | length > 1 %}
+<div x-data='resourceTabs({{ tabs | tojson }})'>
+  <div class="flex flex-wrap border-b border-gray-800 mb-6 gap-1">
+    {% for tab in tabs %}
+    <button @click="select('{{ tab.key }}')"
+            :class="tab === '{{ tab.key }}' ? 'border-blue-500 text-white' : 'border-transparent text-gray-400 hover:text-gray-200'"
+            class="px-4 py-2 -mb-px border-b-2 text-sm font-medium transition flex items-center gap-2">
+      {{ tab_icon(tab) }} {{ tab.label }} {{ tab_badge(tab) }}
+    </button>
+    {% endfor %}
+  </div>
+
+  <div x-show="tab === 'list'" x-cloak>
+    {% include "partials/_jobs_list_pane.html" %}
+  </div>
+
+  <div x-show="tab === 'watching'" x-cloak>
+    <div id="jobs-watching-region"
+         hx-get="/jobs/watching"
+         hx-trigger="loadJobWatching from:body once"
+         hx-swap="outerHTML">
+      <p class="text-sm text-gray-500">Loading watched jobs…</p>
+    </div>
+  </div>
+</div>
+{% else %}
+{% include "partials/_jobs_list_pane.html" %}
+{% endif %}
+
+{% endblock %}

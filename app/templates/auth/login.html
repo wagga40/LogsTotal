@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Login – LogsTotal{% endblock %}
+
+{% block content %}
+<div class="max-w-sm mx-auto mt-20">
+  <h1 class="text-2xl font-bold mb-6 text-center">Login</h1>
+
+  <div id="login-error" class="hidden mb-4 p-3 rounded bg-red-900/50 border border-red-700 text-red-300 text-sm"></div>
+
+  <form
+    hx-post="/auth/cookie/login"
+    hx-encoding="application/x-www-form-urlencoded"
+    hx-on::after-request="
+      if (event.detail.successful) {
+        window.location.href = '/';
+      } else {
+        let el = document.getElementById('login-error');
+        let status = event.detail.xhr ? event.detail.xhr.status : 0;
+        el.classList.remove('hidden');
+        el.textContent = status === 400 ? 'Invalid email or password.'
+          : status === 429 ? 'Too many sign-in attempts. Wait a minute, then try again.'
+          : 'Sign-in failed before your password was checked. Try again.';
+      }
+    "
+    class="bg-gray-900 border border-gray-800 rounded-lg p-6 flex flex-col gap-4"
+  >
+    <div>
+      <label class="block text-sm text-gray-400 mb-1">Email</label>
+      <input name="username" type="email" required autocomplete="email"
+        class="lt-field lt-field--lg w-full">
+    </div>
+    <div>
+      <label class="block text-sm text-gray-400 mb-1">Password</label>
+      <input name="password" type="password" required autocomplete="current-password"
+        class="lt-field lt-field--lg w-full">
+    </div>
+    <button type="submit"
+      class="lt-btn lt-btn--lg lt-btn--primary mt-2">
+      Sign In
+    </button>
+  </form>
+</div>
+{% endblock %}

@@ -1,0 +1,115 @@
+{% from "partials/_pager.html" import pager %}
+{# Self-contained region and its own swap target, the `_case_notes.html` idiom. The pager
+   stays OUTSIDE the scroll box (tests/test_control_primitives.py), and the outer wrapper
+   carries `overflow-hidden` while the inner one carries `.lt-scroll` — never the same
+   element, or which axis wins depends on stylesheet order and dev and prod disagree. #}
+<div id="activity-region">
+  <div class="flex items-baseline justify-between mb-2">
+    <p class="text-xs text-gray-500">
+      {% if total %}{{ total }} event{{ 's' if total != 1 }}{% else %}No events{% endif %}
+      {% if filters.category or filters.action or filters.actor or filters.q or filters.outcome or filters.range %}
+      <span class="text-gray-600">matching this filter</span>
+      {% endif %}
+    </p>
+  </div>
+
+  {% if events %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <div class="lt-scroll lt-scroll--lg">
+      <table class="w-full text-sm">
+        <thead class="border-b border-gray-800 sticky top-0 bg-gray-900 z-10">
+          <tr class="text-gray-400 text-left">
+            <th class="px-4 py-3 font-medium">When</th>
+            <th class="px-4 py-3 font-medium">Actor</th>
+            <th class="px-4 py-3 font-medium">Action</th>
+            <th class="px-4 py-3 font-medium">Target</th>
+            <th class="px-4 py-3 font-medium">Detail</th>
+          </tr>
+        </thead>
+        <tbody class="divide-y divide-gray-800">
+          {% for e in events %}
+          <tr class="hover:bg-gray-800/50 transition align-top">
+            <td class="px-4 py-2.5 text-gray-500 text-xs whitespace-nowrap" title="{{ e.created_at }}">
+              {{ e.created_at | time_ago }}
+            </td>
+            <td class="px-4 py-2.5 text-xs">
+              <span class="text-gray-300 block truncate max-w-[200px]" title="{{ e.actor_label }}">{{ e.actor_label }}</span>
+              {% if e.actor_ip %}<span class="text-gray-600 font-mono">{{ e.actor_ip }}</span>{% endif %}
+            </td>
+            <td class="px-4 py-2.5">
+              <div class="flex items-center gap-2">
+                {# Outcome, not severity: these are not findings, and reusing the severity
+                   palette here would say something false about how bad an event is. #}
+                {% if e.outcome == 'success' %}
+                <span class="badge-base badge-completed"><span class="badge-dot"></span>{{ e.label }}</span>
+                {% elif e.outcome == 'denied' %}
+                <span class="badge-base badge-cancelled"><span class="badge-dot"></span>{{ e.label }}</span>
+                {% else %}
+                <span class="badge-base badge-failed"><span class="badge-dot"></span>{{ e.label }}</span>
+                {% endif %}
+              </div>
+              <span class="text-[11px] text-gray-600 font-mono">{{ e.action }}</span>
+            </td>
+            <td class="px-4 py-2.5 text-xs text-gray-400">
+              {% if e.target_type %}
+                {% if e.target_type == 'job' and e.target_id and ',' not in e.target_id %}
+                <a href="/jobs/{{ e.target_id }}" class="text-blue-400 hover:underline">job #{{ e.target_id }}</a>
+                {% elif e.target_type == 'case' and e.target_id %}
+                <a href="/intel/cases/{{ e.target_id }}" class="text-blue-400 hover:underline">case #{{ e.target_id }}</a>
+                {% else %}
+                <span class="text-gray-500">{{ e.target_type }}</span>
+                {% if e.target_id %}<span class="text-gray-600 font-mono">{{ e.target_id }}</span>{% endif %}
+                {% endif %}
+              {% else %}<span class="text-gray-700">&mdash;</span>{% endif %}
+            </td>
+            <td class="px-4 py-2.5 text-xs text-gray-400 max-w-[380px]">
+              {% if e.summary %}<span class="block truncate" title="{{ e.summary }}">{{ e.summary }}</span>{% endif %}
+              {#
+                `is mapping` is not defensive dressing — it is the fix for a real outage.
+                `changed` means `{field: {from, to}}`, the shape `activity.diff_settings`
+                produces, and this loop calls `.items()` on it. Two other call sites wrote
+                the key with a different shape (a bare host count, a list of field names),
+                and Jinja raising `'int object' has no attribute items` inside the row loop
+                took out the **whole** page and its partial — for every admin, permanently,
+                until the offending row aged out. One malformed audit row must not be able
+                to hide the audit log. Both call sites were corrected; this keeps the next
+                one from mattering.
+              #}
+              {% if e.meta and e.meta.changed is mapping and e.meta.changed %}
+              <span class="block text-gray-600 mt-0.5">
+                {% for field, change in e.meta.changed.items() %}
+                <span class="inline-block mr-2 font-mono">{{ field }}: {{ change['from'] if change is mapping else change }}{% if change is mapping %}&rarr;{{ change['to'] }}{% endif %}</span>
+                {% endfor %}
+              </span>
+              {% elif e.meta and e.meta.fields %}
+              {#- A list of field names, for a record that deliberately does not carry the
+                  values — a workflow edit, where the changed field is the whole task YAML. -#}
+              <span class="block text-gray-600 mt-0.5">
+                {% for field in e.meta.fields %}
+                <span class="inline-block mr-2 font-mono">{{ field }}</span>
+                {% endfor %}
+              </span>
+              {% endif %}
+              {% if e.request_id %}
+              <span class="block text-gray-700 font-mono text-[10px] mt-0.5 select-all">{{ e.request_id }}</span>
+              {% endif %}
+            </td>
+          </tr>
+          {% endfor %}
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  {{ pager(page, total_pages, url='/admin/activity/partial', qs=query_string,
+           target='#activity-region', swap='morph') }}
+
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl px-4 py-10 text-center">
+    <p class="text-sm text-gray-500">Nothing recorded for this filter.</p>
+    {% if not capture_enabled %}
+    <p class="text-xs text-gray-600 mt-1">Capture is off &mdash; enable it in Settings to start recording.</p>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>

@@ -1,0 +1,53 @@
+---
+title: ShadowDumper
+group: MFT
+description: ShadowDumper artifacts
+authors:
+  - Reece394
+
+
+kind: mft
+level: critical
+status: stable
+timestamp: StandardInfoCreated
+
+
+fields:
+  - name: FileNamePath
+    to: FullPath
+  - name: StandardInfoLastModified0x10
+    to: StandardInfoLastModified
+  - name: StandardInfoLastAccess0x10
+    to: StandardInfoLastAccess
+  - name: FileNameCreated0x30
+    to: FileNameCreated
+  - name: FileNameLastModified0x30
+    to: FileNameLastModified
+  - name: FileNameLastAccess0x30
+    to: FileNameLastAccess
+  - name: FileSize
+    to: FileSize
+  - name: IsADirectory
+    to: IsADirectory
+  - name: IsDeleted
+    to: IsDeleted
+  - name: HasAlternateDataStreams
+    to: HasAlternateDataStreams
+  - name: DataStreams
+    to: DataStreams
+
+filter:
+  condition: shadowdumper
+
+  shadowdumper:
+    FullPath:
+      - 'i*PANDA.txt*'
+      - 'i*simpleMDWD.raw*'
+      - 'i*sysMDWD.file*'
+      - 'i*panda.raw*'
+      - 'i*panda.sense*'
+      - 'i*panda.enc*'
+      - 'i*ShadowDumper*'
+      - 'i*off.bin*'
+      - 'i*pan.bin*'
+      - 'i*callback.elf*'

@@ -1,0 +1,17 @@
+name: "Linux Auditd Analysis"
+description: "Run Zircolite against Linux/auditd SIGMA rules"
+is_default: false
+log_types:
+  - auditd
+
+# Zircolite is the auditd engine: its --auditd mode emits one row per audit
+# record with the native field names (a0/exe/comm/pid/acct/...) that the intel
+# extractors read. ChopChopGo's auditd target merges the multi-line records, so
+# type-specific SIGMA rules (type: EXECVE) do not match reliably — it is left to
+# the syslog workflow where it excels.
+tasks:
+  - tool: zircolite
+    # Pinned by digest — see docs/runbooks/detection-tools.md#updating-rule-sets to move it.
+    docker_image: wagga40/zircolite:4.0.0@sha256:552f1900fb5533a58fdad1ae61f46c09018271787d5d7a2d08cb318d3221461f
+    rules_path: tools/zircolite/rules/rules_linux.json
+    timeout: 300

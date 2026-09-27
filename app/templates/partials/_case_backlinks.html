@@ -1,0 +1,30 @@
+{#
+  "In these cases" chips for entity / job detail pages.
+
+  Context: `member_cases` — a list of InvestigationCase rows already filtered through
+  `visible_case_filter(user)` by the caller, so an unshared case never reaches here for
+  a non-owner. Renders nothing at all when the list is empty.
+
+  Callers: intel/entity.html (header card) and job.html (header card — deliberately
+  placed *before* the `_job_status.html` include so it never enters `#job-status-region`,
+  which morph-swaps every 3s while a job runs).
+#}
+{% if member_cases %}
+{% set case_status_meta = {
+  'open': 'bg-blue-900/40 text-blue-300 border-blue-700/40',
+  'monitoring': 'bg-amber-900/40 text-amber-300 border-amber-700/40',
+  'closed': 'bg-gray-800 text-gray-400 border-gray-700/40',
+} %}
+<div class="mt-4 pt-4 border-t border-gray-800">
+  <div class="flex items-center flex-wrap gap-2">
+    <span class="text-xs text-gray-500">In cases:</span>
+    {% for c in member_cases %}
+    <a href="/intel/cases/{{ c.id }}"
+       class="inline-flex items-center gap-1.5 px-2 py-0.5 rounded-full text-xs border transition hover:text-white hover:border-gray-500 {{ case_status_meta.get(c.status, case_status_meta['open']) }}"
+       title="{{ c.status }}{% if c.is_shared %} · shared{% endif %}">
+      {{ c.name }}
+    </a>
+    {% endfor %}
+  </div>
+</div>
+{% endif %}

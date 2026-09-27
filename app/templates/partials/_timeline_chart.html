@@ -1,0 +1,64 @@
+{% from "partials/_help_popover.html" import help_popover %}
+{#
+  Event Timeline chart — MITRE-stacked hourly histogram.
+
+  Extracted verbatim from the job-detail analytics card so the job page and the
+  case attack-timeline tab render an identical chart. Params:
+    - timeline:          list of bucket items ({bucket, count, pct, segments})
+    - timeline_tactics:  legend list ({name, key, color}) from format_timeline()
+
+  Pure presentation — no reliance on outer template context.
+#}
+{% macro timeline_chart(timeline, timeline_tactics) %}
+    <h3 class="text-sm font-medium text-gray-400 mb-4 flex items-center flex-wrap gap-1">Activity histogram
+      {% call help_popover('How to read this histogram', cls='ml-1.5') %}
+          Bars represent 1-hour buckets of matching events across the log file's time range.
+          Height is proportional to event count — hover a bar to see the exact bucket and count.
+          Colours follow the MITRE ATT&amp;CK tactic palette.
+          The faint grey portion represents events from rules without MITRE tactic attribution
+          (e.g. generic Sysmon alerts like "File Created" or "Registry Key Set").
+      {% endcall %}
+      {% if timeline_tactics %}
+      <span class="text-gray-600 font-normal ml-auto flex flex-wrap gap-x-3 gap-y-1">
+        {% for t in timeline_tactics %}
+        <span class="inline-flex items-center gap-1 text-xs{% if t.key == '_other' %} opacity-50{% endif %}">
+          <span class="w-2 h-2 rounded-sm flex-shrink-0{% if t.key == '_other' %} opacity-40{% endif %}" style="background: {{ t.color }}"></span>{{ t.name }}
+        </span>
+        {% endfor %}
+      </span>
+      {% endif %}
+    </h3>
+    <div class="overflow-x-auto">
+      <div class="min-w-max">
+        <!-- Bars -->
+        <div class="flex items-end gap-1" style="height: 80px">
+          {% for item in timeline %}
+          {% set bar_h = [item.pct * 80 // 100, 2] | max %}
+          {% if item.segments is defined and item.segments %}
+          <div class="flex-shrink-0 w-8 flex flex-col-reverse rounded-t overflow-hidden"
+               style="height: {{ bar_h }}px"
+               title="{{ item.bucket }}: {{ item.count }} event{% if item.count != 1 %}s{% endif %}">
+            {% for seg in item.segments %}
+            <div style="height: {{ seg.pct }}%; background: {{ seg.color }};{% if seg.tactic == '_other' %} opacity: var(--timeline-other-alpha);{% endif %}"
+                 class="w-full min-h-[1px]{% if seg.tactic != '_other' %} hover:brightness-125 transition-[filter]{% endif %}"></div>
+            {% endfor %}
+          </div>
+          {% else %}
+          <div class="flex-shrink-0 w-8 bg-blue-600/70 hover:bg-blue-500/70 rounded-t transition-colors"
+               style="height: {{ bar_h }}px; min-height: 2px"
+               title="{{ item.bucket }}: {{ item.count }} event{% if item.count != 1 %}s{% endif %}"></div>
+          {% endif %}
+          {% endfor %}
+        </div>
+        <!-- Labels -->
+        <div class="flex gap-1 border-t border-gray-800">
+          {% for item in timeline %}
+          <div class="flex-shrink-0 w-8 flex justify-center pt-1">
+            <span class="text-xs text-gray-500 whitespace-nowrap"
+                  style="writing-mode: vertical-rl; transform: rotate(180deg);">{{ item.bucket }}</span>
+          </div>
+          {% endfor %}
+        </div>
+      </div>
+    </div>
+{% endmacro %}

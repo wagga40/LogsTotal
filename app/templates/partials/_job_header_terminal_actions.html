@@ -1,0 +1,51 @@
+{% if not is_terminal and user and (user.is_superuser or (job.submitted_by_user_id and user.id == job.submitted_by_user_id)) %}
+<form method="POST" action="/jobs/{{ job.id }}/cancel" class="inline"
+      data-confirm-title="Cancel job"
+      data-confirm-message="Stop this analysis? Results from tools that already finished are kept."
+      data-confirm-accept="Cancel job">
+  <button type="submit"
+    class="inline-flex items-center gap-1.5 text-xs bg-red-900/60 hover:bg-red-800 border border-red-800 rounded-lg px-3 py-1.5 text-red-200 hover:text-white transition"
+    title="Stop this analysis — findings from finished tools are kept">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0zM9 9l6 6m0-6l-6 6"/></svg>
+    Cancel
+  </button>
+</form>
+{% endif %}
+{% if is_terminal %}
+<a href="/jobs/{{ job.id }}/mitre-layer" target="_blank"
+   class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition"
+   title="Download MITRE ATT&CK Navigator layer JSON for this job">
+  <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 10v6m0 0l-3-3m3 3l3-3m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg>
+  ATT&amp;CK Layer
+</a>
+{% endif %}
+{% if user and user.is_superuser and is_terminal %}
+<div class="relative" @click.outside="show = false"
+  x-data="{ show: false, mitre: true, timeline: true, entities: true, threats: true, get exportUrl() { let s = [this.mitre && 'mitre', this.timeline && 'timeline', this.entities && 'entities', this.threats && 'threats'].filter(Boolean); return '/jobs/{{ job.id }}/analytics.json' + (s.length < 4 ? '?sections=' + s.join(',') : ''); } }">
+  <button type="button" @click="show = !show"
+    class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
+    Analytics
+    <svg class="w-3 h-3 transition-transform" :class="show && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+  </button>
+  <div x-show="show" x-cloak class="lt-menu lt-menu--flush absolute right-0 mt-1 w-56 p-3 space-y-2">
+    <p class="text-xs text-gray-500 font-medium mb-1">Include sections</p>
+    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" x-model="mitre" class="accent-blue-500 rounded"> MITRE ATT&amp;CK</label>
+    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" x-model="timeline" class="accent-blue-500 rounded"> Timeline</label>
+    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" x-model="entities" class="accent-blue-500 rounded"> Entities</label>
+    <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" x-model="threats" class="accent-blue-500 rounded"> Threat Detection</label>
+    <a :href="exportUrl" @click="show = false" :class="!(mitre || timeline || entities || threats) && 'pointer-events-none opacity-40'"
+      class="lt-btn lt-btn--primary lt-btn--block mt-2">
+      Download JSON
+    </a>
+  </div>
+</div>
+<form method="POST" action="/jobs/{{ job.id }}/recalculate-analytics" class="inline">
+  <button type="submit"
+    class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition"
+    title="Recompute MITRE, timeline, and entity analytics">
+    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15"/></svg>
+    Recalculate
+  </button>
+</form>
+{% endif %}

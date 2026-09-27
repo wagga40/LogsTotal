@@ -1,0 +1,104 @@
+{% extends "base.html" %}
+{% from "partials/_pager.html" import pager %}
+{% from "intel/partials/_finding_row.html" import finding_row %}
+{% from "intel/partials/_entity_type_badge.html" import type_badge %}
+{% block title %}Findings — job #{{ job.id }} – Intel – LogsTotal{% endblock %}
+
+{#
+  The Intel-side reading of one job's findings.
+
+  This is not a second job page and must not grow into one: /jobs/{id} already groups
+  findings by severity with rule and event expanders, and it is the first link in the
+  header below. The only thing here that page cannot show is which entities each finding
+  resolved to — chips that pivot straight back into Intel — so that is the whole reason
+  this page exists, and everything else stays thin on purpose.
+#}
+{% block content %}
+{% set qs_base = '/intel/jobs/' ~ job.id ~ '/findings' %}
+{% set filter_qs = ('&severity=' ~ severity if severity else '') ~ ('&entity_id=' ~ entity_id if entity_id else '') %}
+<div>
+
+  <!-- Breadcrumb -->
+  <div class="flex items-center gap-2 text-sm text-gray-500 mb-6">
+    <a href="/intel" class="hover:text-gray-300 transition">Intel</a>
+    <span class="text-gray-700">/</span>
+    <a href="/jobs/{{ job.id }}" class="hover:text-gray-300 transition">Job #{{ job.id }}</a>
+    <span class="text-gray-700">/</span>
+    <span class="text-white">Findings</span>
+  </div>
+
+  <!-- Header card -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
+    <h1 class="text-xl font-mono font-bold text-blue-300 break-all mb-1">
+      {{ job.filename if job.log_file else 'Unknown file' }}
+    </h1>
+    <div class="flex flex-wrap gap-x-6 gap-y-2 text-sm text-gray-500 mb-5">
+      <span>Job <span class="text-gray-300">#{{ job.id }}</span></span>
+      {% if job.status %}<span>Status <span class="text-gray-300">{{ job.status.value }}</span></span>{% endif %}
+      {% if job.score_ratio %}<span>Score <span class="text-gray-300">{{ job.score_ratio }}</span></span>{% endif %}
+      {% if job.workflow %}<span>Workflow <span class="text-gray-300">{{ job.workflow.name }}</span></span>{% endif %}
+      {% if job.created_at %}<span>Submitted <span class="text-gray-300" title="{{ job.created_at.strftime('%Y-%m-%d %H:%M UTC') }}">{{ job.created_at | time_ago }}</span></span>{% endif %}
+    </div>
+    {# The rich view is over there, and this header says so first. #}
+    <div class="lt-bar">
+      <a href="/jobs/{{ job.id }}" class="lt-btn lt-btn--primary">Open full job page &rarr;</a>
+      <a href="/intel?job={{ job.id }}" class="lt-btn">All entities in this job</a>
+      <a href="/jobs/{{ job.id }}/mitre-layer" class="lt-btn">MITRE Navigator layer</a>
+      {% if user and (user.is_superuser or user.role == 'member') %}
+      <button type="button" data-add-to-case-trigger="job-{{ job.id }}" class="lt-btn lt-btn--active">Add to case</button>
+      {% endif %}
+    </div>
+  </div>
+
+  <!-- Filters -->
+  <form method="get" action="{{ qs_base }}" class="lt-bar mb-4">
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Severity</span>
+      <select name="severity" class="lt-field lt-field--sm w-36" onchange="this.form.submit()">
+        <option value="">All</option>
+        {% for s in severities %}
+        <option value="{{ s }}" {% if severity == s %}selected{% endif %}>{{ s }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if entity_id %}
+    {# The entity filter arrives from a chip or a deep link, so it is shown as a removable
+       chip rather than a picker — building a second entity search here would duplicate
+       /intel's, which is one click away via "All entities in this job". #}
+    <input type="hidden" name="entity_id" value="{{ entity_id }}">
+    <span class="lt-ctl">
+      <span class="lt-ctl__label">Entity</span>
+      {% if focus %}{{ type_badge(focus.entity_type) }}<span class="font-mono text-xs text-gray-300">{{ focus.value }}</span>{% else %}<span class="text-xs text-gray-500">#{{ entity_id }}</span>{% endif %}
+    </span>
+    <a href="{{ qs_base }}{% if severity %}?severity={{ severity }}{% endif %}" class="lt-btn lt-btn--xs">Clear entity</a>
+    {% endif %}
+    <span class="text-xs text-gray-500 ml-auto">
+      {{ total }} finding{{ 's' if total != 1 else '' }}{% if total_pages > 1 %} · page {{ page }} of {{ total_pages }}{% endif %}
+    </span>
+  </form>
+
+  {% if total == 0 %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center text-sm text-gray-500">
+    No findings match these filters.
+  </div>
+  {% else %}
+  {# Outer card clips the corners, inner child scrolls — never the same element. #}
+  <div class="border border-gray-800 rounded-lg overflow-hidden">
+    <div class="divide-y divide-gray-800 lt-scroll lt-scroll--lg">
+      {% for f in findings %}
+      {% set chip = chips.get(f.id, ([], 0)) %}
+      {{ finding_row(f, entities=chip[0], overflow=chip[1]) }}
+      {% endfor %}
+    </div>
+  </div>
+
+  {# Pager outside the scroll box. #}
+  {{ pager(page, total_pages, url=qs_base, qs=(filter_qs | trim | replace('&amp;', '&')).lstrip('&')) }}
+  {% endif %}
+</div>
+
+{% if user and (user.is_superuser or user.role == 'member') %}
+{% from "partials/_add_to_case_dialog.html" import add_to_case_dialog %}
+{{ add_to_case_dialog('job', job.id) }}
+{% endif %}
+{% endblock %}

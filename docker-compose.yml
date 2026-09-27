@@ -1,0 +1,275 @@
+services:
+  redis:
+    # ${REGISTRY_PREFIX:-} on every image not built here: a network with no route to
+    # Docker Hub, but a mirror of its own, sets REGISTRY_PREFIX=registry.internal in .env
+    # and every pull goes there instead. Empty by default: pulls go to Docker Hub.
+    # The other answer for a closed network is `task bundle`, which needs no registry.
+    image: ${REGISTRY_PREFIX:-}redis:7-alpine
+    restart: unless-stopped
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:-}
+    command: >
+      sh -c 'if [ -n "$$REDIS_PASSWORD" ]; then exec redis-server --requirepass "$$REDIS_PASSWORD"; else exec redis-server; fi'
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test:
+        [
+          "CMD-SHELL",
+          'if [ -n "$$REDIS_PASSWORD" ]; then redis-cli -a "$$REDIS_PASSWORD" ping | grep -q PONG; else redis-cli ping | grep -q PONG; fi',
+        ]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres:
+    image: ${REGISTRY_PREFIX:-}postgres:16-alpine
+    restart: unless-stopped
+    profiles: [postgres]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logstotal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${POSTGRES_DB:-logstotal}
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logstotal} -d ${POSTGRES_DB:-logstotal}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # `image:` alongside `build:`, on every service that builds one.
+  #
+  # Without it Compose names the built image after the project and there is nothing a
+  # `docker load` can satisfy — so a host with no network cannot be given an image, it can
+  # only build one, and building pulls python:3.14-slim, apt packages, PyPI wheels and a
+  # 46 MB Tailwind CLI. Naming it is what makes `docker save` on a connected machine and
+  # `docker load` on a closed one a possibility at all.
+  #
+  # LOGSTOTAL_IMAGE_TAG defaults to `latest`, as in docker-compose.worker.yml, so the two
+  # name the same image.
+  web:
+    image: logstotal:${LOGSTOTAL_IMAGE_TAG:-latest}
+    build: .
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 2G
+    ports:
+      - "${WEB_PORT:-8000:8000}"
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      # Secure-by-default: HTTPS deployments leave this false. Operators running plain HTTP
+      # on :8000 (local dev, Docker without the proxy profile) must set COOKIE_INSECURE=true
+      # in their .env so the browser will send the auth cookie over HTTP.
+      - COOKIE_INSECURE=${COOKIE_INSECURE:-false}
+      # COMPOSE_PROFILES is the reference for whether the bundled postgres/garage
+      # services are in play: the entrypoint gates PostgreSQL mode on it (env_file
+      # also carries it, but the explicit line keeps it authoritative and covers
+      # operators who set COMPOSE_PROFILES as a host env var rather than in .env).
+      - COMPOSE_PROFILES=${COMPOSE_PROFILES:-}
+      # An external S3_ENDPOINT from .env wins; the bundled Garage default applies otherwise.
+      - S3_ENDPOINT=${S3_ENDPOINT:-http://garage:3900}
+    volumes:
+      - ./data:/data
+      - ./uploads:/app/uploads
+      # Read-only, and only for the verified-backup receipt: check_backup_receipt reads
+      # backups/last-verified.json to drive the System-checks card and the getting-started
+      # checklist. Without this mount both report "no verified backup" on every Docker
+      # deployment no matter how faithfully backups are taken. Read-only is
+      # deliberate — nothing in the web tier should be able to write into backups/.
+      - ./backups:/app/backups:ro
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command: >
+      sh -c "python3 init_db.py && uvicorn app.main:app --host 0.0.0.0 --port 8000"
+
+  worker:
+    image: logstotal:${LOGSTOTAL_IMAGE_TAG:-latest}
+    build: .
+    restart: unless-stopped
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+    # Same image as web; image HEALTHCHECK curls localhost:8000. Worker runs huey_consumer, no HTTP server — disable it.
+    healthcheck:
+      disable: true
+    env_file:
+      - .env
+    environment:
+      - REDIS_HOST=redis
+      # COMPOSE_PROFILES is the reference the entrypoint gates PostgreSQL mode on
+      # (see the web service); an external S3_ENDPOINT from .env wins over the
+      # bundled Garage default.
+      - COMPOSE_PROFILES=${COMPOSE_PROFILES:-}
+      - S3_ENDPOINT=${S3_ENDPOINT:-http://garage:3900}
+      - DOCKER_HOST_WORKDIR=${PWD}
+    volumes:
+      - ./data:/data
+      - ./uploads:/app/uploads
+      - /var/run/docker.sock:/var/run/docker.sock
+    depends_on:
+      redis:
+        condition: service_healthy
+      postgres:
+        condition: service_healthy
+        required: false
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+    command: huey_consumer app.workers.huey_app.huey -w ${HUEY_WORKERS:-2} -k thread
+
+  redis-expose:
+    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.0.3
+    restart: unless-stopped
+    profiles: [workers]
+    command: TCP-LISTEN:6379,fork,reuseaddr TCP-CONNECT:redis:6379
+    ports:
+      - "${REDIS_EXPOSE:-127.0.0.1:6379}:6379"
+    depends_on:
+      redis:
+        condition: service_healthy
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  postgres-expose:
+    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.0.3
+    restart: unless-stopped
+    profiles: [workers]
+    command: TCP-LISTEN:5432,fork,reuseaddr TCP-CONNECT:postgres:5432
+    ports:
+      - "${POSTGRES_EXPOSE:-127.0.0.1:5432}:5432"
+    depends_on:
+      postgres:
+        condition: service_healthy
+        required: false
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  garage:
+    image: logstotal-garage:${LOGSTOTAL_IMAGE_TAG:-latest}
+    build:
+      context: .
+      dockerfile: Dockerfile.garage
+    restart: unless-stopped
+    profiles: [s3]
+    volumes:
+      - garage_meta:/var/lib/garage/meta
+      - garage_data:/var/lib/garage/data
+    environment:
+      GARAGE_ALLOW_WORLD_READABLE_SECRETS: "true"
+      # The service has no env_file, so a secret reaches garage-entrypoint.sh only if it is
+      # named here. Renamed on the way in: Garage treats GARAGE_RPC_SECRET/GARAGE_ADMIN_TOKEN
+      # in its environment as overrides, and an empty one would stop the node from starting.
+      # Empty falls back to the entrypoint's built-in default, with a warning.
+      LT_GARAGE_RPC_SECRET: ${GARAGE_RPC_SECRET:-}
+      LT_GARAGE_ADMIN_TOKEN: ${GARAGE_ADMIN_TOKEN:-}
+      S3_BUCKET: ${S3_BUCKET:-logstotal}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-GKa1b2c3d4e5f6a7b8c9d0e0f1}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-a1b2c3d4e5f6a7b8c9d0e1f2a3b4c5d6e7f8a9b0c1d2e3f4a5b6c7d8e9f0a1b2}
+      S3_REGION: ${S3_REGION:-logstotal}
+    healthcheck:
+      test: ["CMD", "/garage", "-c", "/tmp/garage.toml", "node", "id", "-q"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  garage-expose:
+    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.0.3
+    restart: unless-stopped
+    profiles: [workers]
+    command: TCP-LISTEN:3900,fork,reuseaddr TCP-CONNECT:garage:3900
+    ports:
+      - "${GARAGE_EXPOSE:-127.0.0.1:3900}:3900"
+    depends_on:
+      garage:
+        condition: service_healthy
+        required: false
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  caddy:
+    image: ${REGISTRY_PREFIX:-}caddy:2-alpine
+    restart: unless-stopped
+    profiles: [proxy]
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./docker-caddy-entrypoint.sh:/docker-caddy-entrypoint.sh:ro
+      # Only read under PROXY_TLS=custom, and read-only. ./certs is gitignored and excluded
+      # from the release archive — it holds private keys.
+      - ./certs:/etc/caddy/certs:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    environment:
+      - DOMAIN=${DOMAIN:-localhost}
+      - ACME_EMAIL=${ACME_EMAIL:-}
+      # acme | internal | custom | off. Without this line the entrypoint never sees the
+      # operator's choice and every deployment is ACME.
+      - PROXY_TLS=${PROXY_TLS:-acme}
+      - PROXY_TLS_CERT=${PROXY_TLS_CERT:-}
+      - PROXY_TLS_KEY=${PROXY_TLS_KEY:-}
+      - BASIC_AUTH_USER=${BASIC_AUTH_USER:-}
+      - BASIC_AUTH_HASH=${BASIC_AUTH_HASH:-}
+    entrypoint: ["/bin/sh", "/docker-caddy-entrypoint.sh"]
+    depends_on:
+      - web
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+volumes:
+  redis_data:
+  postgres_data:
+  caddy_data:
+  caddy_config:
+  garage_meta:
+  garage_data:

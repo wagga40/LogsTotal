@@ -1,0 +1,40 @@
+{
+  "entity": {
+    "prefixes": [
+      "label:",
+      "attr:",
+      "list:",
+      "cidr:",
+      "type:",
+      "tag:",
+      "re:/",
+      "job:",
+      "in:"
+    ],
+    "suggest_url": "/intel/search-suggest"
+  },
+  "job": {
+    "prefixes": [
+      "workflow:",
+      "severity:",
+      "findings:",
+      "status:",
+      "before:",
+      "sha256:",
+      "after:",
+      "type:",
+      "tool:",
+      "hash:",
+      "tag:",
+      "sev:",
+      "id:",
+      "is:"
+    ],
+    "suggest_url": "/jobs/search-suggest"
+  },
+  "operators": [
+    "OR",
+    "AND"
+  ],
+  "regex_prefix": "re:/"
+}

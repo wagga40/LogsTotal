@@ -1,0 +1,71 @@
+{#
+  The one glyph dictionary. Every icon in the application comes from here.
+
+  Tabs, admin cards and settings sections all draw from it: a second dictionary is how two
+  parts of one UI come to draw different gears.
+
+  House style, and new glyphs must match it: a 24×24 viewBox, no fill, 1.8 stroke, round
+  caps and joins. Geometric and minimal — these read at 14px, where detail becomes mud.
+
+  A name the dictionary does not know draws **nothing, silently**, because the lookup
+  simply misses. `TestTabIcons` asserts both directions for the tab strips; the same rule
+  applies anywhere else `icon()` is called.
+
+  `copy` and `check` are Feather glyphs restated as paths at this file's 1.8 stroke — the
+  macro emits `<path>` only, so their `<rect>` and `<polyline>` could not come across
+  verbatim, and a glyph should not read heavier than the icon beside it.
+
+  `tag` is a real tag shape, not `text` (three rules), which reads as a near-twin of `queue`
+  beside it in the same strip — two tabs, one glyph, nothing to tell them apart at 14px.
+
+  The upload queue's status glyphs: `file` and `clock` for idle rows, `spinner` for work in
+  flight, `check`, `alert` and `fail` for outcomes. `spinner` is an open arc, drawn to be
+  turned by `motion-safe:animate-spin`; unrotated it still reads as "in progress". `fail` is
+  a circled cross, so a failed row differs from `close` (remove) by shape, not colour alone.
+
+  Note the dict below is a Jinja *expression*: a `{# … #}` comment inside it is a syntax
+  error, not a comment. Anything worth saying about a glyph belongs here.
+#}
+{% macro icon(name, cls="w-4 h-4") -%}
+{%- set d = {
+  'sparkles':  ['M12 3l1.9 4.6L18.5 9.5l-4.6 1.9L12 16l-1.9-4.6L5.5 9.5l4.6-1.9L12 3z', 'M18.5 15l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8.8-2z'],
+  'shield':    ['M12 3l7 3v6c0 4.4-3 7.7-7 9-4-1.3-7-4.6-7-9V6l7-3z'],
+  'chat':      ['M21 12a8 8 0 01-8 8H7l-4 3V12a8 8 0 018-8h2a8 8 0 018 8z'],
+  'info':      ['M12 21a9 9 0 100-18 9 9 0 000 18z', 'M12 11v5', 'M12 7.5h.01'],
+  'clock':     ['M12 21a9 9 0 100-18 9 9 0 000 18z', 'M12 7v5l3 2'],
+  'link':      ['M10 13a5 5 0 007.5.5l2-2a5 5 0 00-7-7l-1 1', 'M14 11a5 5 0 00-7.5-.5l-2 2a5 5 0 007 7l1-1'],
+  'grid':      ['M4 4h6v6H4z', 'M14 4h6v6h-6z', 'M4 14h6v6H4z', 'M14 14h6v6h-6z'],
+  'tree':      ['M12 4v4', 'M6 20v-4a2 2 0 012-2h8a2 2 0 012 2v4', 'M12 8v6', 'M10 2h4v4h-4z', 'M4 20h4', 'M16 20h4'],
+  'graph':     ['M18 6.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z', 'M6 15a2.5 2.5 0 100-5 2.5 2.5 0 000 5z', 'M18 22.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z', 'M8.2 11.3l7.6-4.1', 'M8.2 13.2l7.6 4.1'],
+  'users':     ['M16 20v-1.5a4 4 0 00-4-4H7a4 4 0 00-4 4V20', 'M9.5 10.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z', 'M21 20v-1.5a4 4 0 00-3-3.9', 'M16 3.6a4 4 0 010 7.8'],
+  'files':     ['M8 3h6l4 4v10a2 2 0 01-2 2H8a2 2 0 01-2-2V5a2 2 0 012-2z', 'M14 3v4h4'],
+  'queue':     ['M4 6h16', 'M4 12h16', 'M4 18h10'],
+  'calendar':  ['M4 6a2 2 0 012-2h12a2 2 0 012 2v13a2 2 0 01-2 2H6a2 2 0 01-2-2z', 'M4 9.5h16', 'M8 3v3', 'M16 3v3'],
+  'database':  ['M12 7c4.4 0 8-1.1 8-2.5S16.4 2 12 2 4 3.1 4 4.5 7.6 7 12 7z', 'M20 4.5v11c0 1.4-3.6 2.5-8 2.5s-8-1.1-8-2.5v-11', 'M20 10c0 1.4-3.6 2.5-8 2.5S4 11.4 4 10'],
+  'cog':       ['M12 15.5a3.5 3.5 0 100-7 3.5 3.5 0 000 7z', 'M12 2v3', 'M12 19v3', 'M2 12h3', 'M19 12h3', 'M4.9 4.9l2.2 2.2', 'M16.9 16.9l2.2 2.2', 'M19.1 4.9l-2.2 2.2', 'M7.1 16.9l-2.2 2.2'],
+  'key':       ['M8.5 15.5a4 4 0 100-8 4 4 0 000 8z', 'M11.5 12.5L20 4', 'M17 7l2 2', 'M14.5 9.5l2 2'],
+  'cpu':       ['M6.5 6.5h11v11h-11z', 'M9.5 3v3.5', 'M14.5 3v3.5', 'M9.5 17.5V21', 'M14.5 17.5V21', 'M3 9.5h3.5', 'M3 14.5h3.5', 'M17.5 9.5H21', 'M17.5 14.5H21'],
+  'flow':      ['M4 3h6v4H4z', 'M14 17h6v4h-6z', 'M4 17h6v4H4z', 'M7 7v4h10v6', 'M7 11v6'],
+  'upload':    ['M12 15V3', 'M8 7l4-4 4 4', 'M4 15v4a2 2 0 002 2h12a2 2 0 002-2v-4'],
+  'text':      ['M5 6h14', 'M5 11h14', 'M5 16h9'],
+  'eye':       ['M2 12s3.5-6.5 10-6.5S22 12 22 12s-3.5 6.5-10 6.5S2 12 2 12z', 'M12 14.5a2.5 2.5 0 100-5 2.5 2.5 0 000 5z'],
+  'tag':       ['M3 12.5V4.5A1.5 1.5 0 014.5 3h8L21 11.5a1.5 1.5 0 010 2.1l-7.4 7.4a1.5 1.5 0 01-2.1 0L3 12.5z', 'M7.5 8.5h.01'],
+  'copy':      ['M9.5 9.5h9a1.5 1.5 0 011.5 1.5v9a1.5 1.5 0 01-1.5 1.5h-9A1.5 1.5 0 018 20v-9a1.5 1.5 0 011.5-1.5z', 'M5.5 15.5H5a1.5 1.5 0 01-1.5-1.5V4A1.5 1.5 0 015 2.5h9A1.5 1.5 0 0115.5 4v.5'],
+  'check':     ['M20 6.5L9.5 17 4.5 12'],
+  'file':      ['M14 3H7a2 2 0 00-2 2v14a2 2 0 002 2h10a2 2 0 002-2V8z', 'M14 3v5h5'],
+  'alert':     ['M10.3 4.2L2.6 17.5a2 2 0 001.7 3h15.4a2 2 0 001.7-3L13.7 4.2a2 2 0 00-3.4 0z', 'M12 9.5v4', 'M12 17h.01'],
+  'fail':      ['M12 21a9 9 0 100-18 9 9 0 000 18z', 'M15 9l-6 6', 'M9 9l6 6'],
+  'close':     ['M18 6L6 18', 'M6 6l12 12'],
+  'plus':      ['M12 5v14', 'M5 12h14'],
+  'retry':     ['M4 12a8 8 0 0113.7-5.7L20 8.5', 'M20 4v4.5h-4.5', 'M20 12a8 8 0 01-13.7 5.7L4 15.5', 'M4 20v-4.5h4.5'],
+  'external':  ['M14 4h6v6', 'M20 4l-9 9', 'M18 14v4a2 2 0 01-2 2H6a2 2 0 01-2-2V8a2 2 0 012-2h4'],
+  'chevron':   ['M6 9l6 6 6-6'],
+  'spinner':   ['M21 12a9 9 0 11-6.2-8.56'],
+} -%}
+{%- set paths = d.get(name) -%}
+{%- if paths -%}
+<svg class="{{ cls }} shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+  {%- for p in paths %}<path d="{{ p }}"/>{% endfor -%}
+</svg>
+{%- endif -%}
+{%- endmacro %}

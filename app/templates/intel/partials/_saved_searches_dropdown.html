@@ -1,0 +1,33 @@
+<div id="saved-searches-list" class="space-y-1">
+  {% if searches %}
+  {% for s in searches %}
+  <div class="flex items-center gap-2 px-2 py-1.5 rounded hover:bg-gray-800/60 transition group">
+    {# Swapped inside savedSearchManager()'s x-data — Alpine.initTree rebinds after each
+       HTMX swap, so loadSearch()/open resolve through scope inheritance. #}
+    <button type="button"
+            data-saved-search-query="{{ s.query_json }}"
+            @click="loadSearch($el.dataset.savedSearchQuery); open = false"
+            class="flex-1 text-left text-sm text-gray-200 hover:text-white truncate"
+            title="{{ s.name }}">
+      {{ s.name }}
+    </button>
+    {% if s.is_shared %}
+    <span class="text-[9px] px-1 py-0.5 rounded bg-emerald-900/40 text-emerald-300 border border-emerald-700/40">SHARED</span>
+    {% endif %}
+    {% if user.is_superuser or s.created_by_user_id == user.id %}
+    <button type="button"
+            hx-delete="/intel/saved-searches/{{ s.id }}"
+            hx-swap="none"
+            hx-on::after-request="document.body.dispatchEvent(new CustomEvent('reloadSavedSearches'))"
+            data-confirm-title="Delete saved search"
+            data-confirm-message="Delete '{{ s.name }}'?"
+            data-confirm-accept="Delete"
+            class="text-xs text-gray-600 hover:text-red-400 transition opacity-0 group-hover:opacity-100"
+            title="Delete">×</button>
+    {% endif %}
+  </div>
+  {% endfor %}
+  {% else %}
+  <p class="px-2 py-2 text-xs text-gray-500">No saved searches yet.</p>
+  {% endif %}
+</div>

@@ -1,0 +1,154 @@
+{#
+  Case attack-timeline tab pane. Swapped into #case-timeline-region (innerHTML).
+  Context (from routers/cases.py::case_timeline_partial):
+    case, timeline, timeline_tactics, key_events, key_events_total, key_events_shown,
+    histogram_jobs_covered, histogram_jobs_total, tactic_colors, tactic_labels,
+    member_jobs, member_entities, severities, sel_job_id, sel_severity, sel_entity_id
+#}
+{% from "partials/_timeline_chart.html" import timeline_chart %}
+{% from "partials/_severity_macros.html" import sev_pill %}
+
+<div class="space-y-6">
+
+  <!-- Filter bar: GET form; any change re-fetches this partial into the region. -->
+  <form hx-get="/intel/cases/{{ case.id }}/timeline-partial"
+        hx-target="#case-timeline-region"
+        hx-swap="innerHTML"
+        hx-trigger="change"
+        class="flex flex-wrap items-center gap-3">
+    <div class="flex items-center gap-2">
+      <label class="text-xs text-gray-500">Job</label>
+      <select name="job_id" class="lt-field max-w-[16rem]">
+        <option value="0">All jobs</option>
+        {% for j in member_jobs %}
+        <option value="{{ j.id }}" {% if sel_job_id == j.id %}selected{% endif %}>{{ (j.filename if j.log_file else 'job') }} #{{ j.id }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="flex items-center gap-2">
+      <label class="text-xs text-gray-500">Key-events severity</label>
+      <select name="severity" class="lt-field">
+        <option value="">All severities</option>
+        {% for s in severities %}
+        <option value="{{ s }}" {% if sel_severity == s %}selected{% endif %}>{{ s | capitalize }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% if member_entities_total %}
+    {#
+      Search box, not a <select>: a case can carry thousands of entities. Results come
+      from /{case_id}/entities.json (capped, case-scoped) and are DOM-built: entity values
+      are member-controlled, so none of them reaches innerHTML.
+    #}
+    {#
+      x-data is SINGLE-quoted on purpose: the shared `tojson` filter escapes & < > ' for
+      exactly this position and deliberately leaves `"` alone, so a double-quoted
+      attribute is terminated by the JSON string's own quotes and the expression is cut in
+      half. See app/templates_config.py::_tojson_safe.
+    #}
+    <div class="flex items-center gap-2"
+         x-data='caseEntityFilter({{ case.id }}, {{ sel_entity_id or 0 }}, {{ (sel_entity_value or "") | tojson }})'>
+      <label class="text-xs text-gray-500">Key-events entity</label>
+      <div class="relative">
+        {# The static `value` is what the form submits before (or without) Alpine — an
+           empty entity_id makes the timeline route 422 on int coercion. #}
+        <input type="hidden" name="entity_id" value="{{ sel_entity_id or 0 }}" :value="entityId">
+        <input type="text" x-model="label" x-ref="input"
+               @input.debounce.250ms="search()" @focus="search()"
+               @keydown.escape.stop="close()"
+               @click.outside="close()"
+               {# The search box has no `name`, so it submits nothing — but a text input fires a
+                  native `change` on blur when its value differs from focus time, and the form
+                  above triggers htmx on `change`. Clicking a suggestion blurs the box, so that
+                  event raced the row's own click: htmx re-fetched with the *old* `entity_id` and
+                  swapped the whole partial away, destroying the button before `choose()` ran.
+                  The pick simply did not take, roughly whenever you had typed something first.
+                  `_refetch()` dispatches the form's `change` itself once the hidden field is
+                  written, so the native one is pure noise and is stopped here. #}
+               @change.stop
+               placeholder="All entities — type to search…"
+               autocomplete="off"
+               class="lt-field w-[16rem]">
+        <button type="button" x-show="entityId" x-cloak @click="clear()"
+                class="absolute right-1.5 top-1/2 -translate-y-1/2 text-gray-500 hover:text-gray-300 text-xs"
+                title="Clear entity filter">&times;</button>
+        <div x-ref="results" x-show="open" x-cloak
+             class="lt-menu absolute mt-1 w-[16rem] lt-scroll lt-scroll--sm divide-y divide-gray-800"></div>
+      </div>
+    </div>
+    {% endif %}
+    <noscript><button type="submit" class="lt-btn">Apply</button></noscript>
+  </form>
+  <p class="text-xs text-gray-600 -mt-2">Job applies to both the chart and key events below; severity/entity only narrow the key-events list.</p>
+
+  <!-- Coverage notice: only when some jobs' raw outputs were cleaned up. -->
+  {% if histogram_jobs_covered < histogram_jobs_total %}
+  <div class="flex items-start gap-2 px-4 py-3 rounded-lg border border-amber-700/40 bg-amber-900/20 text-amber-300 text-xs">
+    <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+    <span>Histogram covers {{ histogram_jobs_covered }} of {{ histogram_jobs_total }} job{{ 's' if histogram_jobs_total != 1 else '' }} — raw outputs for the rest were cleaned up. The key events below are drawn from the database and remain complete.</span>
+  </div>
+  {% endif %}
+
+  <!-- Histogram: only when at least one job still has parseable buckets. -->
+  {% if timeline %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-6">
+    {{ timeline_chart(timeline, timeline_tactics) }}
+  </div>
+  {% endif %}
+
+  <!-- Zoomable events timeline, under the histogram. Unlike the histogram it is built from
+       the DB-stored marker index, so it survives raw-output retention cleanup. The current
+       job/severity filters are threaded into its URL so the two views agree. -->
+  {% if not site_settings or site_settings.show_alert_timeline %}
+  {# The state key deliberately excludes the filters: preserving the zoom *across* a filter
+     change is the whole reason the store exists — the form swaps this region wholesale, and
+     without it narrowing to one job threw you back to the full span you had zoomed out of. #}
+  {% with tl_url = '/intel/cases/' ~ case.id ~ '/events-timeline?job_id=' ~ (sel_job_id or 0) ~ '&severity=' ~ (sel_severity or ''),
+          tl_state_key = 'case:' ~ case.id %}
+    {% include 'partials/_events_timeline.html' %}
+  {% endwith %}
+  {% endif %}
+
+  <!-- Key events: durable chronology from Finding.details. -->
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    <div class="flex items-center justify-between gap-3 px-5 py-3 border-b border-gray-800">
+      <h2 class="text-sm font-medium text-gray-300">Key events</h2>
+      {% if key_events_total > 0 %}
+      <span class="text-xs text-gray-500">
+        {% if key_events_total > key_events_shown %}Showing {{ key_events_shown }} of {{ key_events_total }} events{% else %}{{ key_events_total }} event{{ 's' if key_events_total != 1 else '' }}{% endif %}
+      </span>
+      {% endif %}
+    </div>
+
+    {% if key_events %}
+    <div class="divide-y divide-gray-800/60">
+      {% for item in key_events %}
+      {% set tcolor = tactic_colors.get(item.tactic, tactic_colors['_other']) %}
+      <div class="px-4 py-3">
+        <div class="flex flex-wrap items-center gap-3">
+          <span class="font-mono text-xs {% if item.ts %}text-gray-300{% else %}text-gray-600 italic{% endif %} flex-shrink-0">{{ item.ts if item.ts else 'no timestamp' }}</span>
+          <span class="text-[10px] px-2 py-0.5 rounded border font-medium uppercase tracking-wider {{ sev_pill(item.severity) }}">{{ item.severity }}</span>
+          <span class="text-[11px] px-2 py-0.5 rounded-full border font-medium"
+                style="border-color: {{ tcolor }}66; color: {{ tcolor }}; background-color: {{ tcolor }}1a;">{{ tactic_labels.get(item.tactic, item.tactic) }}</span>
+          <div class="flex-1 min-w-0">
+            <span class="text-sm text-gray-200 truncate block" title="{{ item.rule_name }}">{{ item.rule_name }}</span>
+            {% if item.computer %}<span class="text-xs text-gray-500">{{ item.computer }}</span>{% endif %}
+          </div>
+          <a href="/jobs/{{ item.job_id }}" class="text-xs text-blue-400 hover:text-blue-300 transition flex-shrink-0">job #{{ item.job_id }} →</a>
+        </div>
+        <details class="mt-2">
+          <summary class="cursor-pointer text-xs text-gray-500 hover:text-gray-300 transition">Event detail</summary>
+          <pre class="language-json mt-2 p-3 max-h-80 overflow-auto text-xs bg-gray-950/60 border border-gray-800 rounded"><code class="language-json">{{ item.event | tojson(indent=2) }}</code></pre>
+        </details>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="px-5 py-8 text-sm text-gray-500 text-center">
+      No key events{% if sel_severity or sel_entity_id or sel_job_id %} match the current filters{% else %} across this case's jobs yet{% endif %}.
+    </p>
+    {% endif %}
+  </div>
+
+</div>
+

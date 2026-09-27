@@ -1,0 +1,19 @@
+{
+  "repo": "WithSecureOpenSource/chainsaw",
+  "version": "v2.16.5",
+  "binaries": {
+    "chainsaw-intel-lin": "1bdbead62a186e61ba2970172fdb4d89052b5b1fe80cc824774bb673c06a87bb",
+    "chainsaw-arm-lin": "4061d80bbbb8c9cd7048b6636feea657c13ce0bbb5b2256cddd579840b82dbe5",
+    "chainsaw-mac": "0f8cc4079b828f1b726fe3b303474e6ab1d00a4c4bf2bdeefc855279581d9b2e"
+  },
+  "rules": {
+    "repo": "SigmaHQ/sigma",
+    "commit": "2e8fd89f82d9104c1b30321a307254ddeea17de2",
+    "committed_at": "2026-09-15T11:45:27Z",
+    "trees": {
+      "rules": "b2aaf0c19a8e96963145e6803a9918ce05dc3696a00efe9c8dee3e46f017ef09",
+      "sigma": "14c2cf09434e10c1114f35b1b862bc69cf2d3db0bb9deb185ef28ca5a829cb6a",
+      "mappings": "be188ff83fdda0b1df6428b32fae8d79716471a464e7513379ac8012604cdb0c"
+    }
+  }
+}

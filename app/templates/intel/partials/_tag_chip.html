@@ -1,0 +1,137 @@
+{#-
+  Shared analyst-tag chip + palette. Single source of truth for the 12-colour palette.
+  Mirrors how _entity_type_badge.html exposes shared macros.
+
+  Usage (import the macros, then):
+    tag_chip(t.tag, t.color)                                         - plain chip
+    tag_chip(t.tag, t.color, href='/intel?tags=' ~ t.tag|urlencode)  - pivot link
+    tag_chip(t.tag, t.color, remove_url='...', remove_target='#id')  - chip with an x
+    tag_chip(..., alpine_click='toggleTag($el.dataset.tag); triggerRefresh(true)')
+
+  `tag_classes(color)` is exported separately for callers that only need the palette
+  lookup (the attribute chips in _entity_table.html reuse it with square corners).
+
+  XSS note: `alpine_click` must NEVER interpolate the tag text into the JS expression.
+  Tags are analyst-supplied and `normalize_tag` only lowercases/truncates, so a tag
+  containing a quote would break out of the string literal (Jinja escapes `'` to `&#39;`,
+  which the HTML parser hands back to Alpine decoded). The chip therefore carries the
+  value in `data-tag` and handlers read `$el.dataset.tag`.
+-#}
+{#
+  Backgrounds sit at /60 rather than /40. At 40% over a near-black page every colour
+  collapses towards black, and blue/indigo/purple became indistinguishable.
+-#}
+{%- set _tag_palette = {
+  'gray': 'bg-gray-800 text-gray-300 border-gray-700',
+  'red': 'bg-red-900/60 text-red-300 border-red-700/60',
+  'rose': 'bg-rose-900/60 text-rose-300 border-rose-700/60',
+  'orange': 'bg-orange-900/60 text-orange-300 border-orange-700/60',
+  'amber': 'bg-amber-900/60 text-amber-300 border-amber-700/60',
+  'yellow': 'bg-yellow-900/60 text-yellow-300 border-yellow-700/60',
+  'green': 'bg-green-900/60 text-green-300 border-green-700/60',
+  'teal': 'bg-teal-900/60 text-teal-300 border-teal-700/60',
+  'cyan': 'bg-cyan-900/60 text-cyan-300 border-cyan-700/60',
+  'blue': 'bg-blue-900/60 text-blue-300 border-blue-700/60',
+  'indigo': 'bg-indigo-900/60 text-indigo-300 border-indigo-700/60',
+  'purple': 'bg-purple-900/60 text-purple-300 border-purple-700/60',
+} -%}
+
+{#
+  Solid, full-opacity swatch per colour. Twelve translucent backgrounds cannot be told
+  apart; twelve solid dots can. Used for the chip's leading dot and for the colour pickers,
+  which is what makes those pickers legible at all.
+
+  Every class name here is a literal so the Tailwind scanner can see it — an interpolated
+  `bg-{{ color }}-400` is invisible to a production CSS build.
+-#}
+{%- set _tag_dots = {
+  'gray': 'bg-gray-400',
+  'red': 'bg-red-400',
+  'rose': 'bg-rose-400',
+  'orange': 'bg-orange-400',
+  'amber': 'bg-amber-400',
+  'yellow': 'bg-yellow-300',
+  'green': 'bg-green-400',
+  'teal': 'bg-teal-400',
+  'cyan': 'bg-cyan-400',
+  'blue': 'bg-blue-400',
+  'indigo': 'bg-indigo-400',
+  'purple': 'bg-purple-400',
+} -%}
+
+{% macro tag_classes(color) -%}
+{{ _tag_palette.get(color, _tag_palette['gray']) }}
+{%- endmacro %}
+
+{% macro tag_dot_class(color) -%}
+{{ _tag_dots.get(color, _tag_dots['gray']) }}
+{%- endmacro %}
+
+{#- A solid colour dot. The one thing that reliably tells two tags apart at a glance. -#}
+{% macro tag_dot(color) -%}
+<span class="w-1.5 h-1.5 rounded-full shrink-0 {{ tag_dot_class(color) }}"></span>
+{%- endmacro %}
+
+{% macro tag_chip(tag, color='gray', href=None, alpine_click=None, remove_url=None, remove_target=None, size='xs') -%}
+{%- set base = 'inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-' ~ size ~ ' border whitespace-nowrap ' ~ tag_classes(color) -%}
+{%- if href -%}
+<a href="{{ href }}" data-tag="{{ tag }}"
+   {% if alpine_click %}@click.prevent="{{ alpine_click }}"{% endif %}
+   class="{{ base }} hover:text-white hover:border-gray-500 transition"
+   title="Show entities tagged {{ tag }}">{{ tag_dot(color) }}{{ tag }}</a>
+{%- else -%}
+<span class="{{ base }}">{{ tag_dot(color) }}{{ tag }}
+  {%- if remove_url %}
+  <button hx-delete="{{ remove_url }}"
+          hx-target="{{ remove_target }}"
+          hx-swap="outerHTML"
+          class="opacity-50 hover:opacity-100 leading-none"
+          title="Remove tag">&times;</button>
+  {%- endif %}
+</span>
+{%- endif -%}
+{%- endmacro %}
+
+{#-
+  The same palette as an Alpine `:class` object, keyed on a runtime expression.
+
+  Needed because a chip whose colour is only known in the browser cannot use
+  `tag_classes(color)` — and must not build `bg-{{ color }}-900/60` at runtime either, since
+  tailwind.config.js scans templates and would find no such class to emit. Spelling all
+  twelve out here keeps every one of them a literal the scanner can see, once.
+
+  Usage:  <span class="lt-chip" {{ alpine_tag_classes('t.color') }}>
+-#}
+{% macro alpine_tag_classes(expr) -%}
+:class="{
+  'bg-gray-800 text-gray-300 border-gray-700': {{ expr }} === 'gray',
+  'bg-red-900/60 text-red-300 border-red-700/60': {{ expr }} === 'red',
+  'bg-orange-900/60 text-orange-300 border-orange-700/60': {{ expr }} === 'orange',
+  'bg-yellow-900/60 text-yellow-300 border-yellow-700/60': {{ expr }} === 'yellow',
+  'bg-green-900/60 text-green-300 border-green-700/60': {{ expr }} === 'green',
+  'bg-blue-900/60 text-blue-300 border-blue-700/60': {{ expr }} === 'blue',
+  'bg-purple-900/60 text-purple-300 border-purple-700/60': {{ expr }} === 'purple',
+  'bg-rose-900/60 text-rose-300 border-rose-700/60': {{ expr }} === 'rose',
+  'bg-teal-900/60 text-teal-300 border-teal-700/60': {{ expr }} === 'teal',
+  'bg-cyan-900/60 text-cyan-300 border-cyan-700/60': {{ expr }} === 'cyan',
+  'bg-amber-900/60 text-amber-300 border-amber-700/60': {{ expr }} === 'amber',
+  'bg-indigo-900/60 text-indigo-300 border-indigo-700/60': {{ expr }} === 'indigo'
+}"
+{%- endmacro %}
+
+{% macro alpine_tag_dot(expr) -%}
+:class="{
+  'bg-gray-400': {{ expr }} === 'gray',
+  'bg-red-400': {{ expr }} === 'red',
+  'bg-rose-400': {{ expr }} === 'rose',
+  'bg-orange-400': {{ expr }} === 'orange',
+  'bg-amber-400': {{ expr }} === 'amber',
+  'bg-yellow-300': {{ expr }} === 'yellow',
+  'bg-green-400': {{ expr }} === 'green',
+  'bg-teal-400': {{ expr }} === 'teal',
+  'bg-cyan-400': {{ expr }} === 'cyan',
+  'bg-blue-400': {{ expr }} === 'blue',
+  'bg-indigo-400': {{ expr }} === 'indigo',
+  'bg-purple-400': {{ expr }} === 'purple'
+}"
+{%- endmacro %}

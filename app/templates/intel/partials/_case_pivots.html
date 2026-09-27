@@ -1,0 +1,96 @@
+{#
+  Pivot suggestions — Overview tab lazy region. Rendered by both
+  `GET /intel/cases/{id}/pivots-partial` and the `pivot=1` + HX-Request branch of
+  `case_add_entity` / `case_add_job` (see app/routers/cases.py::_build_case_pivots), so
+  clicking "Add" swaps this same partial back in with the just-added row gone — no full
+  page reload. Root id `case-pivots` is the shared hx-target/hx-swap="outerHTML" anchor.
+
+  Expects in context: case_id, entity_rows (list of {entity, count}), similar_rows (list
+  of {filename, distance, source_job_id, target_job_id}), correlated_rows (list of
+  {job_id, filename, count, worst_severity}).
+#}
+{% from "intel/partials/_entity_type_badge.html" import type_badge %}
+{% from "partials/_severity_macros.html" import sev_pill %}
+<div id="case-pivots" class="bg-gray-900 border border-gray-800 rounded-xl p-6 space-y-6">
+  <h2 class="text-sm font-medium text-gray-400">Pivot suggestions</h2>
+
+  {% if not entity_rows and not similar_rows and not correlated_rows %}
+  <p class="text-sm text-gray-500 text-center py-6">No suggestions — nothing new co-occurs with, resembles, or shares a rule with this case's visible jobs.</p>
+  {% else %}
+
+  <!-- Co-occurring entities -->
+  <div>
+    <h3 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Co-occurring entities</h3>
+    {% if entity_rows %}
+    <div class="border border-gray-800 rounded-lg overflow-hidden divide-y divide-gray-800/60">
+      {% for row in entity_rows %}
+      <div class="flex items-center gap-3 px-3 py-2 text-sm bg-gray-950/30">
+        {{ type_badge(row.entity.entity_type) }}
+        <a href="/intel/entities/{{ row.entity.id }}" class="flex-1 min-w-0 font-mono text-gray-200 hover:text-white truncate">{{ row.entity.value }}</a>
+        <span class="text-xs text-gray-500 flex-shrink-0">{{ row.count }} occurrence{{ 's' if row.count != 1 else '' }}</span>
+        <form hx-post="/intel/cases/{{ case_id }}/entities" hx-target="#case-pivots" hx-swap="outerHTML" class="flex-shrink-0">
+          <input type="hidden" name="entity_id" value="{{ row.entity.id }}">
+          <input type="hidden" name="pivot" value="1">
+          <button type="submit" class="lt-btn lt-btn--sm">Add</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-xs text-gray-500 italic">No new co-occurring entities.</p>
+    {% endif %}
+  </div>
+
+  <!-- Similar files -->
+  <div>
+    <h3 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Similar files</h3>
+    {% if similar_rows %}
+    <div class="border border-gray-800 rounded-lg overflow-hidden divide-y divide-gray-800/60">
+      {% for row in similar_rows %}
+      <div class="flex items-center gap-3 px-3 py-2 text-sm bg-gray-950/30 flex-wrap">
+        <span class="text-xs font-mono font-bold px-2 py-0.5 rounded flex-shrink-0
+          {% if row.distance == 0 %}bg-red-900/50 text-red-300 border border-red-700/60
+          {% elif row.distance < 30 %}bg-orange-900/50 text-orange-300 border border-orange-700/60
+          {% elif row.distance < 70 %}bg-yellow-900/50 text-yellow-300 border border-yellow-700/60
+          {% else %}bg-gray-700/50 text-gray-300 border border-gray-600{% endif %}"
+          title="Distance {{ row.distance }} (0=identical)">{{ row.distance }}</span>
+        <a href="/jobs/{{ row.target_job_id }}" class="flex-1 min-w-0 font-mono text-gray-200 hover:text-white truncate">{{ row.filename }}</a>
+        <span class="text-xs text-gray-500 flex-shrink-0">from job #{{ row.source_job_id }}</span>
+        <form hx-post="/intel/cases/{{ case_id }}/jobs" hx-target="#case-pivots" hx-swap="outerHTML" class="flex-shrink-0">
+          <input type="hidden" name="job_id" value="{{ row.target_job_id }}">
+          <input type="hidden" name="pivot" value="1">
+          <button type="submit" class="lt-btn lt-btn--sm">Add</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-xs text-gray-500 italic">No similar files found.</p>
+    {% endif %}
+  </div>
+
+  <!-- Correlated findings -->
+  <div>
+    <h3 class="text-xs font-medium text-gray-500 uppercase tracking-wider mb-2">Correlated findings</h3>
+    {% if correlated_rows %}
+    <div class="border border-gray-800 rounded-lg overflow-hidden divide-y divide-gray-800/60">
+      {% for row in correlated_rows %}
+      <div class="flex items-center gap-3 px-3 py-2 text-sm bg-gray-950/30 flex-wrap">
+        <a href="/jobs/{{ row.job_id }}" class="flex-1 min-w-0 font-mono text-gray-200 hover:text-white truncate">{{ row.filename }}</a>
+        <span class="text-[10px] px-2 py-0.5 rounded border font-medium uppercase tracking-wider flex-shrink-0 {{ sev_pill(row.worst_severity) }}">{{ row.worst_severity }}</span>
+        <span class="text-xs text-gray-500 flex-shrink-0">{{ row.count }} rule{{ 's' if row.count != 1 else '' }}</span>
+        <form hx-post="/intel/cases/{{ case_id }}/jobs" hx-target="#case-pivots" hx-swap="outerHTML" class="flex-shrink-0">
+          <input type="hidden" name="job_id" value="{{ row.job_id }}">
+          <input type="hidden" name="pivot" value="1">
+          <button type="submit" class="lt-btn lt-btn--sm">Add</button>
+        </form>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="text-xs text-gray-500 italic">No correlated findings in other jobs.</p>
+    {% endif %}
+  </div>
+
+  {% endif %}
+</div>

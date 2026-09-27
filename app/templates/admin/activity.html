@@ -1,0 +1,111 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}Activity – LogsTotal{% endblock %}
+
+{% block content %}
+{{ page_header("Activity log", "/admin#manage", "Manage",
+               pills=[('capture off',)] if not capture_enabled
+                     else [('%d in the last hour' % last_hour, 'blue' if last_hour else 'gray')]) }}
+<p class="text-sm text-gray-500 mb-6">
+  Who did what, when, and from where. Sign-ins, administrative changes and every export that
+  moved data off this instance.
+</p>
+
+{% if request.query_params.get('pruned') %}
+<div class="mb-4 rounded-lg border border-green-800 bg-green-950/30 px-4 py-2.5 text-sm text-green-300">
+  Removed {{ request.query_params.get('pruned') }} row(s).
+</div>
+{% endif %}
+
+{% if not capture_enabled %}
+<div class="mb-6 rounded-lg border border-yellow-800 bg-yellow-950/30 px-4 py-3 text-sm text-yellow-200">
+  <span class="font-semibold">Capture is off.</span>
+  Nothing new is being recorded. Anything already here is kept and still readable — turn capture on in
+  <a href="/admin/settings" class="underline hover:text-yellow-100">Settings</a>, or use Prune below to remove what is stored.
+</div>
+{% endif %}
+
+<div x-data="{ pruneOpen: false }">
+  {# The filter form drives the table region; the table is its own swap target so a filter
+     change never disturbs the header or the prune control. #}
+  <form class="lt-bar mb-4"
+        hx-get="/admin/activity/partial"
+        hx-target="#activity-region"
+        hx-swap="morph"
+        hx-ext="alpine-morph"
+        hx-trigger="change, submit, keyup changed delay:300ms from:find input[name='q']"
+        hx-push-url="false">
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Category</span>
+      <select name="category" class="lt-field lt-field--sm">
+        <option value="">All</option>
+        {% for c in categories %}
+        <option value="{{ c }}" {% if filters.category == c %}selected{% endif %}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Action</span>
+      <select name="action" class="lt-field lt-field--sm">
+        <option value="">All</option>
+        {% for a in actions %}
+        <option value="{{ a }}" {% if filters.action == a %}selected{% endif %}>{{ a }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Outcome</span>
+      <select name="outcome" class="lt-field lt-field--sm">
+        <option value="">All</option>
+        {% for o in ['success', 'failure', 'denied'] %}
+        <option value="{{ o }}" {% if filters.outcome == o %}selected{% endif %}>{{ o }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="lt-ctl">
+      <span class="lt-ctl__label">Since</span>
+      <select name="range" class="lt-field lt-field--sm">
+        <option value="">Any time</option>
+        {% for r in ranges %}
+        <option value="{{ r }}" {% if filters.range == r %}selected{% endif %}>{{ r }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <input type="text" name="actor" value="{{ filters.actor }}" placeholder="Actor" class="lt-field lt-field--sm w-40">
+    <input type="text" id="activity-q" name="q" value="{{ filters.q }}" placeholder="Search summary, IP, request id" class="lt-field lt-field--sm w-64">
+    <a href="/admin/activity" class="lt-btn lt-btn--sm">Clear</a>
+    <span class="flex-1"></span>
+    {#- Both carry the current filter, so what you export is what you are looking at. CSV
+        for a spreadsheet; JSON because CSV flattens `metadata_json` into an unreadable
+        string, and the changed-field diff on a settings save only survives in JSON. -#}
+    <span class="lt-ctl">
+      <span class="lt-ctl__label">Export</span>
+      <a href="/admin/activity/export.csv{% if query_string %}?{{ query_string }}{% endif %}" class="lt-btn lt-btn--sm">CSV</a>
+      <a href="/admin/activity/export.json{% if query_string %}?{{ query_string }}{% endif %}" class="lt-btn lt-btn--sm">JSON</a>
+    </span>
+    <button type="button" class="lt-btn lt-btn--sm lt-btn--warn" @click="pruneOpen = !pruneOpen">Prune…</button>
+  </form>
+
+  <div x-show="pruneOpen" x-cloak class="mb-4 rounded-lg border border-gray-800 bg-gray-900 p-4">
+    <form method="POST" action="/admin/activity/prune" class="lt-bar"
+          data-confirm-title="Prune activity log"
+          data-confirm-message="Permanently delete activity rows older than the chosen window? This cannot be undone.">
+      <span class="text-sm text-gray-300">Delete rows older than</span>
+      <select name="days" class="lt-field lt-field--sm">
+        <option value="30">30 days</option>
+        <option value="90" selected>90 days</option>
+        <option value="180">180 days</option>
+        <option value="365">365 days</option>
+      </select>
+      <button type="submit" class="lt-btn lt-btn--sm lt-btn--danger">Prune now</button>
+      <span class="text-xs text-gray-500">
+        The daily sweep already removes rows past
+        {% if retention_days %}{{ retention_days }} days (<code>ACTIVITY_RETENTION_DAYS</code>){% else %}
+        &mdash; disabled, so nothing is removed automatically{% endif %}.
+      </span>
+    </form>
+  </div>
+
+  {% include "admin/partials/_activity_table.html" %}
+</div>
+{% endblock %}

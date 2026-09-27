@@ -1,0 +1,89 @@
+{# "How to read this graph" — the in-canvas explanation.
+
+   Kept short and about the two things that are genuinely non-obvious rather than a manual:
+   what the three edge kinds actually claim (they look similar and mean very different
+   things), and that filtering never moves anything (which is what makes it safe to keep
+   asking questions). Everything else is a keyboard/mouse crib.
+
+   Shares the one exclusive panel slot with the Legend and Pivots.
+#}
+<div x-show="activePanel === 'help'" x-cloak
+     class="w-[23rem] lt-scroll lt-scroll--md bg-gray-900/95 backdrop-blur-sm border border-gray-800 rounded-lg text-xs shadow-2xl">
+  <div class="sticky top-0 flex items-center gap-2 px-3 py-1.5 bg-gray-900/95 border-b border-gray-800">
+    <span class="font-medium text-gray-200">How to read this graph</span>
+    <button type="button" @click="activePanel = ''" class="ml-auto text-gray-500 hover:text-white" title="Close">
+      <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M6 6l12 12M6 18L18 6"/></svg>
+    </button>
+  </div>
+
+  <div class="px-3 py-2.5 space-y-3 text-gray-400">
+    {# Only under a job scope, and worth the words: the scope is not uniform, and an
+       analyst who assumes it is will over-read a typed edge or a red node. #}
+    <div x-show="stats && stats.job_scoped" x-cloak>
+      <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">What "job #<span x-text="stats && stats.job_id"></span>" scopes</div>
+      <div class="space-y-1.5">
+        <div><span class="text-gray-300">Which nodes are here, and the job/finding edges between them</span> — all from
+        this job alone.</div>
+        <div><span class="text-gray-300">Typed relationships are not scoped.</span> They are cross-job aggregates with no
+        job column, and the only per-job record of them is incomplete for older edges — filtering
+        through it would silently hide real relationships. So a typed edge here is a true statement
+        about two entities this job saw, not a statement about this job.</div>
+        <div><span class="text-gray-300">Node colour is not scoped either.</span> Worst severity, dominant tactic,
+        enrichment verdict and case membership are properties of the entity everywhere you can see
+        it. Position and structure are about the job; paint is about the entity.</div>
+      </div>
+    </div>
+    <div>
+      <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">The edges are not equal</div>
+      <div class="space-y-1.5">
+        <div class="flex items-start gap-2">
+          <span class="block w-6 h-px shrink-0 mt-2" :style="`background:${schema.colors.kind.job}`"></span>
+          <span><span class="text-gray-300">Same job</span> — named in the same log file. That is all it means, so it is
+          hidden by default and never carries a path.</span>
+        </div>
+        <div class="flex items-start gap-2">
+          <span class="block w-6 h-[2px] shrink-0 mt-2" :style="`background:${schema.colors.kind.finding}`"></span>
+          <span><span class="text-gray-300">Same finding</span> — named inside one Sigma rule match.</span>
+        </div>
+        <div class="flex items-start gap-2">
+          <span class="relative block w-6 h-[2px] shrink-0 mt-2" :style="`background:${schema.colors.kind.typed}`">
+            <span class="absolute -right-0.5 -top-1 w-0 h-0"
+                  :style="`border-top:4px solid transparent;border-bottom:4px solid transparent;border-left:5px solid ${schema.colors.kind.typed}`"></span>
+          </span>
+          <span><span class="text-gray-300">Typed relationship</span> — read out of the events and <em>directed</em>:
+          <span class="text-gray-300">runs as</span>, <span class="text-gray-300">parent of</span>,
+          <span class="text-gray-300">resolves to</span>. The name is drawn along the edge; click one for its
+          evidence and when it was observed.</span>
+        </div>
+      </div>
+    </div>
+
+    <div class="border-t border-gray-800 pt-2.5">
+      <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Filtering never moves a node</div>
+      <p>Search, type chips, colour and severity change what is <em>emphasised</em> — nothing is ever
+      re-laid-out underneath you, so you can keep narrowing without losing your place. Only the
+      <span class="text-gray-300">Layout</span> buttons and <span class="text-gray-300">Expand</span> move things.</p>
+    </div>
+
+    <div class="border-t border-gray-800 pt-2.5">
+      <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Getting around</div>
+      <ul class="space-y-1">
+        <li><span class="text-gray-300">Click</span> a node or edge for details · <span class="text-gray-300">right-click</span> for actions</li>
+        <li><span class="text-gray-300">Hover</span> a node to light its neighbours</li>
+        <li><span class="text-gray-300">Drag</span> a node to pin it — it stays put through a Force layout</li>
+        <li><span class="text-gray-300">Expand</span> (⇕, top right) gives the graph the whole window — the toolbar comes with it</li>
+        <li><span class="text-gray-300">Esc</span> steps back out: menu, panel, full screen, path, selection, search</li>
+        <li>Right-click two nodes → <span class="text-gray-300">Path: start / end here</span> to see every shortest route between them</li>
+      </ul>
+    </div>
+
+    <div class="border-t border-gray-800 pt-2.5">
+      <div class="text-gray-500 uppercase tracking-wide text-[10px] mb-1.5">Filter syntax</div>
+      {# Deliberately a pointer, not a copy. The full list is the `?` beside the filter box
+         itself, generated from `intel.queries.SYNTAX_HELP` — spelling the terms out again
+         here is how this panel came to omit `job:`, `type:` and `attr:`. #}
+      <p>The same language as the <a href="/intel" class="text-blue-400 hover:underline">entity dashboard</a>.
+      The <strong class="text-gray-200">?</strong> beside the filter box lists every term. It applies as you type.</p>
+    </div>
+  </div>
+</div>

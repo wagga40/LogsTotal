@@ -1,0 +1,14 @@
+{% set s = job.status.value if job.status.value is defined else job.status %}
+{% if s == 'completed' %}
+  <span class="badge-base badge-completed"><span class="badge-dot"></span>Completed</span>
+{% elif s == 'running' %}
+  <span class="badge-base badge-running"><span class="badge-dot animate-pulse"></span>Running</span>
+{% elif s == 'pending' %}
+  <span class="badge-base badge-pending"><span class="badge-dot"></span>Pending</span>
+{% elif s == 'failed' %}
+  <span class="badge-base badge-failed"><span class="badge-dot"></span>Failed</span>
+{% elif s == 'partial' %}
+  <span class="badge-base badge-partial"><span class="badge-dot"></span>Partial</span>
+{% elif s == 'cancelled' %}
+  <span class="badge-base badge-cancelled"><span class="badge-dot"></span>Cancelled</span>
+{% endif %}

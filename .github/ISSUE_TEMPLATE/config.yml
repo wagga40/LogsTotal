@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Security vulnerability
+    url: https://github.com/wagga40/LogsTotal/security/policy
+    about: Report privately. A public issue is a disclosure.
+  - name: Documentation
+    url: https://wagga40.github.io/LogsTotal/
+    about: Installing, configuring, upgrading and troubleshooting an instance.

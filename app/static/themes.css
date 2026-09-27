@@ -1,0 +1,123 @@
+/* LogsTotal design tokens.
+ *
+ * One theme, deliberately. A second theme with `backdrop-filter` on every card would make
+ * each card a stacking context AND a containing block for `fixed` descendants, breaking
+ * dropdown layering and popup positioning in ways that cannot happen in this theme — so
+ * every menu would need testing twice, and the bugs would only ever appear in one of them.
+ *
+ * Tailwind's gray palette is remapped in tailwind.config.js (and the Play CDN
+ * config in base.html) to reference --ui-gray-* below. This file MUST load
+ * BEFORE the Tailwind stylesheet so the variables exist when Tailwind
+ * resolves them (static CSS ignores import order but early declaration avoids
+ * a flash while the Tailwind file is still loading).
+ *
+ * RGB triplets are space-separated (not comma) so Tailwind's
+ * `rgb(var(--ui-gray-X) / <alpha-value>)` pattern works with opacity modifiers
+ * like `bg-gray-800/50`.
+ */
+
+/* ── Classic (current look) ─────────────────────────────────────────────── */
+:root {
+  color-scheme: dark;
+
+  --ui-gray-50:  249 250 251;
+  --ui-gray-100: 243 244 246;
+  --ui-gray-200: 229 231 235;
+  --ui-gray-300: 209 213 219;
+  --ui-gray-400: 156 163 175;
+  --ui-gray-500: 107 114 128;
+  --ui-gray-600:  75  85  99;
+  --ui-gray-700:  55  65  81;
+  --ui-gray-800:  31  41  55;
+  --ui-gray-900:  17  24  39;
+  --ui-gray-950:   3   7  18;
+
+  --sev-critical-bg:     rgb(127 29 29 / 0.40);
+  --sev-critical-border: #b91c1c;
+  --sev-critical-text:   #fca5a5;
+  --sev-critical-accent: #ef4444;
+  --sev-high-bg:         rgb(124 45 18 / 0.40);
+  --sev-high-border:     #c2410c;
+  --sev-high-text:       #fdba74;
+  --sev-high-accent:     #f97316;
+  --sev-medium-bg:       rgb(113 63 18 / 0.40);
+  --sev-medium-border:   #a16207;
+  --sev-medium-text:     #fde047;
+  --sev-medium-accent:   #eab308;
+  --sev-low-bg:          rgb(30 58 138 / 0.40);
+  --sev-low-border:      #1d4ed8;
+  --sev-low-text:        #93c5fd;
+  --sev-low-accent:      #3b82f6;
+  --sev-info-bg:         rgb(55 65 81 / 0.40);
+  --sev-info-border:     #4b5563;
+  --sev-info-text:       #d1d5db;
+  --sev-info-accent:     #6b7280;
+
+  --prism-bg:       #030712;
+  --scrollbar-thumb: #374151;
+  --scrollbar-thumb-hover: #4b5563;
+  --focus-ring:     #3b82f6;
+
+  /* Status badges — paired with .badge-* classes in base.html */
+  --badge-completed-bg:     rgb(20 83 45 / 0.50);
+  --badge-completed-text:   #4ade80;
+  --badge-completed-border: rgb(22 101 52);
+  --badge-completed-dot:    #4ade80;
+  --badge-running-bg:       rgb(30 58 138 / 0.50);
+  --badge-running-text:     #60a5fa;
+  --badge-running-border:   rgb(30 64 175);
+  --badge-running-dot:      #60a5fa;
+  --badge-pending-bg:       rgb(var(--ui-gray-800));
+  --badge-pending-text:     rgb(var(--ui-gray-400));
+  --badge-pending-border:   rgb(var(--ui-gray-700));
+  --badge-pending-dot:      rgb(var(--ui-gray-500));
+  --badge-failed-bg:        rgb(127 29 29 / 0.50);
+  --badge-failed-text:      #f87171;
+  --badge-failed-border:    rgb(153 27 27);
+  --badge-failed-dot:       #f87171;
+  --badge-partial-bg:       rgb(113 63 18 / 0.50);
+  --badge-partial-text:     #facc15;
+  --badge-partial-border:   rgb(133 77 14);
+  --badge-partial-dot:      #facc15;
+  --badge-cancelled-bg:     rgb(var(--ui-gray-800));
+  --badge-cancelled-text:   rgb(var(--ui-gray-300));
+  --badge-cancelled-border: rgb(var(--ui-gray-600));
+  --badge-cancelled-dot:    rgb(var(--ui-gray-400));
+
+  /* MITRE heatmap & timeline alphas (per theme) */
+  --heatmap-alpha-empty: 0.06;
+  --heatmap-alpha-low:   0.18;
+  --heatmap-alpha-mid:   0.40;
+  --heatmap-border-low:  0.50;
+  --heatmap-text-empty:  0.38;
+  --timeline-other-alpha: 0.18;
+
+  /* Control primitives — paired with the .lt-* classes in base.html.
+   * Geometry lives in those classes; only colour is themed here. */
+  --lt-accent:        #3b82f6;
+  --lt-accent-hover:  #2563eb;
+  --lt-accent-fg:     #ffffff;
+  --lt-danger:        #b91c1c;
+  --lt-danger-hover:  #991b1b;
+  --lt-surface:       rgb(var(--ui-gray-800));
+  --lt-surface-hover: rgb(var(--ui-gray-700));
+  --lt-surface-sunken: rgb(var(--ui-gray-950));
+  --lt-border:        rgb(var(--ui-gray-700));
+  --lt-border-strong: rgb(var(--ui-gray-500));
+  --lt-menu-bg:       rgb(var(--ui-gray-900));
+  --lt-fg:            rgb(var(--ui-gray-300));
+  --lt-fg-strong:     rgb(var(--ui-gray-100));
+  --lt-fg-muted:      rgb(var(--ui-gray-500));
+  --lt-active-bg:     rgb(30 58 138 / 0.30);
+  --lt-active-border: rgb(29 78 216 / 0.60);
+  --lt-active-fg:     #93c5fd;
+  --lt-warn-bg:       rgb(120 53 15 / 0.35);
+  --lt-warn-border:   rgb(180 83 9 / 0.60);
+  --lt-warn-fg:       #fcd34d;
+}
+
+/* ── Shared tokens exposed as classes ───────────────────────────────────── */
+pre[class*="language-"],
+code[class*="language-"] {
+  background: var(--prism-bg);
+}

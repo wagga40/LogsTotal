@@ -1,0 +1,308 @@
+{% extends "base.html" %}
+{% from "partials/_page_header.html" import page_header %}
+{% block title %}AI providers – Admin – LogsTotal{% endblock %}
+
+{% macro prompt_size_fields(provider=none) %}
+  {% for scope, label in [('job', 'Job'), ('case', 'Case')] %}
+  <label class="text-xs">
+    <span class="block text-gray-400 mb-1">{{ label }} max prompt size (characters)</span>
+    <input type="number" name="{{ scope }}_max_prompt_chars" min="1" max="2000000" step="1"
+           value="{{ provider[scope ~ '_max_prompt_chars'] or '' if provider else '' }}"
+           placeholder="{{ default_max_prompt_chars }}"
+           class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+  </label>
+  {% endfor %}
+  <p class="text-xs text-gray-500 sm:col-span-2">
+    Blank uses the instance default ({{ default_max_prompt_chars }} characters). Each limit applies to the evidence brief; the system prompt is separate.
+  </p>
+{% endmacro %}
+
+{#
+  Structural clone of admin/enrichment.html: breadcrumb, flash strip, a <details> add form,
+  then one <details> per row with an inline edit form and an action bar. Same markup, so
+  the two admin pages stay recognisable as one thing.
+
+  The one addition is the Test button, which runs a real completion inline (threadpool, no
+  Huey hop) and reports back through ?test_ok= / ?test_error=. An admin clicking it is
+  trying to *see* the failure; a diagnostic whose answer lands somewhere else a minute
+  later is not a diagnostic.
+#}
+
+{% block content %}
+<div class="max-w-6xl mx-auto">
+
+  {{ page_header("AI providers", "/admin#manage", "Manage",
+                 pills=[('%d of %d enabled' % (providers | selectattr('enabled') | list | length, providers | length),
+                         'green' if providers | selectattr('enabled') | list else 'gray')] if providers else [('none',)]) }}
+  <p class="text-sm text-gray-500 mb-2">
+    Language-model endpoints used by the <strong>AI&nbsp;Analysis</strong> tab on Job and Case pages. A member sends selected evidence to a provider and gets a written assessment back; nothing is sent automatically.
+  </p>
+  <p class="text-sm text-gray-500 mb-6">
+    The tab only appears once <a href="/admin/settings" class="text-blue-400 hover:text-blue-300">AI&nbsp;Analysis</a>
+    is enabled in site settings. Private and internal addresses are allowed by default so a self-hosted model works &mdash;
+    see <code class="bg-gray-800 px-1 rounded text-blue-300">AI_REQUIRE_PUBLIC_HOST</code> in the configuration docs.
+  </p>
+
+  {% set msg_map = {
+    'created': 'Provider created.',
+    'updated': 'Provider updated.',
+    'toggled': 'Provider toggled.',
+    'deleted': 'Provider deleted. Past analyses were kept.',
+    'duplicated': 'Provider duplicated. The copy is disabled from being the default, and its name has &ldquo;(copy)&rdquo; appended — rename it and change the model.',
+    'token_cleared': 'API token cleared.'
+  } %}
+  {% for key, msg in msg_map.items() %}
+    {% if request.query_params.get(key) %}
+    <div class="bg-green-900/40 border border-green-700/50 text-green-300 px-4 py-2 rounded-lg text-sm mb-4">{{ msg }}</div>
+    {% endif %}
+  {% endfor %}
+  {% if test_result %}
+  <div class="bg-green-900/40 border border-green-700/50 text-green-300 px-4 py-2 rounded-lg text-sm mb-4">Test succeeded &mdash; {{ test_result }}</div>
+  {% endif %}
+  {% if test_error %}
+  <div class="bg-red-900/40 border border-red-700/50 text-red-300 px-4 py-2 rounded-lg text-sm mb-4">Test failed &mdash; {{ test_error }}</div>
+  {% endif %}
+
+  <!-- Add form -->
+  <details class="bg-gray-900 border border-gray-800 rounded-xl mb-6">
+    <summary class="px-5 py-3 cursor-pointer text-sm text-gray-300 hover:text-white">+ Add new provider</summary>
+    <form method="POST" action="/admin/ai" class="p-5 grid grid-cols-1 sm:grid-cols-2 gap-3 border-t border-gray-800">
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">Name *</span>
+        <input type="text" name="name" required maxlength="80" placeholder="Local Ollama"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">API shape *</span>
+        <select name="kind" class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200">
+          {% for value, label in kinds %}
+          <option value="{{ value }}">{{ label }}</option>
+          {% endfor %}
+        </select>
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">
+          Base URL * &mdash; up to the version prefix. Pasting a full endpoint URL is fine; the
+          trailing <code class="bg-gray-800 px-1 rounded">/chat/completions</code> is removed on save.
+          <span class="block text-gray-600 mt-0.5">
+            Ollama <code class="bg-gray-800 px-1 rounded">http://localhost:11434/v1</code> &middot;
+            OpenAI <code class="bg-gray-800 px-1 rounded">https://api.openai.com/v1</code> &middot;
+            OpenRouter <code class="bg-gray-800 px-1 rounded">https://openrouter.ai/api/v1</code> &middot;
+            Anthropic <code class="bg-gray-800 px-1 rounded">https://api.anthropic.com/v1</code>
+          </span>
+        </span>
+        <input type="text" name="base_url" required maxlength="500" placeholder="{{ base_url_hints.openai }}"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">Model *</span>
+        <input type="text" name="model" required maxlength="200" placeholder="qwen3.8:latest"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">API token (encrypted at rest; blank for a local model)</span>
+        <input type="password" name="api_token" autocomplete="off"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">Temperature (0.0&ndash;2.0)</span>
+        <input type="number" name="temperature" value="0.2" min="0" max="2" step="0.1"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">Max output tokens</span>
+        <input type="number" name="max_output_tokens" value="20000" min="1" max="200000"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      <label class="text-xs">
+        <span class="block text-gray-400 mb-1">Timeout (seconds)</span>
+        <input type="number" name="timeout_seconds" value="300" min="5" max="3600"
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+      </label>
+      {{ prompt_size_fields() }}
+      <label class="text-xs sm:col-span-2">
+        <span class="block text-gray-400 mb-1">Job system prompt override (blank uses the built-in SOC-analyst prompt)</span>
+        <textarea name="system_prompt" rows="3"
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none"></textarea>
+      </label>
+      <label class="text-xs sm:col-span-2">
+        <span class="block text-gray-400 mb-1">Case system prompt override</span>
+        <textarea name="case_system_prompt" rows="3" maxlength="8000"
+                  placeholder="Leave empty for the default case assessment prompt."
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none"></textarea>
+      </label>
+      <label class="text-xs sm:col-span-2">
+        <span class="block text-gray-400 mb-1">Notes</span>
+        <textarea name="notes" rows="2"
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"></textarea>
+      </label>
+      <div class="flex items-center gap-4">
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+          <input type="hidden" name="enabled" value="0">{# an unticked box posts nothing, and the route defaults to 1 #}
+          <input type="checkbox" name="enabled" value="1" checked class="lt-check">
+          Enabled
+        </label>
+        <label class="flex items-center gap-2 text-sm text-gray-300">
+          <input type="checkbox" name="is_default" value="1" class="lt-check">
+          Default
+        </label>
+      </div>
+      <div class="flex items-end justify-end">
+        <button type="submit" class="lt-btn lt-btn--lg lt-btn--primary">Create provider</button>
+      </div>
+    </form>
+  </details>
+
+  <!-- Existing providers -->
+  {% if providers %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+    {% for p in providers %}
+    <details class="border-b border-gray-800/50 last:border-b-0 group">
+      <summary class="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-gray-800/50 transition">
+        <div class="flex-1 min-w-0">
+          <div class="flex items-center gap-2 flex-wrap">
+            <span class="text-sm font-medium text-white truncate {% if not p.enabled %}line-through text-gray-500{% endif %}">{{ p.name }}</span>
+            {% if p.is_default %}
+            <span class="text-[9px] px-1 py-0.5 rounded bg-blue-900/40 text-blue-300 border border-blue-700/40">DEFAULT</span>
+            {% endif %}
+            {% if p.has_api_token %}
+            <span class="text-[9px] px-1 py-0.5 rounded bg-amber-900/40 text-amber-300 border border-amber-700/40" title="API token stored encrypted">TOKEN</span>
+            {% endif %}
+            <span class="text-[10px] px-1.5 py-0.5 rounded-full bg-gray-800 text-gray-400 border border-gray-700">{{ p.kind }}</span>
+          </div>
+          <code class="block text-xs text-gray-500 truncate font-mono">{{ p.base_url }} &middot; {{ p.model }}</code>
+        </div>
+        <span class="text-xs {% if p.enabled %}text-emerald-400{% else %}text-gray-600{% endif %}">{% if p.enabled %}&#9679; enabled{% else %}&#9675; disabled{% endif %}</span>
+      </summary>
+
+      <div class="px-5 pb-5 grid grid-cols-1 sm:grid-cols-2 gap-3 bg-gray-950/50">
+        <form method="POST" action="/admin/ai/{{ p.id }}" class="sm:col-span-2 grid grid-cols-1 sm:grid-cols-2 gap-3 mt-3">
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Name</span>
+            <input type="text" name="name" value="{{ p.name }}" required maxlength="80"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">API shape</span>
+            <select name="kind" class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200">
+              {% for value, label in kinds %}
+              <option value="{{ value }}" {% if p.kind == value %}selected{% endif %}>{{ label }}</option>
+              {% endfor %}
+            </select>
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Base URL</span>
+            <input type="text" name="base_url" value="{{ p.base_url }}" required maxlength="500"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Model</span>
+            <input type="text" name="model" value="{{ p.model }}" required maxlength="200"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">API token {% if p.has_api_token %}(leave blank to keep existing){% endif %}</span>
+            <input type="password" name="api_token" autocomplete="off"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Temperature</span>
+            <input type="number" name="temperature" value="{{ p.temperature }}" min="0" max="2" step="0.1"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Max output tokens</span>
+            <input type="number" name="max_output_tokens" value="{{ p.max_output_tokens }}" min="1" max="200000"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          <label class="text-xs">
+            <span class="block text-gray-400 mb-1">Timeout (seconds)</span>
+            <input type="number" name="timeout_seconds" value="{{ p.timeout_seconds }}" min="5" max="3600"
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+          </label>
+          {{ prompt_size_fields(p) }}
+          <label class="text-xs sm:col-span-2">
+            <span class="block text-gray-400 mb-1">Job system prompt override</span>
+            <textarea name="system_prompt" rows="3"
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">{{ p.system_prompt or '' }}</textarea>
+          </label>
+          <label class="text-xs sm:col-span-2">
+            <span class="block text-gray-400 mb-1">Case system prompt override</span>
+            <textarea name="case_system_prompt" rows="3" maxlength="8000"
+                      placeholder="Leave empty for the default case assessment prompt."
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">{{ p.case_system_prompt or '' }}</textarea>
+          </label>
+          <label class="text-xs sm:col-span-2">
+            <span class="block text-gray-400 mb-1">Notes</span>
+            <textarea name="notes" rows="2"
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">{{ p.notes or '' }}</textarea>
+          </label>
+          <div class="flex items-center gap-4">
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+              <input type="hidden" name="enabled" value="0">
+              <input type="checkbox" name="enabled" value="1" {% if p.enabled %}checked{% endif %} class="lt-check">
+              Enabled
+            </label>
+            <label class="flex items-center gap-2 text-sm text-gray-300">
+              <input type="checkbox" name="is_default" value="1" {% if p.is_default %}checked{% endif %} class="lt-check">
+              Default
+            </label>
+          </div>
+          <div class="flex items-end justify-end gap-2">
+            <button type="submit" class="lt-btn lt-btn--primary">Save</button>
+          </div>
+        </form>
+
+        <div class="sm:col-span-2 flex flex-wrap gap-2 pt-2 border-t border-gray-800">
+          <form method="POST" action="/admin/ai/{{ p.id }}/test" class="inline">
+            <button type="submit" class="text-xs px-3 py-1.5 rounded border border-blue-700/50 bg-blue-900/20 text-blue-300 hover:text-blue-200 transition">
+              Test connection
+            </button>
+          </form>
+          <form method="POST" action="/admin/ai/{{ p.id }}/toggle" class="inline">
+            <button type="submit" class="text-xs px-3 py-1.5 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:text-white transition">
+              {% if p.enabled %}Disable{% else %}Enable{% endif %}
+            </button>
+          </form>
+          {# Providers differ from one another in one field — same endpoint, same token, a
+             different model. Retyping a base URL and re-pasting a key to change one word is
+             where a typo comes from, and a mistyped base URL surfaces as a 404 that reads
+             like a bad model name. #}
+          <form method="POST" action="/admin/ai/{{ p.id }}/duplicate" class="inline">
+            <button type="submit" class="text-xs px-3 py-1.5 rounded border border-gray-700 bg-gray-800 text-gray-300 hover:text-white transition"
+                    title="Copy this provider's endpoint, token and settings under a new name">
+              Duplicate
+            </button>
+          </form>
+          {% if p.has_api_token %}
+          <form method="POST" action="/admin/ai/{{ p.id }}/clear-token"
+                data-confirm-title="Clear API token"
+                data-confirm-message="Permanently remove the stored API token for {{ p.name }}?"
+                data-confirm-accept="Clear">
+            <button type="submit" class="text-xs px-3 py-1.5 rounded border border-amber-700/50 bg-amber-900/20 text-amber-300 hover:text-amber-200 transition">
+              Clear token
+            </button>
+          </form>
+          {% endif %}
+          <form method="POST" action="/admin/ai/{{ p.id }}/delete"
+                data-confirm-title="Delete provider"
+                data-confirm-message="Permanently delete the {{ p.name }} provider? Analyses already generated with it are kept."
+                data-confirm-accept="Delete" class="ml-auto">
+            <button type="submit" class="text-xs px-3 py-1.5 rounded text-red-400 hover:text-red-300 transition">
+              Delete
+            </button>
+          </form>
+        </div>
+      </div>
+    </details>
+    {% endfor %}
+  </div>
+  {% else %}
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-12 text-center">
+    <p class="text-gray-500">No AI providers configured.</p>
+    <p class="text-xs text-gray-600 mt-2">Add one above to get started.</p>
+  </div>
+  {% endif %}
+
+</div>
+{% endblock %}

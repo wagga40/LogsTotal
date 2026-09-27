@@ -1,0 +1,135 @@
+{% from "partials/_pager.html" import pager %}
+{% from "intel/partials/_entity_type_badge.html" import type_badge %}
+{% from "intel/partials/_tag_chip.html" import tag_chip, tag_classes %}
+{% from "intel/partials/_label_chip.html" import label_chips %}
+{# Attribute chips reuse the tag palette but squared corners to distinguish from tags. #}
+
+{% if query_error %}
+<div class="mb-3 px-3 py-2 rounded-lg bg-red-900/40 border border-red-700/40 text-red-300 text-xs">{{ query_error }}</div>
+{% endif %}
+
+{% if entities %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+  <!-- Header — sort buttons write the dashboard's Alpine root state (Alpine.initTree
+       re-binds this partial after every HTMX swap, see base.html afterSwap handler) -->
+  <div class="flex items-center gap-3 px-4 py-2.5 border-b border-gray-800 text-xs text-gray-500">
+    {#
+      Select-all covers exactly the rows on screen, because `_visibleIds()` reads
+      `[data-entity-select]` out of the DOM rather than a server-passed list. With a search
+      or filter active that is the filtered page — which is the only sane reading of "all",
+      and it stays correct after a filter change swaps the tbody.
+    #}
+    <span class="w-4">
+      <input type="checkbox" class="lt-check"
+             :checked="$store.entitySelection.allVisibleSelected()"
+             @change="$store.entitySelection.setAllVisible($event.target.checked)"
+             :title="$store.entitySelection.allVisibleSelected() ? 'Clear selection on this page' : 'Select every entity on this page'">
+    </span>
+    <button class="w-6 text-center hover:text-amber-300 transition" title="Sort: watched first"
+            @click="sort = 'watchlist'; triggerRefresh(true)">
+      ★{% if current_sort == 'watchlist' %}<span class="text-blue-400">&#9660;</span>{% endif %}
+    </button>
+    <span class="w-8 text-center">#</span>
+    <button class="flex-1 text-left hover:text-gray-300 transition" title="Sort by value (A–Z)"
+            @click="sort = 'value'; triggerRefresh(true)">
+      Entity {% if current_sort == 'value' %}<span class="text-blue-400">&#9650;</span>{% endif %}
+    </button>
+    <span class="w-20 text-center">Type</span>
+    <button class="w-12 text-center hover:text-gray-300 transition hidden sm:block" title="Sort by job count"
+            @click="sort = 'jobs'; triggerRefresh(true)">
+      Jobs{% if current_sort == 'jobs' %} <span class="text-blue-400">&#9660;</span>{% endif %}
+    </button>
+    <button class="w-24 text-right hover:text-gray-300 transition hidden sm:block" title="Sort by last seen"
+            @click="sort = 'last_seen'; triggerRefresh(true)">
+      Last seen{% if current_sort == 'last_seen' %} <span class="text-blue-400">&#9660;</span>{% endif %}
+    </button>
+    <span class="w-10"></span>
+  </div>
+
+  <!-- Rows -->
+  {% for entity in entities %}
+  <div class="flex items-center gap-3 px-4 py-2 border-b border-gray-800/50 hover:bg-gray-800/50 transition group">
+    <span class="w-4">
+      {# The id list for select-all is derived from these data attributes in the DOM, not
+         from a server-passed list, so it stays correct after a filter swaps the rows. #}
+      <input type="checkbox" class="lt-check" data-entity-select="{{ entity.id }}"
+             :checked="$store.entitySelection.has({{ entity.id }})"
+             @change="$store.entitySelection.toggle({{ entity.id }})">
+    </span>
+    {#
+      Reflects *your* watch, not the global flag. `Entity.watchlist` only says somebody
+      somewhere is watching, which is not actionable and not what a star means to the
+      person reading it — the ★ on the entity page is per-user, so this must agree with it.
+    #}
+    <span class="w-6 text-center" title="{% if entity.id in watched_by_me %}You are watching this{% elif entity.watchlist %}Watched by someone else{% else %}Not watched{% endif %}">
+      {% if entity.id in watched_by_me %}
+        <svg class="w-3.5 h-3.5 inline text-amber-400" fill="currentColor" viewBox="0 0 20 20"><path d="M9.049 2.927c.3-.921 1.603-.921 1.902 0l1.286 3.957a1 1 0 00.95.69h4.162c.969 0 1.371 1.24.588 1.81l-3.366 2.446a1 1 0 00-.364 1.118l1.287 3.957c.3.922-.755 1.688-1.54 1.118l-3.366-2.446a1 1 0 00-1.176 0l-3.366 2.446c-.785.57-1.84-.196-1.54-1.118l1.287-3.957a1 1 0 00-.364-1.118L2.05 9.384c-.783-.57-.38-1.81.588-1.81h4.162a1 1 0 00.95-.69l1.286-3.957z"/></svg>
+      {% elif entity.watchlist %}
+        <span class="text-gray-600" title="Watched by someone else">·</span>
+      {% else %}
+        <span class="text-gray-800">·</span>
+      {% endif %}
+    </span>
+    <span class="w-8 text-center text-xs text-gray-600">{{ (page - 1) * 50 + loop.index }}</span>
+    <div class="flex-1 min-w-0 flex items-center gap-2">
+      <a href="/intel/entities/{{ entity.id }}"
+         class="font-mono text-sm truncate group-hover:text-white transition {% if entity.allowlisted %}text-gray-500 line-through{% else %}text-gray-200{% endif %}" title="{{ entity.value }}{% if entity.allowlisted %} (allowlisted){% endif %}">
+        {{ entity.value }}
+      </a>
+      {% if entity.allowlisted %}
+      <span title="Allowlisted — suppressed from IOC feed" class="text-emerald-400">
+        <svg class="w-3.5 h-3.5 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+      </span>
+      {% endif %}
+      {#
+        This entity's tags, including the ones a shared rule added. This partial
+        is swapped inside the dashboard's Alpine root, so a chip click is handled in place;
+        the chip keeps its href as the no-JS fallback.
+      #}
+      {{ label_chips(labels_by_entity.get(entity.id, []), cap=4) }}
+    </div>
+    {#
+      Both cells are pivots. A value you can see but not act on is a dead end — clicking a
+      type or a job count is the obvious way to ask "show me the others", and the click
+      writes the real filter rather than a one-off query so it composes with everything else
+      and shows up in the active-filter strip.
+    #}
+    <span class="w-20 text-center">
+      <button type="button" @click="entityType = '{{ entity.entity_type }}'; triggerRefresh(true)"
+              class="cursor-pointer" title="Filter to {{ entity_type_meta.get(entity.entity_type, {}).get('label', entity.entity_type) }}">
+        {{ type_badge(entity.entity_type) }}
+      </button>
+    </span>
+    <span class="w-12 text-center hidden sm:block">
+      <button type="button" @click="minJobs = {{ entity.job_count or 0 }}; advancedOpen = true; triggerRefresh(true)"
+              class="font-mono text-xs text-gray-400 hover:text-blue-300 transition"
+              title="Filter to entities seen in at least {{ entity.job_count or 0 }} job{{ '' if (entity.job_count or 0) == 1 else 's' }}">{{ entity.job_count or 0 }}</button>
+    </span>
+    <span class="w-24 text-right text-xs text-gray-500 hidden sm:block"
+          {% if entity.last_seen_at %}title="{{ entity.last_seen_at.strftime('%Y-%m-%d %H:%M UTC') }}"{% endif %}>
+      {{ entity.last_seen_at | time_ago }}
+    </span>
+    <a href="/intel/entities/{{ entity.id }}" title="Investigate"
+       class="w-10 text-center text-gray-600 hover:text-blue-400 transition opacity-0 group-hover:opacity-100">
+      <svg class="w-4 h-4 inline" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/></svg>
+    </a>
+  </div>
+  {% endfor %}
+
+  <!-- Summary + pagination -->
+  <div class="flex items-center justify-between px-4 py-3 text-xs text-gray-500">
+    <span>{% if approximate_total %}&asymp; {% endif %}{{ total }} entities{% if total_pages > 1 %} · page {{ page }} of {{ total_pages }}{% endif %}</span>
+    {# Alpine, not a link: this table's page number is one field of the dashboard's whole
+       filter state, and `triggerRefresh` is what syncs the URL and refetches. #}
+    {{ pager(page, total_pages, alpine='triggerRefresh(false)') }}
+  </div>
+</div>
+{% else %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-8 text-center text-gray-500 text-sm">
+  {% if current_q or current_type or current_watchlist or current_since or current_min_jobs %}
+    No entities match the current filters.
+  {% else %}
+    No entities found.
+  {% endif %}
+</div>
+{% endif %}

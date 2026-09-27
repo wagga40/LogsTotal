@@ -1,0 +1,40 @@
+{#
+  Bulk tagging bar for the entity dashboard. Mirrors partials/_jobs_bulk_actions.html.
+
+  Lives OUTSIDE #entity-table-region (the HTMX swap target) so the counter does not blink
+  on every filter change, and the selection itself lives in Alpine.store('entitySelection')
+  for the same reason — state rendered inside a swapped element is wiped by the next swap.
+#}
+{# `with context`: the macro renders the colour swatches from `tag_colors`, and a
+   Jinja macro cannot see the caller's context without it — the loop would silently
+   produce nothing, which is exactly how colour picking broke. #}
+{% from "intel/partials/_tag_combobox.html" import tag_combobox with context %}
+<div>
+  {# No idle hint: with nothing selected this wrapper collapses, so the bottom margin
+     lives on the bar itself rather than here — otherwise it left a dead gap above the
+     table on every unselected render. #}
+  <div x-show="$store.entitySelection.ids.length" x-cloak
+       class="mb-3 bg-gray-900 border border-blue-800/50 rounded-xl px-4 py-3 lt-bar">
+    <span class="text-sm text-gray-300">
+      <span x-text="$store.entitySelection.ids.length"></span> selected
+    </span>
+
+    <form class="lt-bar" x-data="tagCombobox({ max: {{ tag_write_max }} })" hx-post="/intel/entities/bulk-tag" hx-target="#bulk-tag-result" hx-swap="innerHTML"
+          @htmx:after-request="if ($event.detail.successful) { window.tagVocabChanged(); reset(); $store.entitySelection.clear(); htmx.trigger('#entity-table-region', 'filterChange'); }">
+      {# Written imperatively on submit rather than bound: htmx serializes the form
+         synchronously inside the submit event, but Alpine applies :value on its own
+         scheduler, so a binding would send the previous selection. Same trap as
+         caseEntityFilter._refetch. #}
+      <input type="hidden" name="entity_ids" x-ref="ids">
+      {{ tag_combobox(size='lt-field--sm', width='w-72', placeholder='Search or create a tag…') }}
+      <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary" :disabled="isEmpty()" title="Type or pick a tag first"
+              @click="$refs.ids.value = $store.entitySelection.ids.join(',')">Tag</button>
+      <button type="submit" class="lt-btn lt-btn--sm" :disabled="isEmpty()" title="Type or pick a tag first"
+              hx-post="/intel/entities/bulk-untag"
+              @click="$refs.ids.value = $store.entitySelection.ids.join(',')">Untag</button>
+    </form>
+
+    <button type="button" @click="$store.entitySelection.clear()" class="lt-btn lt-btn--sm lt-btn--ghost">Clear selection</button>
+    <span id="bulk-tag-result" class="ml-auto"></span>
+  </div>
+</div>
