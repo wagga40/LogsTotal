@@ -160,8 +160,9 @@ def test_the_job_that_runs_the_suite_fetches_tags(path: Path):
 
     It skips only when `.git` is absent, and every checkout leaves `.git` present. So a
     shallow checkout with no tags turns a green suite red for a reason no tag can fix.
-    Either spelling counts: `fetch-depth: 0` takes the whole history, `fetch-tags: true`
-    takes only what the test reads.
+    Only `fetch-depth: 0` counts. `fetch-tags: true` at depth 1 fetches the one commit, and
+    git then brings along only a tag that points at it: the suite passed on the tagged
+    commit and failed on the first commit after it.
     """
     for job in (_load(path).get("jobs") or {}).values():
         if not any("ci:test" in (s.get("run") or "") for s in job.get("steps") or [] if isinstance(s, dict)):
@@ -169,8 +170,9 @@ def test_the_job_that_runs_the_suite_fetches_tags(path: Path):
         checkout = next((s for s in job["steps"] if isinstance(s, dict) and "checkout" in str(s.get("uses", ""))), None)
         assert checkout, "the test job does not check out the repository"
         params = checkout.get("with") or {}
-        assert params.get("fetch-depth") == 0 or params.get("fetch-tags") is True, (
-            f"{path.relative_to(REPO_ROOT)}: the job running `task ci:test` must fetch tags (fetch-depth: 0 or fetch-tags: true), got {params}"
+        assert params.get("fetch-depth") == 0, (
+            f"{path.relative_to(REPO_ROOT)}: the job running `task ci:test` must fetch tags with fetch-depth: 0 "
+            f"(fetch-tags: true at depth 1 misses every tag not on the checked-out commit), got {params}"
         )
         return
     pytest.fail(f"{path.relative_to(REPO_ROOT)} has no job running `task ci:test`")

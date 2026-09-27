@@ -112,10 +112,11 @@ jobs:
           # `test_the_declared_version_has_a_git_tag` asserts `git tag --list v<version>`
           # is non-empty, and skips only when `.git` is absent. A shallow checkout leaves
           # `.git` present with zero tags — so the test does not skip, it fails, and no
-          # amount of tagging fixes it from the runner's side. `fetch-tags` rather than
-          # `fetch-depth: 0`: the tags are all the test reads.
-          fetch-depth: 1
-          fetch-tags: true
+          # amount of tagging fixes it from the runner's side. `fetch-depth: 0`, because
+          # `fetch-tags: true` does not fetch tags at depth 1: the action fetches the one
+          # commit, and git then brings only a tag pointing at that commit — green on the
+          # tagged commit, red on every commit after it.
+          fetch-depth: 0
 
       - name: Set up PDM (with Python)
         uses: pdm-project/setup-pdm@973541a5febeafcfdadf8a51211435be6ecfd90f
