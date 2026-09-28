@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from datetime import timedelta
 
-from sqlalchemy import select
+from sqlalchemy import select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import settings
@@ -24,7 +24,8 @@ from app.database import utc_now_naive
 from app.models import AnalysisJob, JobStatus, TaskResult, TaskStatus
 
 #: Added to ``huey_queue_expiry`` before declaring a PENDING job expired, so the sweep
-#: can never race a message that is about to be claimed at the boundary. A slot-capped
+#: rarely meets a message that is about to be claimed at the boundary; when it does, the
+#: conditional writes on both sides decide the winner, never both. A slot-capped
 #: job re-enqueues itself but is force-accepted after ``_MAX_DEFERRALS`` (20 x <=8s),
 #: which is far inside the 1800s default expiry — so age since ``created_at`` is a safe
 #: signal even for a job that has been deferred its maximum number of times.
@@ -88,17 +89,31 @@ async def _recover_stale_running(db: AsyncSession, redis, *, message: str) -> in
 
     now = utc_now_naive()
 
+    # Conditional on the row still being RUNNING: the SELECT above is a snapshot, and the
+    # worker it judged dead may have finished — or cancelled — the job since. Overwriting
+    # that terminal status would put the job back in a state the user already saw it leave.
+    changed: list[int] = []
     for job in stale:
         was_cancelling = job.id in cancelling_ids
-        job.status = JobStatus.CANCELLED if was_cancelling else JobStatus.FAILED
-        job.error_message = CANCEL_MSG_DEAD_WORKER if was_cancelling else message
-        job.finished_at = now
+        result = await db.execute(
+            update(AnalysisJob)
+            .where(AnalysisJob.id == job.id, AnalysisJob.status == JobStatus.RUNNING)
+            .values(
+                status=JobStatus.CANCELLED if was_cancelling else JobStatus.FAILED,
+                error_message=CANCEL_MSG_DEAD_WORKER if was_cancelling else message,
+                finished_at=now,
+            )
+        )
+        if result.rowcount == 1:
+            changed.append(job.id)
+    if not changed:
+        return 0
 
-    # One query for every stale job's tasks, not one per job.
+    # One query for every recovered job's tasks, not one per job.
     task_results = (
         await db.execute(
             select(TaskResult).where(
-                TaskResult.job_id.in_([job.id for job in stale]),
+                TaskResult.job_id.in_(changed),
                 TaskResult.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]),
             )
         )
@@ -109,7 +124,7 @@ async def _recover_stale_running(db: AsyncSession, redis, *, message: str) -> in
         tr.error_message = CANCEL_MSG_DEAD_WORKER if was_cancelling else message
         tr.finished_at = now
 
-    return len(stale)
+    return len(changed)
 
 
 async def _fail_expired_pending(db: AsyncSession) -> int:
@@ -123,24 +138,11 @@ async def _fail_expired_pending(db: AsyncSession) -> int:
         return 0
 
     cutoff = utc_now_naive() - timedelta(seconds=expiry + EXPIRY_GRACE_SECONDS)
-    expired = (
-        (
-            await db.execute(
-                select(AnalysisJob).where(
-                    AnalysisJob.status == JobStatus.PENDING,
-                    AnalysisJob.created_at < cutoff,
-                )
-            )
-        )
-        .scalars()
-        .all()
+    # One statement, so "still PENDING" is checked at write time: a worker that claimed
+    # the job after a SELECT here would otherwise have its RUNNING row failed underneath it.
+    result = await db.execute(
+        update(AnalysisJob)
+        .where(AnalysisJob.status == JobStatus.PENDING, AnalysisJob.created_at < cutoff)
+        .values(status=JobStatus.FAILED, error_message=RECOVERY_MSG_EXPIRED, finished_at=utc_now_naive())
     )
-    if not expired:
-        return 0
-
-    now = utc_now_naive()
-    for job in expired:
-        job.status = JobStatus.FAILED
-        job.error_message = RECOVERY_MSG_EXPIRED
-        job.finished_at = now
-    return len(expired)
+    return result.rowcount or 0
