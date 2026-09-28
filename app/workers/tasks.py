@@ -683,6 +683,11 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
         return
 
     slot_acquired = True
+    # Whether this run owns the job's Redis keys. The heartbeat and the cancel flag are
+    # addressed by job id alone, so a run that loses the claim below — a duplicate message
+    # for a job another worker is running — must not delete them in its `finally`: that
+    # would drop a live cancel and make a live job look dead to the recovery sweep.
+    owns_job_keys = False
     hb = _HeartbeatTimer(job_id)
     cw = _CancelWatcher(job_id)
     db = get_sync_session()
@@ -702,15 +707,22 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
             return
         cw.identity = cancel_flag_value(job)
         if _cancel_requested(job_id, cw.identity):
-            job.status = JobStatus.CANCELLED
-            job.error_message = CANCEL_MSG_USER
-            job.finished_at = utc_now_naive()
+            owns_job_keys = True  # the flag has served its purpose; the finally clears it
+            _set_job_status(db, job, JobStatus.CANCELLED, expected=(JobStatus.PENDING,), error_message=CANCEL_MSG_USER, finished_at=utc_now_naive())
             db.commit()
             _log.info("Job %d cancelled before pickup — dropping", job_id)
             return
 
-        job.status = JobStatus.RUNNING
+        # The claim. Conditional, because the row read above can be stale by now: the
+        # expired-PENDING sweep, a cancel or an enqueue-failure handler may have finalized
+        # it since, and a duplicate message may have claimed it on another worker. Writing
+        # RUNNING unconditionally would bring a terminal job back to life.
+        claimed = _set_job_status(db, job, JobStatus.RUNNING, expected=(JobStatus.PENDING,))
         db.commit()
+        if not claimed:
+            _log.info("Job %d was claimed or finalized elsewhere before pickup — dropping", job_id)
+            return
+        owns_job_keys = True
 
         hb.start()
         cw.start()
@@ -951,18 +963,24 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
             # noticed, which is a much worse signal than "failed".
             db.rollback()
             if job is not None:
+                # A run that holds the claim finalizes from RUNNING; one that failed before
+                # claiming may only settle a job nobody has claimed yet.
+                expected = (JobStatus.RUNNING,) if owns_job_keys else (JobStatus.PENDING,)
                 if cw.event.is_set():
                     # The user asked for this to stop, and killing the tools is a
                     # plausible source of the exception — reporting "failed" would blame
                     # the platform for doing what it was told.
-                    _finalize_job(db, job, any_success=False, any_failure=False, cancelled=True)
+                    _finalize_job(db, job, any_success=False, any_failure=False, cancelled=True, expected=expected)
                 else:
-                    _fail_job(db, job, str(exc))
+                    _fail_job(db, job, str(exc), expected=expected)
         except Exception:
             _log.exception("Job %d: could not record the failure", job_id)
     finally:
         cw.stop()
-        hb.stop()
+        if owns_job_keys:
+            # Only the run that claimed the job started a heartbeat; stop() deletes the key
+            # by job id, which for a losing duplicate would be the live worker's.
+            hb.stop()
         if loaded_path is not None:
             # On S3 this drops the .s3_cache copy. Without it a worker accumulates a
             # permanent local copy of every log it has ever analysed, pruned by nothing.
@@ -978,8 +996,11 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
             r = get_redis()
             r.delete(f"{JOB_DEFER_PREFIX}{job_id}")
             # The job is terminal (or dropped as already-cancelled) — the cancel
-            # flag has served its purpose; don't leave it to linger until TTL.
-            r.delete(f"{CANCEL_PREFIX}{job_id}")
+            # flag has served its purpose; don't leave it to linger until TTL. A run that
+            # never owned the job leaves it alone: the flag may be a live cancel for the
+            # worker that does.
+            if owns_job_keys:
+                r.delete(f"{CANCEL_PREFIX}{job_id}")
         except Exception:
             pass
         db.close()
@@ -1094,12 +1115,31 @@ def _rollup_job_counts(db, job: AnalysisJob) -> None:
     job.severity_summary = json_dumps(severity_counts)
 
 
-def _fail_job(db, job: AnalysisJob, message: str):
-    job.status = JobStatus.FAILED
-    job.error_message = message
-    job.finished_at = utc_now_naive()
+def _set_job_status(db, job: AnalysisJob, status: JobStatus, *, expected: tuple[JobStatus, ...], **values) -> bool:
+    """Move *job* to *status* only while its row is still in one of *expected*.
+
+    `UPDATE ... WHERE id = :id AND status IN :expected`, so the check and the write are one
+    statement. Every writer of a job's status reads the row first and writes it later — the
+    worker across a whole analysis run — and an unconditional write in between would overwrite
+    whatever another actor committed meanwhile: a cancel, the recovery sweep's FAILED, an
+    enqueue failure. A terminal status would then stop being final. Returns whether the row
+    changed; when it did not, *job* is refreshed so the caller sees the status that won.
+    """
+    from sqlalchemy import update
+
+    result = db.execute(update(AnalysisJob).where(AnalysisJob.id == job.id, AnalysisJob.status.in_(expected)).values(status=status, **values))
+    if result.rowcount == 1:
+        return True
+    db.refresh(job, attribute_names=["status"])
+    return False
+
+
+def _fail_job(db, job: AnalysisJob, message: str, expected: tuple[JobStatus, ...] = (JobStatus.RUNNING,)):
     _sweep_unfinished_task_results(db, job.id, TaskStatus.FAILED, message)
     _rollup_job_counts(db, job)
+    # Never over a terminal status, and never over a job another run has claimed.
+    if not _set_job_status(db, job, JobStatus.FAILED, expected=expected, error_message=message, finished_at=utc_now_naive()):
+        _log.info("Job %d is already %s — not marking it failed", job.id, enum_val(job.status))
     db.commit()
 
 
@@ -3069,7 +3109,7 @@ def _cleanup_job_outputs_periodic_body():
     return f"swept outputs older than {retention.days} days"
 
 
-def _finalize_job(db, job: AnalysisJob, any_success: bool, any_failure: bool, cancelled: bool = False):
+def _finalize_job(db, job: AnalysisJob, any_success: bool, any_failure: bool, cancelled: bool = False, expected: tuple[JobStatus, ...] = (JobStatus.RUNNING,)):
     # Anything still unfinished here is a tool the watchdog gave up on: the parallel
     # `as_completed` loop is bounded by the summed per-tool timeouts, so an unkillable
     # tool reaches this point with its row untouched. Sweep before the roll-up, so the
@@ -3080,19 +3120,26 @@ def _finalize_job(db, job: AnalysisJob, any_success: bool, any_failure: bool, ca
         _sweep_unfinished_task_results(db, job.id, TaskStatus.FAILED, "tool did not report a result before the job finished")
 
     _rollup_job_counts(db, job)
-    job.finished_at = utc_now_naive()
 
+    values = {"finished_at": utc_now_naive()}
     if cancelled:
-        job.status = JobStatus.CANCELLED
-        job.error_message = job.error_message or CANCEL_MSG_USER
+        status = JobStatus.CANCELLED
+        values["error_message"] = job.error_message or CANCEL_MSG_USER
     elif any_failure and not any_success:
-        job.status = JobStatus.FAILED
+        status = JobStatus.FAILED
     elif any_failure:
-        job.status = JobStatus.PARTIAL
+        status = JobStatus.PARTIAL
     else:
-        job.status = JobStatus.COMPLETED
+        status = JobStatus.COMPLETED
 
+    # Only from RUNNING: while the tools ran, the recovery sweep may have failed the job
+    # (its heartbeat lapsed) or the cancel route may have cancelled it. The user has been
+    # shown that status; overwriting it with this run's outcome would un-finalize the job.
+    finalized = _set_job_status(db, job, status, expected=expected, **values)
     db.commit()
+    if not finalized:
+        _log.warning("Job %d was finalized elsewhere as %s while it ran — keeping that status", job.id, enum_val(job.status))
+        return
 
     if cancelled:
         # Don't feed a truncated run into the per-workflow duration estimate.
