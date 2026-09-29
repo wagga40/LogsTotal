@@ -10,9 +10,9 @@ from __future__ import annotations
 import pytest
 from sqlalchemy import select, update
 
-from app.models import AnalysisJob, JobStatus, LogFile, LogType, TaskResult, WorkflowDef
+from app.models import AnalysisJob, Finding, JobStatus, LogFile, LogType, TaskResult, TaskStatus, WorkflowDef
 from app.redis_client import CANCEL_PREFIX, HEARTBEAT_PREFIX, cancel_flag_value
-from app.tools.base import ToolOutput
+from app.tools.base import NormalizedFinding, ToolOutput
 
 
 @pytest.fixture()
@@ -159,3 +159,90 @@ def test_fail_job_does_not_overwrite_a_terminal_status(sync_db, job_id):
     assert job.status == JobStatus.COMPLETED
     assert job.error_message != "late failure"
     assert sync_db.execute(select(TaskResult).where(TaskResult.job_id == job_id)).first() is None
+
+
+# ── TaskResult rows ─────────────────────────────────────────────────────────────
+# The recovery sweep and the cancel route finalize a job's unfinished TaskResult rows along
+# with the job, while its worker may still be running and commit each tool's result later;
+# and the sweeps themselves read the rows before writing them. Either way one terminal state
+# overwrote the other: the job said FAILED/CANCELLED while its tools said completed.
+
+
+def _sweep_elsewhere(db, job_id, status, message):
+    """What the recovery sweep or the cancel route commits, seen from the worker's session."""
+    db.execute(
+        update(TaskResult)
+        .where(TaskResult.job_id == job_id, TaskResult.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]))
+        .values(status=status, error_message=message)
+        .execution_options(synchronize_session=False)
+    )
+    _commit_elsewhere(db, job_id, JobStatus(status.value))
+
+
+@pytest.mark.parametrize("competing", [TaskStatus.FAILED, TaskStatus.CANCELLED])
+def test_tool_result_does_not_overwrite_a_task_status_committed_while_it_ran(sync_db, job_id, monkeypatch, competing):
+    """The recovery sweep or the cancel route finalized the tool's row while it ran."""
+    import app.workers.tasks as tasks_mod
+
+    class CompetingAdapter:
+        SUPPORTED_TYPES = set()
+
+        def run(self, file_path, output_dir, **kw):
+            _sweep_elsewhere(sync_db, job_id, competing, "swept")
+            return ToolOutput(success=True, findings=[NormalizedFinding(rule_name="Rule", severity="high", rule_id="r1")], duration_ms=1, stdout="ok")
+
+    monkeypatch.setattr(tasks_mod, "get_adapter", lambda name, cfg: CompetingAdapter())
+    tasks_mod.run_analysis.call_local(job_id)
+
+    sync_db.expire_all()
+    tool = sync_db.execute(select(TaskResult).where(TaskResult.job_id == job_id, TaskResult.tool_name == "zircolite")).scalar_one()
+    assert (tool.status, tool.error_message) == (competing, "swept")
+    assert sync_db.execute(select(Finding).where(Finding.task_result_id == tool.id)).first() is None
+
+
+async def test_recovery_does_not_overwrite_a_task_result_committed_after_its_read(async_db, fake_redis):
+    """The worker was judged dead (no heartbeat) but commits its tool's result while the
+    sweep runs. The sweep must leave the completed row alone."""
+    from app.constants import RECOVERY_MSG_ADMIN
+    from app.recovery import recover_stale_jobs
+
+    wf = WorkflowDef(name="Recovery WF", description="", log_types='["evtx"]', tasks_yaml="tasks: []", is_default=True)
+    lf = LogFile(original_filename="r.evtx", stored_filename="r.evtx", sha256="d" * 64, size_bytes=264, log_type=LogType.EVTX, detected_type=LogType.EVTX)
+    async_db.add_all([wf, lf])
+    await async_db.flush()
+    job = AnalysisJob(file_id=lf.id, workflow_id=wf.id, status=JobStatus.RUNNING)
+    async_db.add(job)
+    await async_db.flush()
+    tr = TaskResult(job_id=job.id, tool_name="zircolite", status=TaskStatus.RUNNING)
+    async_db.add(tr)
+    await async_db.commit()
+    tr_id = tr.id
+
+    # The worker's commit lands in the sweep's read-to-write window: right after a SELECT of
+    # the task rows, or right before an UPDATE of them when there is no separate read.
+    real_execute = async_db.execute
+    fired = False
+
+    async def worker_completes():
+        nonlocal fired
+        fired = True
+        stmt = update(TaskResult).where(TaskResult.id == tr_id).values(status=TaskStatus.COMPLETED).execution_options(synchronize_session=False)
+        await real_execute(stmt)
+
+    async def execute(stmt, *args, **kwargs):
+        tables = stmt.get_final_froms() if stmt.is_select else [getattr(stmt, "table", None)]
+        touches_tasks = not fired and TaskResult.__table__ in tables
+        if touches_tasks and stmt.is_update:
+            await worker_completes()
+        result = await real_execute(stmt, *args, **kwargs)
+        if touches_tasks and stmt.is_select:
+            await worker_completes()
+        return result
+
+    async_db.execute = execute
+    assert await recover_stale_jobs(async_db, fake_redis, message=RECOVERY_MSG_ADMIN) == 1
+    async_db.execute = real_execute
+
+    async_db.expire_all()
+    assert fired
+    assert (await async_db.get(TaskResult, tr_id)).status == TaskStatus.COMPLETED

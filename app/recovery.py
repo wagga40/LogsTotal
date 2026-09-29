@@ -109,20 +109,18 @@ async def _recover_stale_running(db: AsyncSession, redis, *, message: str) -> in
     if not changed:
         return 0
 
-    # One query for every recovered job's tasks, not one per job.
-    task_results = (
-        await db.execute(
-            select(TaskResult).where(
-                TaskResult.job_id.in_(changed),
-                TaskResult.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]),
+    # One conditional statement per outcome, not read-then-write: a worker judged dead may
+    # still commit a tool's result in between, and a finished row keeps it.
+    for status, error_message, job_ids in (
+        (TaskStatus.CANCELLED, CANCEL_MSG_DEAD_WORKER, [jid for jid in changed if jid in cancelling_ids]),
+        (TaskStatus.FAILED, message, [jid for jid in changed if jid not in cancelling_ids]),
+    ):
+        if job_ids:
+            await db.execute(
+                update(TaskResult)
+                .where(TaskResult.job_id.in_(job_ids), TaskResult.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]))
+                .values(status=status, error_message=error_message, finished_at=now)
             )
-        )
-    ).scalars()
-    for tr in task_results:
-        was_cancelling = tr.job_id in cancelling_ids
-        tr.status = TaskStatus.CANCELLED if was_cancelling else TaskStatus.FAILED
-        tr.error_message = CANCEL_MSG_DEAD_WORKER if was_cancelling else message
-        tr.finished_at = now
 
     return len(changed)
 

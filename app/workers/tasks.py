@@ -1022,31 +1022,35 @@ def _persist_tool_result(db, task_result_id: int, output: ToolOutput) -> tuple[b
 
     Returns (was_success, was_failure) booleans.
     """
-    task_result = db.get(TaskResult, task_result_id)
-    task_result.duration_ms = output.duration_ms
-    task_result.finished_at = utc_now_naive()
-    task_result.log_output = _combine_logs(output.stdout, output.stderr)
+    values = {"duration_ms": output.duration_ms, "finished_at": utc_now_naive(), "log_output": _combine_logs(output.stdout, output.stderr)}
 
     was_success = False
     was_failure = False
 
     if not output.success:
         if output.error == CANCELLED_ERROR:
-            task_result.status = TaskStatus.CANCELLED
-            task_result.error_message = CANCEL_MSG_USER
+            status, values["error_message"] = TaskStatus.CANCELLED, CANCEL_MSG_USER
             # Neither success nor failure: cancellation decides the job status.
         elif output.error == "not supported" or output.error.startswith("arch:skip:"):
-            task_result.status = TaskStatus.SKIPPED
-            task_result.error_message = output.error.removeprefix("arch:skip:") if output.error.startswith("arch:skip:") else output.error
+            status, values["error_message"] = TaskStatus.SKIPPED, output.error.removeprefix("arch:skip:")
         else:
-            task_result.status = TaskStatus.FAILED
-            task_result.error_message = output.error
+            status, values["error_message"] = TaskStatus.FAILED, output.error
             was_failure = True
     else:
+        status, values["findings_count"] = TaskStatus.COMPLETED, len(output.findings)
         was_success = True
+
+    # Only over the RUNNING row Step 1 created: the recovery sweep or the cancel route may
+    # have finalized it while the tool ran, and their FAILED/CANCELLED stands, findings and all.
+    if not _set_task_status(db, task_result_id, status, expected=(TaskStatus.RUNNING,), **values):
+        db.commit()
+        _log.info("Task result %d was finalized elsewhere while its tool ran — dropping the result", task_result_id)
+        return False, False
+
+    if was_success:
         for f in output.findings:
             finding = Finding(
-                task_result_id=task_result.id,
+                task_result_id=task_result_id,
                 rule_id=f.rule_id,
                 rule_name=f.rule_name,
                 severity=f.severity,
@@ -1056,8 +1060,6 @@ def _persist_tool_result(db, task_result_id: int, output: ToolOutput) -> tuple[b
                 rule_content=f.rule_content or None,
             )
             db.add(finding)
-        task_result.findings_count = len(output.findings)
-        task_result.status = TaskStatus.COMPLETED
 
     db.commit()
     return was_success, was_failure
@@ -1075,12 +1077,15 @@ def _sweep_unfinished_task_results(db, job_id: int, status: TaskStatus, message:
     The cancel route (`routers/jobs.py::job_cancel`) does this for the dead-worker path;
     this is the same sweep on the worker side.
     """
-    now = utc_now_naive()
-    stale = db.query(TaskResult).filter(TaskResult.job_id == job_id, TaskResult.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING])).all()
-    for tr in stale:
-        tr.status = status
-        tr.error_message = tr.error_message or message
-        tr.finished_at = now
+    from sqlalchemy import func, update
+
+    # One conditional statement, not read-then-write: a row the recovery sweep or the cancel
+    # route finalized in between keeps its status.
+    db.execute(
+        update(TaskResult)
+        .where(TaskResult.job_id == job_id, TaskResult.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]))
+        .values(status=status, error_message=func.coalesce(TaskResult.error_message, message), finished_at=utc_now_naive())
+    )
 
 
 def _rollup_job_counts(db, job: AnalysisJob) -> None:
@@ -1132,6 +1137,19 @@ def _set_job_status(db, job: AnalysisJob, status: JobStatus, *, expected: tuple[
         return True
     db.refresh(job, attribute_names=["status"])
     return False
+
+
+def _set_task_status(db, task_result_id: int, status: TaskStatus, *, expected: tuple[TaskStatus, ...], **values) -> bool:
+    """`_set_job_status` for one TaskResult row: write it only while it is still in *expected*.
+
+    The recovery sweep and the cancel route finalize a job's unfinished rows from another
+    process while its worker may still be running the tools; an unconditional write would
+    put a completed result under a job that already reads FAILED or CANCELLED.
+    """
+    from sqlalchemy import update
+
+    stmt = update(TaskResult).where(TaskResult.id == task_result_id, TaskResult.status.in_(expected)).values(status=status, **values)
+    return db.execute(stmt).rowcount == 1
 
 
 def _fail_job(db, job: AnalysisJob, message: str, expected: tuple[JobStatus, ...] = (JobStatus.RUNNING,)):

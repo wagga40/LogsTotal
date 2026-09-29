@@ -1547,16 +1547,12 @@ async def job_cancel(
             .values(status=JobStatus.CANCELLED, error_message=message, finished_at=utc_now_naive())
         )
         if result.rowcount == 1:
-            tr_result = await db.execute(
-                select(TaskResult).where(
-                    TaskResult.job_id == job_id,
-                    TaskResult.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]),
-                )
+            # Conditional too: a worker that is still alive may commit a tool's result meanwhile.
+            await db.execute(
+                update(TaskResult)
+                .where(TaskResult.job_id == job_id, TaskResult.status.in_([TaskStatus.PENDING, TaskStatus.RUNNING]))
+                .values(status=TaskStatus.CANCELLED, error_message=message, finished_at=utc_now_naive())
             )
-            for tr in tr_result.scalars().all():
-                tr.status = TaskStatus.CANCELLED
-                tr.error_message = message
-                tr.finished_at = utc_now_naive()
         await db.commit()
 
     await activity.record("job.cancel", request=request, user=user, target_type="job", target_id=str(job_id))
