@@ -272,3 +272,65 @@ def test_prune_keeps_the_upload_when_the_commit_fails(monkeypatch, fk_db):
     assert storage.files == []
     assert fk_db.query(AnalysisJob).count() == 1
     assert fk_db.query(LogFile).count() == 1
+
+
+def _add_job(db, file_id: int, created_at):
+    from app.models import AnalysisJob, JobStatus, WorkflowDef
+
+    workflow_id = db.query(WorkflowDef.id).scalar()
+    job = AnalysisJob(file_id=file_id, workflow_id=workflow_id, status=JobStatus.COMPLETED, created_at=created_at, finished_at=created_at)
+    db.add(job)
+    db.commit()
+    return job.id
+
+
+def test_prune_keeps_an_old_upload_that_a_recent_job_still_references(monkeypatch, fk_db):
+    """Age runs from the newest job on the file, not from the first upload.
+
+    Submitting identical content again reuses the stored LogFile (matched by sha256) and
+    `POST /jobs/resubmit` attaches a new job to it, and neither touches `uploaded_at`. The
+    sweep keyed on that column alone, so a job created yesterday on a file first uploaded
+    before the cutoff was deleted with it the next night: its results, its download, its
+    resubmit, gone.
+    """
+    from app.config import settings
+    from app.models import AnalysisJob, LogFile
+    from app.workers import tasks
+
+    old_job_id, _ = _old_upload_with_entity(fk_db)
+    file_id = fk_db.query(LogFile.id).scalar()
+    recent_job_id = _add_job(fk_db, file_id, utc_now_naive() - timedelta(days=1))
+    storage = _RecordingStorage()
+
+    monkeypatch.setattr(settings, "upload_retention_days", 30)
+    monkeypatch.setattr(tasks, "get_sync_session", lambda: fk_db)
+    monkeypatch.setattr("app.storage.get_storage", lambda: storage)
+
+    detail = tasks._prune_old_uploads_periodic_body()
+
+    assert detail == "nothing to remove"
+    assert fk_db.query(LogFile).count() == 1
+    assert {j for (j,) in fk_db.query(AnalysisJob.id)} == {old_job_id, recent_job_id}
+    assert storage.outputs == []
+    assert storage.files == []
+
+
+def test_prune_still_removes_an_upload_whose_every_job_is_old(monkeypatch, fk_db):
+    """The guard protects recent references only; a second expired job changes nothing."""
+    from app.config import settings
+    from app.models import AnalysisJob, LogFile
+    from app.workers import tasks
+
+    _, stored_filename = _old_upload_with_entity(fk_db)
+    file_id = fk_db.query(LogFile.id).scalar()
+    _add_job(fk_db, file_id, utc_now_naive() - timedelta(days=31))
+    storage = _RecordingStorage()
+
+    monkeypatch.setattr(settings, "upload_retention_days", 30)
+    monkeypatch.setattr(tasks, "get_sync_session", lambda: fk_db)
+    monkeypatch.setattr("app.storage.get_storage", lambda: storage)
+
+    assert tasks._prune_old_uploads_periodic_body() == "1 upload(s) removed"
+    assert fk_db.query(LogFile).count() == 0
+    assert fk_db.query(AnalysisJob).count() == 0
+    assert storage.files == [stored_filename]
