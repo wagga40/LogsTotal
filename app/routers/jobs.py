@@ -1446,13 +1446,21 @@ async def job_resubmit(
             log_file.log_type = effective_type
     _require_workflow_supports(workflow, effective_type, "chosen")
 
+    if source is not None:
+        is_private = bool(source.is_private)
+    else:
+        # Only an admin gets here without a job of their own on the file. Taking the public
+        # default would publish the findings of a file that was only ever submitted
+        # privately; the re-run is public only if the file already has a public job.
+        is_private = await db.scalar(select(AnalysisJob.id).where(AnalysisJob.file_id == log_file.id, AnalysisJob.is_private == False).limit(1)) is None  # noqa: E712
+
     client_ip = get_client_ip(request)
     job = AJ(
         file_id=log_file.id,
         workflow_id=workflow_id,
         submitted_by_user_id=user.id if user else None,
         submitter_ip=client_ip,
-        is_private=bool(source and source.is_private),
+        is_private=is_private,
         submitted_filename=source.submitted_filename if source else None,
         effective_log_type=effective_type,
     )

@@ -382,6 +382,28 @@ async def test_admin_resubmit_does_not_inherit_another_users_privacy(test_client
     assert new_job.is_private is False
 
 
+async def test_admin_resubmit_of_a_privately_held_file_stays_private(test_client, async_db, isolation_data, admin_user):
+    """An admin has no job of their own on a member's private upload, so there was no
+    source to inherit from and the re-run took the public default: the findings of a file
+    only ever submitted privately became readable by every anonymous visitor. With no
+    public job on the file, its content has never been public and the re-run must not be."""
+    job_priv = isolation_data["job_priv"]
+
+    login = await test_client.post("/auth/cookie/login", data={"username": admin_user.email, "password": "testpass123"}, follow_redirects=False)
+    assert login.status_code in (200, 204, 303), login.text
+    resp = await test_client.post(
+        "/jobs/resubmit",
+        data={"file_id": str(job_priv.file_id), "workflow_id": str(isolation_data["wf"].id)},
+        follow_redirects=False,
+    )
+    assert resp.status_code == 303, resp.text
+
+    new_job = (await async_db.execute(select(AnalysisJob).where(AnalysisJob.file_id == job_priv.file_id).order_by(AnalysisJob.id.desc()).limit(1))).scalar_one()
+    assert new_job.id != job_priv.id, "expected a freshly created job"
+    assert new_job.submitted_by_user_id == admin_user.id
+    assert new_job.is_private is True, "an admin re-run published a privately held file"
+
+
 # ── Watchlist acknowledgement is scoped to visible jobs ──────────────────────
 
 

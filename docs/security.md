@@ -73,7 +73,9 @@ Two things that look like one and are not:
 - **`demo_mode`** (a site setting, `/admin` → Settings) blocks *submissions*. It does not
   restrict reading: an anonymous visitor still sees the job list and every public report.
 - **`is_private` on a submission** hides one job from everyone but its submitter and
-  admins. It is per-job, chosen at upload, and unavailable to anonymous submitters.
+  admins. It is per-job, chosen at upload, and unavailable to anonymous submitters. A
+  resubmit keeps it: yours inherits your own last job on the file, and an admin's re-run of
+  someone else's file stays private unless the file already has a public job.
 
 If the instance must not be world-readable, put the boundary in front of the app:
 
