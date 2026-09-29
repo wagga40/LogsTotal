@@ -73,7 +73,9 @@ Two things that look like one and are not:
 - **`demo_mode`** (a site setting, `/admin` → Settings) blocks *submissions*. It does not
   restrict reading: an anonymous visitor still sees the job list and every public report.
 - **`is_private` on a submission** hides one job from everyone but its submitter and
-  admins. It is per-job, chosen at upload, and unavailable to anonymous submitters.
+  admins. It is per-job, chosen at upload, and unavailable to anonymous submitters. It
+  hides the *job*, not the observables extracted from it: those join the entity list,
+  which is [instance-wide](#the-entity-list-is-instance-wide).
 
 If the instance must not be world-readable, put the boundary in front of the app:
 
@@ -302,6 +304,13 @@ These are intentional posture choices — not bugs — but they change the trust
 
 **Job discussion threads are visible to every logged-in user.** Cases and entities are member-and-above surfaces, but a job's comment thread is readable and writable by *any* account that can already view the job — including `role=user`. That is deliberate (triage notes belong with the report), but it means analyst commentary on a public job is visible to every account on the instance. Anonymous visitors never see the panel, and a private job's thread is invisible to everyone but its submitter and admins. If your `role=user` tier is untrusted, keep sensitive triage on private jobs or in cases.
 
+<a id="the-entity-list-is-instance-wide"></a>**The entity list is instance-wide.** An entity is a shared observable, not a per-job record, so the Intel dashboard, the entity page, the IOC feed (`/intel/ioc-feed`) and TAXII (`/taxii2/`) all list every entity on the instance — including values that only a private job ever contained. Every member can read these surfaces, and so can an API token with `ioc_feed:read` or `taxii:read`. A token carries its creator's visibility, but that changes nothing here. The boundary:
+
+- **Unfiltered:** the entity's value and type, and the counters kept on the entity row — `job_count`, `first_seen` and `last_seen`. They are totals across every job, private ones included, and the two timestamps are ingest times: for a value that only a private job saw, they record roughly when that job was analysed.
+- **Filtered to the viewer's visible jobs:** everything read out of a job — the entity page's job list, events and findings, and the IOC feed's `threat_categories` and `max_severity` (with the STIX labels and MISP attributes built from them). A member never learns the private job's id, filename, events or threat context — only that the value exists here, how many jobs saw it, and when.
+
+The **Allowlist** toggle is not an access control: it removes an entity from TAXII and from the default dashboard and IOC-feed output, but `include_allowlisted=1` brings it back for any member. If an observable must stay with its submitter, analyse it on an instance other members cannot reach.
+
 **Typed entity relationships are global, not per-job.** Every other graph edge is filtered through the viewer's visible jobs: a "shared job" or "same Sigma finding" edge never reveals that two entities co-occurred inside a private job. Typed edges (`resolves_to`, `hashes_to`, …) are the exception — a typed relationship is an aggregate across jobs with no job of its own, and the entity **Relationships** tab lists them unfiltered by design, so filtering only the graph would hide the edge while leaving the same fact one click away.
 
 The boundary is precise, and typed edges are where it matters — they are the only kind drawn with an arrow and a label, and the only kind a path traverses:
@@ -394,7 +403,8 @@ carry entity values out of your instance to an endpoint its owner controls. If r
 evaluated against jobs their owner cannot see, one broad rule would exfiltrate every
 private job's observables, and no amount of URL filtering would help — the request is
 perfectly well-formed. Rule evaluation therefore skips any job the rule's owner could not
-open in the UI.
+open in the UI. That guards what a rule sends about a job; it does not narrow the entity
+list itself, which is [instance-wide](#the-entity-list-is-instance-wide).
 
 **Verifying a delivery.** Set a signing secret on the rule. Each POST carries
 `X-LogsTotal-Signature: sha256=<hex>`, an HMAC-SHA256 over `f"{timestamp}.".encode() + body`
