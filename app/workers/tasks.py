@@ -914,12 +914,10 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
             if cw.event.is_set():
                 # Cancelled: skip post-processing (backfill_analytics can compute it
                 # later); the completed tools' findings are already persisted.
+                # Conditional: a sweep that finalized the rows meanwhile keeps its status.
                 for post_id in (post_analytics_id, post_similarity_id):
                     if post_id is not None:
-                        tr_post = db.get(TaskResult, post_id)
-                        tr_post.status = TaskStatus.CANCELLED
-                        tr_post.error_message = CANCEL_MSG_USER
-                        tr_post.finished_at = utc_now_naive()
+                        _set_task_status(db, post_id, TaskStatus.CANCELLED, expected=(TaskStatus.PENDING,), error_message=CANCEL_MSG_USER, finished_at=utc_now_naive())
                 db.commit()
             elif post_analytics_id is not None and post_similarity_id is not None:
                 _run_post_job_processing(db, job, file_path, post_analytics_id, post_similarity_id)
@@ -1209,19 +1207,21 @@ def _run_post_job_processing(
     # `job.task_results`/`tr.findings` access avoids N+1 lazy loads.
     job = db.query(AnalysisJob).options(selectinload(AnalysisJob.task_results).selectinload(TaskResult.findings)).filter(AnalysisJob.id == job.id).first() or job
 
-    tr_an = db.get(TaskResult, analytics_tr_id)
-    if tr_an:
-        tr_an.status = TaskStatus.RUNNING
-        tr_an.started_at = utc_now_naive()
-        db.commit()
+    # The two pseudo-task rows are written like tool rows: conditionally, so one the recovery
+    # sweep or the cancel route finalized while this worker ran keeps its status.
+    def _finish(task_result_id: int, started_at, status: TaskStatus, **values) -> None:
+        finished_at = utc_now_naive()
+        duration_ms = int((finished_at - started_at).total_seconds() * 1000)
+        _set_task_status(db, task_result_id, status, expected=(TaskStatus.RUNNING,), finished_at=finished_at, duration_ms=duration_ms, **values)
+
+    an_started = utc_now_naive()
+    _set_task_status(db, analytics_tr_id, TaskStatus.RUNNING, expected=(TaskStatus.PENDING,), started_at=an_started)
+    db.commit()
 
     try:
         analytics_data = _compute_analytics_data(job)
         _cache_analytics(job, analytics_data)
-        if tr_an:
-            tr_an.finished_at = utc_now_naive()
-            tr_an.duration_ms = int((tr_an.finished_at - tr_an.started_at).total_seconds() * 1000) if tr_an.started_at else None
-            tr_an.status = TaskStatus.COMPLETED
+        _finish(analytics_tr_id, an_started, TaskStatus.COMPLETED)
         db.commit()
 
         from app.intel.entities import persist_entities_from_analytics
@@ -1261,25 +1261,18 @@ def _run_post_job_processing(
             db.rollback()
     except Exception as exc:
         _log.warning("post-processing analytics failed for job %s: %s", job.id, exc)
-        if tr_an:
-            # Same reasoning as _mark_bg_task: when the failure *was* a DB error the
-            # session is in a failed transaction and this write is rejected too, so the
-            # analytics TaskResult would stay RUNNING and the job page would poll for a
-            # result that is never coming. Roll back only a deactivated session.
-            if not db.is_active:
-                db.rollback()
-            tr_an.status = TaskStatus.FAILED
-            tr_an.error_message = str(exc)
-            tr_an.finished_at = utc_now_naive()
-            if tr_an.started_at:
-                tr_an.duration_ms = int((tr_an.finished_at - tr_an.started_at).total_seconds() * 1000)
-            db.commit()
-
-    tr_sim = db.get(TaskResult, similarity_tr_id)
-    if tr_sim:
-        tr_sim.status = TaskStatus.RUNNING
-        tr_sim.started_at = utc_now_naive()
+        # Same reasoning as _mark_bg_task: when the failure *was* a DB error the
+        # session is in a failed transaction and this write is rejected too, so the
+        # analytics TaskResult would stay RUNNING and the job page would poll for a
+        # result that is never coming. Roll back only a deactivated session.
+        if not db.is_active:
+            db.rollback()
+        _finish(analytics_tr_id, an_started, TaskStatus.FAILED, error_message=str(exc))
         db.commit()
+
+    sim_started = utc_now_naive()
+    _set_task_status(db, similarity_tr_id, TaskStatus.RUNNING, expected=(TaskStatus.PENDING,), started_at=sim_started)
+    db.commit()
 
     try:
         log_file = db.get(LogFile, job.file_id)
@@ -1293,20 +1286,12 @@ def _run_post_job_processing(
             sev = enum_val(f.severity)
             f.rule_signature = make_rule_signature(f.rule_id, f.rule_name, sev)
 
-        if tr_sim:
-            tr_sim.finished_at = utc_now_naive()
-            tr_sim.duration_ms = int((tr_sim.finished_at - tr_sim.started_at).total_seconds() * 1000) if tr_sim.started_at else None
-            tr_sim.status = TaskStatus.COMPLETED
+        _finish(similarity_tr_id, sim_started, TaskStatus.COMPLETED)
         db.commit()
     except Exception as exc:
         _log.warning("post-processing similarity/signatures failed for job %s: %s", job.id, exc)
-        if tr_sim:
-            tr_sim.status = TaskStatus.FAILED
-            tr_sim.error_message = str(exc)
-            tr_sim.finished_at = utc_now_naive()
-            if tr_sim.started_at:
-                tr_sim.duration_ms = int((tr_sim.finished_at - tr_sim.started_at).total_seconds() * 1000)
-            db.commit()
+        _finish(similarity_tr_id, sim_started, TaskStatus.FAILED, error_message=str(exc))
+        db.commit()
 
 
 # ── Where the backfills commit, and why it is not at the batch boundary ────────

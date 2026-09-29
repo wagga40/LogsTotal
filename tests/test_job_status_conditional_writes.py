@@ -200,6 +200,42 @@ def test_tool_result_does_not_overwrite_a_task_status_committed_while_it_ran(syn
     assert sync_db.execute(select(Finding).where(Finding.task_result_id == tool.id)).first() is None
 
 
+@pytest.mark.parametrize("cancelled", [False, True], ids=["post-processing", "cancelled-post-processing"])
+def test_post_processing_rows_keep_a_status_committed_while_the_tools_ran(sync_db, job_id, monkeypatch, cancelled):
+    """The analytics and similarity pseudo-task rows are PENDING while the tools run, so the
+    same sweep finalizes them. Neither post-processing nor its cancelled branch may overwrite
+    that afterwards."""
+    import app.workers.tasks as tasks_mod
+
+    watchers = []
+
+    class Watcher(tasks_mod._CancelWatcher):
+        def start(self):  # no polling thread: the test latches the cancel itself
+            watchers.append(self)
+
+    class CompetingAdapter:
+        SUPPORTED_TYPES = set()
+
+        def run(self, file_path, output_dir, **kw):
+            _sweep_elsewhere(sync_db, job_id, TaskStatus.FAILED, "swept")
+            if cancelled:
+                watchers[-1].event.set()
+            return ToolOutput(success=True, findings=[], duration_ms=1, stdout="ok")
+
+    monkeypatch.setattr(tasks_mod, "_CancelWatcher", Watcher)
+    monkeypatch.setattr(tasks_mod, "get_adapter", lambda name, cfg: CompetingAdapter())
+    tasks_mod.run_analysis.call_local(job_id)
+
+    sync_db.expire_all()
+    rows = (
+        sync_db.execute(select(TaskResult).where(TaskResult.job_id == job_id, TaskResult.tool_name.in_([tasks_mod.POST_TASK_ANALYTICS, tasks_mod.POST_TASK_SIMILARITY])))
+        .scalars()
+        .all()
+    )
+    assert len(rows) == 2
+    assert {(tr.tool_name, tr.status, tr.error_message) for tr in rows} == {(tr.tool_name, TaskStatus.FAILED, "swept") for tr in rows}
+
+
 async def test_recovery_does_not_overwrite_a_task_result_committed_after_its_read(async_db, fake_redis):
     """The worker was judged dead (no heartbeat) but commits its tool's result while the
     sweep runs. The sweep must leave the completed row alone."""
