@@ -144,6 +144,124 @@ async def test_unwatching_takes_its_notifications_with_it(async_db, data):
     assert (await async_db.execute(select(JobWatch))).scalars().all() == []
 
 
+# ── Lost insert races ────────────────────────────────────────────────────────
+
+
+class TestALostInsertRaceStaysInItsSavepoint:
+    """The unique constraint is what settles a race, so losing one is the normal case, and
+    it must cost only the row that lost — never the caller's transaction.
+
+    Both recorders run in the middle of someone else's write: the comment route has already
+    staged the comment, the tag route the tags, the worker its AI analysis row. So the new
+    row has to be *added inside* the savepoint. `Session.begin_nested()` flushes whatever is
+    pending before it emits `SAVEPOINT`, so a row added before it is inserted outside the
+    savepoint; its unique violation then fails a flush of the outer transaction, and the
+    session refuses everything after it with `PendingRollbackError` until the caller rolls
+    back — taking the comment with it. That is SQLAlchemy's rule, not SQLite's, so
+    PostgreSQL behaves the same way (there the failed statement also aborts the server-side
+    transaction).
+
+    The race is played for real rather than injected: the rival row is written on the same
+    connection in the window between the recorder's pre-check SELECT and its INSERT, which
+    is where a concurrent writer's committed row lands. An injected `IntegrityError` would
+    skip the flush machinery whose failure is the bug.
+    """
+
+    @staticmethod
+    def _stage_outer_work(db) -> None:
+        db.add(LogFile(id=2, original_filename="b.evtx", stored_filename="b.evtx", sha256="b" * 64, size_bytes=10))
+
+    async def test_a_lost_watch_race_keeps_the_callers_work(self, async_db, data, monkeypatch):
+        from sqlalchemy import insert
+
+        job_id, user_id = data["job"].id, data["alice"].id
+        real_scalar = async_db.scalar
+        fired = []
+
+        async def racing_scalar(stmt, *a, **kw):
+            # The per-user cap count runs after the existence check and before the insert.
+            if not fired:
+                fired.append(True)
+                await async_db.execute(insert(JobWatch).values(job_id=job_id, user_id=user_id))
+            return await real_scalar(stmt, *a, **kw)
+
+        monkeypatch.setattr(async_db, "scalar", racing_scalar)
+        self._stage_outer_work(async_db)
+
+        watch = await job_watch.ensure_watch_async(async_db, job_id, user_id)
+        await async_db.commit()
+
+        assert fired, "the race never happened — this test would pass vacuously"
+        assert watch is not None and watch.user_id == user_id, "the winner's subscription was not returned"
+        assert await async_db.get(LogFile, 2) is not None, "the caller's staged work was lost"
+        assert len((await async_db.execute(select(JobWatch))).scalars().all()) == 1
+
+    async def test_a_lost_event_race_keeps_the_callers_work(self, async_db, data, monkeypatch):
+        from sqlalchemy import insert
+
+        job_id = data["job"].id
+        await job_watch.ensure_watch_async(async_db, job_id, data["alice"].id)
+        await async_db.commit()
+        watch_id = (await async_db.execute(select(JobWatch.id))).scalar_one()
+
+        real_execute = async_db.execute
+        fired = []
+
+        async def racing_execute(stmt, *a, **kw):
+            result = await real_execute(stmt, *a, **kw)
+            # Right after the "already recorded?" SELECT, before the INSERT.
+            if not fired and "FROM job_watch_event" in str(stmt):
+                fired.append(True)
+                await real_execute(insert(JobWatchEvent).values(watch_id=watch_id, job_id=job_id, kind="comment", ref_id=7))
+            return result
+
+        monkeypatch.setattr(async_db, "execute", racing_execute)
+        self._stage_outer_work(async_db)
+
+        written = await job_watch.record_events_async(async_db, kind="comment", job_id=job_id, ref_id=7, actor_user_id=data["bob"].id)
+        await async_db.commit()
+
+        assert fired, "the race never happened — this test would pass vacuously"
+        assert written == []
+        assert await async_db.get(LogFile, 2) is not None, "the caller's staged work was lost"
+        assert len((await async_db.execute(select(JobWatchEvent))).scalars().all()) == 1
+
+    def test_the_worker_twin_keeps_the_callers_work(self, sync_db, monkeypatch):
+        from sqlalchemy import insert
+
+        sync_db.add(LogFile(id=1, original_filename="a.evtx", stored_filename="a.evtx", sha256="a" * 64, size_bytes=10))
+        sync_db.add(WorkflowDef(id=1, name="wf"))
+        user = User(email="w@jw.example.com", hashed_password="x", is_active=True, role="member")
+        job = AnalysisJob(file_id=1, workflow_id=1, status=JobStatus.COMPLETED, is_private=False)
+        sync_db.add_all([user, job])
+        sync_db.flush()
+        watch = JobWatch(job_id=job.id, user_id=user.id)
+        sync_db.add(watch)
+        sync_db.commit()
+        job_id, watch_id = job.id, watch.id
+
+        real_execute = sync_db.execute
+        fired = []
+
+        def racing_execute(stmt, *a, **kw):
+            result = real_execute(stmt, *a, **kw)
+            if not fired and "FROM job_watch_event" in str(stmt):
+                fired.append(True)
+                real_execute(insert(JobWatchEvent).values(watch_id=watch_id, job_id=job_id, kind="ai", ref_id=7))
+            return result
+
+        monkeypatch.setattr(sync_db, "execute", racing_execute)
+        self._stage_outer_work(sync_db)
+
+        written = job_watch.record_events_sync(sync_db, kind="ai", job_id=job_id, ref_id=7)
+        sync_db.commit()
+
+        assert fired, "the race never happened — this test would pass vacuously"
+        assert written == []
+        assert sync_db.get(LogFile, 2) is not None, "the caller's staged work was lost"
+        assert len(sync_db.execute(select(JobWatchEvent)).scalars().all()) == 1
+
+
 # ── The toggle ───────────────────────────────────────────────────────────────
 
 

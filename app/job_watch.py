@@ -88,9 +88,12 @@ async def ensure_watch_async(db, job_id: int, user_id) -> JobWatch | None:
         return None
 
     watch = JobWatch(job_id=job_id, user_id=user_id)
-    db.add(watch)
     try:
+        # Added *inside* the savepoint: `begin_nested()` flushes pending rows before it
+        # opens, so a row added first would collide outside it and poison the caller's
+        # transaction (the comment it is a side effect of) instead of this savepoint.
         async with db.begin_nested():
+            db.add(watch)
             await db.flush()
     except IntegrityError:
         # Lost an insert race; the subscription exists, which is what was wanted.
@@ -174,12 +177,13 @@ async def record_events_async(db, *, kind: str, job_id: int, ref_id: int, actor_
             if watch.id in seen:
                 continue
             event = JobWatchEvent(watch_id=watch.id, job_id=job_id, kind=kind, ref_id=ref_id, summary=(summary or "")[:_SUMMARY_MAX] or None)
-            db.add(event)
             try:
                 # Its own savepoint, the `intel/rules.py::_record_matches` shape: a
                 # collision on one watcher must not roll back the events already written
-                # for the ones before it, nor the caller's own staged work.
+                # for the ones before it, nor the caller's own staged work. The row is
+                # added inside it because `begin_nested()` flushes pending rows first.
                 async with db.begin_nested():
+                    db.add(event)
                     await db.flush()
             except IntegrityError:
                 continue
@@ -215,9 +219,9 @@ def record_events_sync(db, *, kind: str, job_id: int, ref_id: int, actor_user_id
             if watch.id in seen:
                 continue
             event = JobWatchEvent(watch_id=watch.id, job_id=job_id, kind=kind, ref_id=ref_id, summary=(summary or "")[:_SUMMARY_MAX] or None)
-            db.add(event)
             try:
                 with db.begin_nested():
+                    db.add(event)
                     db.flush()
             except IntegrityError:
                 continue
