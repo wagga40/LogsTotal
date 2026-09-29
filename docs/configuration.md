@@ -179,7 +179,7 @@ Used with `COMPOSE_PROFILES=proxy`. The four `PROXY_TLS` modes, what each needs,
 | `REQUEST_LOG_ENABLED` | Log one line per request with status and duration (default: `false`). `/static/` and `/health` are never logged; the request id is set either way |
 | `ACTIVITY_RETENTION_DAYS` | How long activity-log rows are kept, in days; `0` keeps forever (default: `90`). Capture itself is the `activity_log_enabled` site setting, not an environment variable |
 | `BACKGROUND_TASK_RETENTION_DAYS` | How long finished background-task rows are kept, in days; `0` keeps forever (default: `30`). Only finished rows are pruned |
-| `UPLOAD_RETENTION_DAYS` | Age at which an uploaded log file **and its jobs** are deleted, in days (default: `0` = never). Off by default because this removes submitted evidence, not derived data. `/admin/storage` shows the effective value; the sweep schedule is in [Storage and retention](runbooks/storage.md) |
+| `UPLOAD_RETENTION_DAYS` | Age at which an uploaded log file **and its jobs** are deleted, in days (default: `0` = never). The age counts from the newer of the upload and the most recent job on that file, so re-uploading identical content as a new job or resubmitting it keeps the file. Off by default because this removes submitted evidence, not derived data. `/admin/storage` shows the effective value; the sweep schedule is in [Storage and retention](runbooks/storage.md) |
 | `UPLOAD_DIR` | Local upload directory (default: `uploads`) |
 | `MAX_UPLOAD_SIZE_MB` | Maximum upload file size in MB (default: `500`) |
 | `UPLOAD_RATE_LIMIT_PER_MINUTE` | Anonymous uploads per client IP per minute (default: 30; `0` = unlimited) |

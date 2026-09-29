@@ -2872,6 +2872,9 @@ def vacuum_database(bg_task_id: int | None = None):
 def prune_old_uploads_periodic():
     """Delete uploaded logs older than UPLOAD_RETENTION_DAYS, and the jobs that own them.
 
+    A file is only as old as its newest job: one still referenced by a job created inside
+    the window is kept, together with all of its jobs.
+
     **Off by default (`0`)**, unlike every other retention window here, and that asymmetry
     is deliberate: the other sweeps remove derived data that can be regenerated or was
     never the point, while this removes the evidence a user submitted. Deleting that on a
@@ -2945,6 +2948,11 @@ def _prune_old_uploads_periodic_body():
                 # A job still running owns its file; leave the pair for the next sweep
                 # rather than pulling the input out from under the worker.
                 if any(enum_val(j.status) in ("pending", "running") for j in jobs):
+                    continue
+                # Age runs from the newest job on the file, not the first upload: an identical
+                # re-upload reuses this row and a resubmit attaches a job to it, and neither
+                # touches `uploaded_at`. Keying on that alone deleted yesterday's job with it.
+                if any(j.created_at >= cutoff for j in jobs):
                     continue
                 for job in jobs:
                     _clear_job_references(db, job.id)

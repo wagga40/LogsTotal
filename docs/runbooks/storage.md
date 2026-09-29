@@ -60,6 +60,8 @@ Workers run these tasks on a fixed schedule. They run only while at least one wo
 
 For each setting, `0` turns that task off and keeps the data forever. `UPLOAD_RETENTION_DAYS` is `0` by default: the other tasks remove derived data, while this one deletes the logs users submitted, so it must be switched on deliberately. The windows marked *fixed* cannot be changed.
 
+An upload's age counts from the newer of its upload and the most recent job that references it. Identical content is stored once, so a new job on it (a re-upload as a new job, or **Resubmit**) keeps the file and every job on it for another full window. Re-uploading content that returns an existing job does not start a new window.
+
 Deleting a comment blanks its text at once and keeps a record of who deleted it and when; that record is what is removed after 180 days.
 
 ### Rule lists from a source URL
