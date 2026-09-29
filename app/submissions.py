@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from fastapi import HTTPException
-from sqlalchemy import func, inspect, select
+from sqlalchemy import func, inspect, select, update
 from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
@@ -310,9 +310,17 @@ async def submit_file(*, request, file, workflow_id, log_type_override, force_re
                 await run_in_threadpool(enqueue, job.id)
             except Exception:
                 logger.exception("Could not enqueue analysis for job %s", job.id)
-                job.status = JobStatus.FAILED
-                job.error_message = "The analysis could not be queued: the task queue was unreachable. Submit the file again once it is back."
-                job.finished_at = utc_now_naive()
+                # Only while still PENDING: an enqueue can raise after the message landed,
+                # and a worker may already have claimed the job.
+                await db.execute(
+                    update(AnalysisJob)
+                    .where(AnalysisJob.id == job.id, AnalysisJob.status == JobStatus.PENDING)
+                    .values(
+                        status=JobStatus.FAILED,
+                        error_message="The analysis could not be queued: the task queue was unreachable. Submit the file again once it is back.",
+                        finished_at=utc_now_naive(),
+                    )
+                )
                 await db.commit()
                 raise HTTPException(503, "The analysis queue is unreachable, so this file cannot be analysed right now. Try again shortly.") from None
             await remember_queue_position(db, job.id)
