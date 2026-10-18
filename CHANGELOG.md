@@ -9,6 +9,40 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+### Added
+
+- Stored execution fingerprints for each analysis: input, effective workflow, engine
+  binary or container, rules and configuration. Historical runs retain unknown provenance.
+- Downloadable analysis reports and comparisons between visible runs of identical file
+  content, grouped by engine and rule identity, with counts and severity changes.
+- Per-engine completion diagnostics and partial results. Usable findings survive malformed
+  output or interrupted engines; incomplete coverage is explicitly labelled.
+
+### Fixed
+
+- Missing or unreadable engine output no longer becomes a successful zero-match result.
+- Regex timeouts cannot consume the budget granted to later events.
+- Refreshed Sigma files invalidate cached rule metadata, including `.yaml` files.
+- Zero-match reports describe observed results without declaring an input safe.
+
+### Updated
+
+- Zircolite 4.5.0 (digest pinned), RSigma 0.24.0, Chainsaw 2.17.1 and Hayabusa 4.2.0;
+  refreshed rule snapshots. ChopChopGo stays at 1.1.0.
+- Tool updates accept exact release tags and rule refs for reproducible maintenance.
+- Python dependencies, same-major browser libraries, and the pinned GitHub Actions
+  updates proposed in PR #10.
+
+### Upgrade notes
+
+- Stop all workers before migrating. New tasks can use `PARTIAL`, which older workers
+  cannot deserialize. The migration adds nullable diagnostics and provenance columns.
+- For an application-only downgrade, stop the application and run the new version's
+  `pdm run alembic downgrade a76e3b9c214d` before installing old code. Partial tasks become
+  failed tasks, with findings retained; provenance and diagnostics are removed. Prefer
+  the documented full backup/restore rollback when available.
+
+
 ## [1.1.0] — 2026-10-10
 
 A security release. It fixes the nineteen vulnerabilities reported privately against 1.0.0,

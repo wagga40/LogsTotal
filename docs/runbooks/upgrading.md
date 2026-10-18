@@ -240,3 +240,16 @@ New settings arrive commented out in `.env.example` with a safe default, so you 
 ---
 
 **Related:** [Database migrations](migrations.md) · [Back up and restore](backup-and-restore.md) · [Fleet reference](../reference/fleet.md) · [Troubleshooting](../troubleshooting.md)
+
+## Analysis confidence migration (next release)
+
+This version adds nullable execution snapshots on jobs and tasks, task diagnostics, and
+the `PARTIAL` task status. Stop all old workers before startup applies migration
+`b8d46f1e932a`; mixed worker versions are unsupported. Existing results keep their original
+findings and unknown provenance.
+
+Use the full pre-upgrade snapshot for rollback. If deliberately keeping new findings while
+rolling back only the application, first stop workers and web, then use the new code to run
+`pdm run alembic downgrade a76e3b9c214d`. This maps partial tasks to failed tasks without
+removing their findings, and drops the new metadata columns. PostgreSQL keeps the unused
+`PARTIAL` enum label. Install the old code only after this downgrade completes.
