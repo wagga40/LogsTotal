@@ -202,7 +202,12 @@ class RsigmaAdapter(ToolAdapter):
                 stdout_path=partial,
                 env={key: value for key, value in os.environ.items() if not key.startswith("RSIGMA_")},
             )
-            self._check_budget(deadline)
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                raise ValueError("cancelled")
+            if time.monotonic() >= deadline:
+                self._diagnostics.incomplete("The engine exceeded its analysis time limit.")
+            # A short, separate budget lets a timed-out engine keep usable output.
+            parse_deadline = max(deadline, time.monotonic() + 5)
             if rc != 0:
                 self._diagnostics.incomplete("The engine exited before completing its analysis.")
             if _ERRORS.search(stderr):
@@ -215,7 +220,11 @@ class RsigmaAdapter(ToolAdapter):
             def checked_records():
                 with clean.open("w", encoding="utf-8") as stream:
                     for record in file_records(partial, format="jsonl", diagnostics=self._diagnostics):
-                        self._check_budget(deadline)
+                        if self._cancel_event is not None and self._cancel_event.is_set():
+                            raise ValueError("cancelled")
+                        if time.monotonic() >= parse_deadline:
+                            self._diagnostics.incomplete("The detection output exceeded its processing time limit.")
+                            break
                         try:
                             self._match(record)
                             if not isinstance(record.get("rule_id", ""), str) or not isinstance(record["rule_title"], str):
@@ -241,7 +250,8 @@ class RsigmaAdapter(ToolAdapter):
                 raise ValueError("RSigma did not complete its analysis and returned no usable detections")
             if self._diagnostics.completion != "incomplete":
                 self._diagnostics.completion = "complete"
-            self._check_budget(deadline)
+            if self._cancel_event is not None and self._cancel_event.is_set():
+                raise ValueError("cancelled")
             clean.replace(output_file)
             return ToolOutput(success=True, findings=findings, stderr=stderr, duration_ms=int((time.monotonic() - start) * 1000), diagnostics=self._diagnostics)
         except (OSError, ValueError) as exc:

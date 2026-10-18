@@ -17,3 +17,10 @@ The existing storage, worker, cancellation, and real-engine tests cover those bo
 
 Extraction corrections belong in separately reviewed changes with an explanation of each
 expected-result difference. Do not regenerate snapshots merely to make a refactor pass.
+
+Next-release correction: `zircolite_legacy_junk` now rejects the `matches: null` and
+string-valued evidence blocks, instead of inventing empty findings or counting their
+reported matches. Its final valid block is still read by analytics: two raw events and
+seven engine-reported matches, with no reader exception. The resulting timeline,
+entities, relationships and markers are intentional additions; all other cases retain
+the original compatibility reference.

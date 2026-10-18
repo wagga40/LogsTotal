@@ -110,14 +110,20 @@ def capture_tool_snapshot(adapter) -> dict:
     verified_image = not binary and spec and spec.docker_image and config.get("docker_image") == spec.docker_image
     if verified_binary or verified_image:
         version = manifest.get("version")
-    rule_hashes = [_asset_digest(Path(p)) for p in adapter.rules_paths]
+    rule_paths = [Path(p) for p in adapter.rules_paths]
+    if adapter.name == "chainsaw":
+        rule_paths.append(Path(config.get("chainsaw_rules_path", adapter._DEFAULT_CHAINSAW_RULES)))
+    rule_hashes = [_asset_digest(p) for p in rule_paths]
     # Include adapter-owned mapping/configuration defaults, not just workflow overrides.
     ancillary = []
-    for key in ("mapping_path", "chainsaw_rules_path"):
+    for key in ("mapping_path",):
         if config.get(key):
             ancillary.append(Path(config[key]))
+    if adapter.name == "chopchopgo" and binary and not config.get("mapping_path"):
+        if default_mapping := adapter._default_mapping(binary):
+            ancillary.append(default_mapping)
     for name in ("mappings", "config"):
-        if (tool_dir / name).is_dir():
+        if adapter.name != "chopchopgo" and (tool_dir / name).is_dir():
             ancillary.append(tool_dir / name)
     options = config.get("options") or {}
     if isinstance(options.get("config"), str):
@@ -126,7 +132,7 @@ def capture_tool_snapshot(adapter) -> dict:
     for name, expected in manifest.get("rules", {}).get("trees", {}).items():
         if _asset_digest(tool_dir / name) != expected:
             verified_rules = False
-    bundled_paths = all(Path(p).resolve().is_relative_to(tool_dir.resolve()) for p in adapter.rules_paths)
+    bundled_paths = all(Path(p).resolve().is_relative_to(tool_dir.resolve()) for p in rule_paths)
     rules = manifest.get("rules", {}) if verified_rules and bundled_paths else {}
     return {
         "schema_version": 1,

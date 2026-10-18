@@ -403,7 +403,7 @@ def test_source_channel_does_not_overwrite_cleared_channel(real_adapter, tmp_pat
 
 
 @pytest.mark.parametrize("aborted", ["cancelled", "timeout"])
-def test_aborted_output_parsing_does_not_publish(tmp_path, monkeypatch, aborted):
+def test_cancellation_discards_output_but_timeout_retains_evidence(tmp_path, monkeypatch, aborted):
     import threading
 
     import app.tools.rsigma as module
@@ -424,8 +424,13 @@ def test_aborted_output_parsing_does_not_publish(tmp_path, monkeypatch, aborted)
     monkeypatch.setattr(a, "_exec", execute)
     out = tmp_path / "event_rsigma.json"
     result = a._execute_and_parse(["unused"], out)
-    assert not result.success
-    assert not out.exists()
+    if aborted == "cancelled":
+        assert not result.success
+        assert not out.exists()
+    else:
+        assert result.success
+        assert result.diagnostics.completion == "incomplete"
+        assert out.exists()
 
 
 def test_incomplete_execution_retains_valid_records_and_cleans_artifact(tmp_path, monkeypatch):
@@ -443,3 +448,20 @@ def test_incomplete_execution_retains_valid_records_and_cleans_artifact(tmp_path
     assert result.diagnostics.records_skipped == 1
     assert sum(f.count for f in result.findings) == 1
     assert len(list(a._records(output))) == 1
+
+
+def test_timeout_preserves_valid_rsigma_evidence(tmp_path, monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("app.tools.rsigma.time.monotonic", lambda: now[0])
+    a = adapter(timeout=1)
+
+    def execute(cmd, **kw):
+        kw["stdout_path"].write_text(json.dumps(detection()) + "\n")
+        now[0] = 10.0
+        return -1, "", "Command timed out"
+
+    monkeypatch.setattr(a, "_exec", execute)
+    result = a._execute_and_parse(["unused"], tmp_path / "out_rsigma.json")
+    assert result.success
+    assert result.diagnostics.completion == "incomplete"
+    assert result.findings[0].count == 1

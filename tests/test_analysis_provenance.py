@@ -67,3 +67,35 @@ def test_assets_changed_during_execution_make_result_incomplete(tmp_path):
     result = adapter._run_recorded(execute)
     assert result.diagnostics.completion == "incomplete"
     assert result.execution_snapshot["runtime_sha256"]
+
+
+def test_chainsaw_default_native_rules_are_fingerprinted(tmp_path, monkeypatch):
+    from app.analysis_confidence import capture_tool_snapshot
+    from app.tools.chainsaw import ChainsawAdapter
+
+    rules = tmp_path / "native"
+    rules.mkdir()
+    rule = rules / "rule.yml"
+    rule.write_text("before")
+    sigma = tmp_path / "sigma"
+    sigma.mkdir()
+    monkeypatch.setattr(ChainsawAdapter, "_DEFAULT_CHAINSAW_RULES", str(rules))
+    a = ChainsawAdapter({"rules_path": str(sigma)})
+    before = capture_tool_snapshot(a)
+    rule.write_text("after")
+    assert capture_tool_snapshot(a)["rules_sha256"] != before["rules_sha256"]
+
+
+def test_custom_chopchopgo_default_mapping_is_fingerprinted(tmp_path):
+    from app.analysis_confidence import capture_tool_snapshot
+    from app.tools.chopchopgo import ChopChopGoAdapter
+
+    binary = tmp_path / "chopchopgo"
+    binary.write_text("executable")
+    mapping = tmp_path / "mappings" / "syslog.yml"
+    mapping.parent.mkdir()
+    mapping.write_text("before")
+    a = ChopChopGoAdapter({"tool_path": str(binary), "rules_path": str(tmp_path / "rules")})
+    before = capture_tool_snapshot(a)
+    mapping.write_text("after")
+    assert capture_tool_snapshot(a)["mapping_sha256"] != before["mapping_sha256"]

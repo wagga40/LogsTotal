@@ -231,3 +231,24 @@ def test_missing_stdout_is_not_a_zero_match_result(chop_env, tmp_path, monkeypat
     monkeypatch.setattr(adapter, "_exec", lambda *args, **kw: (0, "", ""))
     result = adapter._execute_and_parse(["unused"], tmp_path / "out.json")
     assert not result.success
+
+
+def test_nonzero_exit_retains_valid_chopchopgo_findings(chop_env, tmp_path, monkeypatch):
+    import json
+
+    a = _adapter(chop_env[0], chop_env[1])
+    monkeypatch.setattr(a, "_exec", lambda *args, **kw: (1, json.dumps([_event()]), "interrupted"))
+    result = a._execute_and_parse(["unused"], tmp_path / "result.json")
+    assert result.success
+    assert result.diagnostics.completion == "incomplete"
+    assert result.findings[0].count == 1
+
+
+def test_live_system_privilege_warning_does_not_mark_uploaded_file_incomplete(chop_env, tmp_path, monkeypatch):
+    import json
+
+    a = _adapter(chop_env[0], chop_env[1])
+    monkeypatch.setattr(a, "_exec", lambda *args, **kw: (0, json.dumps([_event()]), "Warning: not running as superuser - some accesses might fail!"))
+    result = a._execute_and_parse(["unused"], tmp_path / "result.json")
+    assert result.success
+    assert result.diagnostics.completion == "unknown"

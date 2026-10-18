@@ -396,6 +396,11 @@ class ToolAdapter:
                     with contextlib.suppress(Exception):
                         container.remove(force=True)
                     duration_ms = int((time.monotonic() - t0) * 1000)
+                    if not cancelled:
+                        self._diagnostics.incomplete("The engine exceeded its analysis time limit.")
+                        retained = self._parse_output(output_file, stdout, stderr, duration_ms)
+                        if retained.success and retained.findings:
+                            return retained
                     return ToolOutput(
                         success=False,
                         error=CANCELLED_ERROR if cancelled else f"Container timed out after {run_timeout}s",

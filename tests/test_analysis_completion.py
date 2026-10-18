@@ -71,3 +71,25 @@ def test_failed_process_preserves_usable_evidence(tmp_path, monkeypatch):
     assert result.success
     assert result.diagnostics.completion == "incomplete"
     assert result.findings[0].rule_id == "r1"
+
+
+def test_invalid_rule_block_does_not_hide_later_analytics_events(tmp_path):
+    import json
+
+    adapter = ZircoliteAdapter({"rules_path": str(tmp_path)})
+    output = tmp_path / "results_zircolite.json"
+    output.write_text(
+        json.dumps(
+            [
+                {"title": "Before", "matches": [{"Computer": "first"}]},
+                {"title": "Corrupt", "matches": None},
+                {"title": "After", "matches": [{"Computer": "last"}]},
+            ]
+        )
+    )
+    result = adapter._parse_output(output, "", "", 0)
+    assert result.success
+    assert result.diagnostics.completion == "incomplete"
+    assert result.diagnostics.records_skipped == 1
+    assert [f.rule_name for f in result.findings] == ["Before", "After"]
+    assert [m.rule_name for m in adapter.iter_raw_matches(output)] == ["Before", "After"]

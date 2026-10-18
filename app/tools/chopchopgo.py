@@ -101,7 +101,9 @@ class ChopChopGoAdapter(ToolAdapter):
         rc, stdout, stderr = self._exec(cmd, timeout=self._timeout_seconds, cancel_event=self._cancel_event)
         duration_ms = int((time.monotonic() - t0) * 1000)
 
-        if rc != 0:
+        events = self._extract_json_events(stdout)
+        cancelled = self._cancel_event is not None and self._cancel_event.is_set()
+        if rc != 0 and (cancelled or not events):
             return ToolOutput(
                 success=False,
                 error=stderr or stdout or (f"Command timed out after {self._timeout_seconds}s" if rc == -1 else f"Exit code {rc}"),
@@ -110,7 +112,8 @@ class ChopChopGoAdapter(ToolAdapter):
                 duration_ms=duration_ms,
             )
 
-        events = self._extract_json_events(stdout)
+        if rc != 0:
+            self._diagnostics.incomplete("The engine exited before completing its analysis.")
         if events is None:
             return ToolOutput(success=False, error="Missing or invalid ChopChopGo JSON output", stdout=stdout, stderr=stderr, duration_ms=duration_ms)
 

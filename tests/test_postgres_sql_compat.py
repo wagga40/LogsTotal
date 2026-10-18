@@ -444,3 +444,48 @@ async def test_case_ai_followup_repairs_early_postgres_schema(pg_engine, missing
         transaction = await conn.begin()
         await conn.run_sync(repair)
         await transaction.rollback()
+
+
+async def test_analysis_confidence_upgrade_and_rollback_on_postgresql(pg_engine):
+    """Start with an old enum, then write PARTIAL and preserve evidence on rollback."""
+    import importlib.util
+    import uuid
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    path = Path(__file__).resolve().parents[1] / "alembic/versions/b8d46f1e932a_analysis_confidence.py"
+    spec = importlib.util.spec_from_file_location("confidence_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+
+    def round_trip(conn):
+        schema = "confidence_" + uuid.uuid4().hex
+        conn.execute(text(f"CREATE SCHEMA {schema}"))
+        conn.execute(text(f"SET search_path TO {schema}"))
+        try:
+            conn.execute(text("CREATE TYPE taskstatus AS ENUM ('COMPLETED', 'FAILED')"))
+            conn.execute(text("CREATE TABLE taskresult (id INTEGER PRIMARY KEY, status taskstatus)"))
+            conn.execute(text("CREATE TABLE analysisjob (id INTEGER PRIMARY KEY)"))
+            conn.execute(text("CREATE TABLE finding (id INTEGER PRIMARY KEY, task_result_id INTEGER REFERENCES taskresult(id), rule_name TEXT)"))
+            conn.commit()
+            context = MigrationContext.configure(conn)
+            with Operations.context(context), context.begin_transaction():
+                migration.upgrade()
+            conn.execute(text("INSERT INTO taskresult VALUES (1, 'PARTIAL', NULL, NULL)"))
+            conn.execute(text("INSERT INTO finding VALUES (1, 1, 'Evidence')"))
+            conn.commit()
+            with Operations.context(context), context.begin_transaction():
+                migration.downgrade()
+            assert conn.scalar(text("SELECT status::text FROM taskresult")) == "FAILED"
+            assert conn.scalar(text("SELECT rule_name FROM finding")) == "Evidence"
+        finally:
+            conn.rollback()
+            conn.execute(text("SET search_path TO public"))
+            conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+            conn.commit()
+
+    async with pg_engine.connect() as conn:
+        conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        await conn.run_sync(round_trip)

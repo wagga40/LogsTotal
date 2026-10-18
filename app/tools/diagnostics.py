@@ -31,6 +31,10 @@ class CompletionDiagnostics:
     def read_summary(self, tool: str, output: str) -> None:
         """Extract only known engine counters; absent evidence stays unknown."""
         output = re.sub(r"\x1b\[[0-9;]*[A-Za-z]", "", output)
+        if tool == "chopchopgo":
+            # This unconditional CLI startup warning concerns live-system access.
+            # Uploaded files are checked by the process; a read failure exits nonzero.
+            output = output.replace("Warning: not running as superuser - some accesses might fail!", "")
         patterns = {
             "zircolite": (r"Total events processed: ([\d,]+)", r"(\d[\d,]*) rules loaded"),
             "hayabusa": (r"Events with hits\s*/\s*Total events:\s*[\d,]+\s*/\s*([\d,]+)", r"Total detection rules:\s*([\d,]+)"),

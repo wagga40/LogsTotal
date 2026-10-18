@@ -137,6 +137,10 @@ def _decode(record: dict, mapping: OutputMapping, purpose: Literal["finding", "r
         mapping.validate(record)
     if not isinstance(record, dict):
         raise ValueError("Invalid detection record: expected an object")
+    if mapping.raw_events is not None:
+        evidence = mapping.raw_events.read(record)
+        if not isinstance(evidence, list) or any(not isinstance(event, dict) for event in evidence):
+            raise ValueError("Invalid detection evidence: expected event objects")
     metadata = {}
     for name in ("rule_name", "rule_id", "severity", "tags", "rule_content"):
         selector = mapping.raw_overrides.get(name, getattr(mapping.finding, name)) if purpose == "raw" else getattr(mapping.finding, name)
@@ -163,7 +167,7 @@ def decode_records(
         try:
             detection = _decode(record, mapping, purpose)
         except Exception:
-            if mapping.strict or purpose == "raw":
+            if mapping.strict:
                 raise
             skipped += 1
             if diagnostics is not None:

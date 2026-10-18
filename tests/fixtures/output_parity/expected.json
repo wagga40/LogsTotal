@@ -6171,31 +6171,66 @@
   "zircolite_legacy_junk": {
     "analytics": {
       "cmdline_files": [],
-      "computers": [],
-      "domains": [],
+      "computers": [
+        "HOST"
+      ],
+      "domains": [
+        "example.test"
+      ],
       "event_markers": {
-        "computers": [],
-        "k": [],
-        "keys": [],
-        "n": [],
+        "computers": [
+          "HOST"
+        ],
+        "k": [
+          0,
+          0
+        ],
+        "keys": [
+          [
+            "r1",
+            "Same title",
+            "high",
+            "execution",
+            0,
+            0,
+            101
+          ]
+        ],
+        "n": [
+          1,
+          1
+        ],
         "res": 1,
         "source_truncated": false,
-        "tools": [],
-        "total": 0,
-        "ts": [],
+        "tools": [
+          "zircolite"
+        ],
+        "total": 2,
+        "ts": [
+          1767268800,
+          1767272400
+        ],
         "undated": 0,
         "v": 1
       },
-      "executables": [],
-      "hashes": [],
-      "ip_addresses": [],
+      "executables": [
+        "cmd.exe",
+        "evil.exe"
+      ],
+      "hashes": [
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+      ],
+      "ip_addresses": [
+        "192.0.2.1",
+        "198.51.100.4"
+      ],
       "mitre_tactics": {
         "collection": 0,
         "command_and_control": 0,
         "credential_access": 0,
         "defense_evasion": 0,
         "discovery": 0,
-        "execution": 14,
+        "execution": 7,
         "exfiltration": 0,
         "impact": 0,
         "initial_access": 0,
@@ -6205,8 +6240,190 @@
         "reconnaissance": 0,
         "resource_development": 0
       },
-      "relationship_evidence": [],
-      "relationships": [],
+      "relationship_evidence": [
+        [
+          [
+            "cmd.exe",
+            "executable",
+            "evil.exe",
+            "executable",
+            "parent_of"
+          ],
+          [
+            {
+              "Computer": "HOST",
+              "DestinationIp": "198.51.100.4",
+              "EventID": 1,
+              "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Image": "C:\\Windows\\evil.exe",
+              "ParentImage": "C:\\Windows\\cmd.exe",
+              "QueryName": "example.test",
+              "SourceIp": "192.0.2.1",
+              "Timestamp": "2026-01-01T12:00:00Z",
+              "User": "LAB\\alice"
+            },
+            {
+              "Computer": "HOST",
+              "DestinationIp": "198.51.100.4",
+              "EventID": 1,
+              "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Image": "C:\\Windows\\evil.exe",
+              "ParentImage": "C:\\Windows\\cmd.exe",
+              "QueryName": "example.test",
+              "SourceIp": "192.0.2.1",
+              "Timestamp": "2026-01-01T13:00:00Z",
+              "User": "LAB\\alice"
+            }
+          ]
+        ],
+        [
+          [
+            "evil.exe",
+            "executable",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "hash",
+            "hashes_to"
+          ],
+          [
+            {
+              "Computer": "HOST",
+              "DestinationIp": "198.51.100.4",
+              "EventID": 1,
+              "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Image": "C:\\Windows\\evil.exe",
+              "ParentImage": "C:\\Windows\\cmd.exe",
+              "QueryName": "example.test",
+              "SourceIp": "192.0.2.1",
+              "Timestamp": "2026-01-01T12:00:00Z",
+              "User": "LAB\\alice"
+            },
+            {
+              "Computer": "HOST",
+              "DestinationIp": "198.51.100.4",
+              "EventID": 1,
+              "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Image": "C:\\Windows\\evil.exe",
+              "ParentImage": "C:\\Windows\\cmd.exe",
+              "QueryName": "example.test",
+              "SourceIp": "192.0.2.1",
+              "Timestamp": "2026-01-01T13:00:00Z",
+              "User": "LAB\\alice"
+            }
+          ]
+        ],
+        [
+          [
+            "evil.exe",
+            "executable",
+            "HOST",
+            "computer",
+            "runs_on"
+          ],
+          [
+            {
+              "Computer": "HOST",
+              "DestinationIp": "198.51.100.4",
+              "EventID": 1,
+              "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Image": "C:\\Windows\\evil.exe",
+              "ParentImage": "C:\\Windows\\cmd.exe",
+              "QueryName": "example.test",
+              "SourceIp": "192.0.2.1",
+              "Timestamp": "2026-01-01T12:00:00Z",
+              "User": "LAB\\alice"
+            },
+            {
+              "Computer": "HOST",
+              "DestinationIp": "198.51.100.4",
+              "EventID": 1,
+              "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Image": "C:\\Windows\\evil.exe",
+              "ParentImage": "C:\\Windows\\cmd.exe",
+              "QueryName": "example.test",
+              "SourceIp": "192.0.2.1",
+              "Timestamp": "2026-01-01T13:00:00Z",
+              "User": "LAB\\alice"
+            }
+          ]
+        ],
+        [
+          [
+            "evil.exe",
+            "executable",
+            "LAB\\alice",
+            "user",
+            "runs_as"
+          ],
+          [
+            {
+              "Computer": "HOST",
+              "DestinationIp": "198.51.100.4",
+              "EventID": 1,
+              "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Image": "C:\\Windows\\evil.exe",
+              "ParentImage": "C:\\Windows\\cmd.exe",
+              "QueryName": "example.test",
+              "SourceIp": "192.0.2.1",
+              "Timestamp": "2026-01-01T12:00:00Z",
+              "User": "LAB\\alice"
+            },
+            {
+              "Computer": "HOST",
+              "DestinationIp": "198.51.100.4",
+              "EventID": 1,
+              "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+              "Image": "C:\\Windows\\evil.exe",
+              "ParentImage": "C:\\Windows\\cmd.exe",
+              "QueryName": "example.test",
+              "SourceIp": "192.0.2.1",
+              "Timestamp": "2026-01-01T13:00:00Z",
+              "User": "LAB\\alice"
+            }
+          ]
+        ]
+      ],
+      "relationships": [
+        [
+          [
+            "cmd.exe",
+            "executable",
+            "evil.exe",
+            "executable",
+            "parent_of"
+          ],
+          2
+        ],
+        [
+          [
+            "evil.exe",
+            "executable",
+            "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+            "hash",
+            "hashes_to"
+          ],
+          2
+        ],
+        [
+          [
+            "evil.exe",
+            "executable",
+            "HOST",
+            "computer",
+            "runs_on"
+          ],
+          2
+        ],
+        [
+          [
+            "evil.exe",
+            "executable",
+            "LAB\\alice",
+            "user",
+            "runs_as"
+          ],
+          2
+        ]
+      ],
       "services": [],
       "tasks": [],
       "threat_detection": {
@@ -6214,17 +6431,57 @@
         "total_categories": 0,
         "total_indicators": 0
       },
-      "timeline": [],
-      "timeline_tactics": [],
-      "users": []
+      "timeline": [
+        {
+          "bucket": "12:00",
+          "count": 1,
+          "pct": 100,
+          "segments": [
+            {
+              "color": "#f97316",
+              "count": 1,
+              "pct": 100,
+              "tactic": "execution"
+            }
+          ]
+        },
+        {
+          "bucket": "13:00",
+          "count": 1,
+          "pct": 100,
+          "segments": [
+            {
+              "color": "#f97316",
+              "count": 1,
+              "pct": 100,
+              "tactic": "execution"
+            }
+          ]
+        }
+      ],
+      "timeline_tactics": [
+        {
+          "color": "#f97316",
+          "key": "execution",
+          "name": "Execution"
+        }
+      ],
+      "users": [
+        "LAB\\alice"
+      ]
     },
     "authors": [
       "",
-      "",
-      "",
       ""
     ],
-    "buckets": {},
+    "buckets": {
+      "2026-01-01T12": {
+        "execution": 1
+      },
+      "2026-01-01T13": {
+        "execution": 1
+      }
+    },
     "findings": [
       {
         "count": 0,
@@ -6234,29 +6491,6 @@
         "rule_name": "Unknown Rule",
         "severity": "informational",
         "tags": []
-      },
-      {
-        "count": 0,
-        "details": [],
-        "rule_content": "select * from logs;",
-        "rule_id": "r1",
-        "rule_name": "Same title",
-        "severity": "high",
-        "tags": [
-          "attack.execution"
-        ]
-      },
-      {
-        "count": 7,
-        "details": [],
-        "rule_content": "select * from logs;",
-        "rule_id": "r1",
-        "rule_name": "Same title",
-        "severity": "high",
-        "tags": [
-          "attack.execution",
-          "attack.t1059"
-        ]
       },
       {
         "count": 7,
@@ -6310,7 +6544,7 @@
             "Timestamp": "2026-01-01T12:00:00Z",
             "User": "LAB\\alice"
           },
-          "finding_id": 103,
+          "finding_id": 101,
           "job_id": 1,
           "rule_name": "Same title",
           "severity": "high",
@@ -6321,32 +6555,136 @@
       1
     ],
     "markers": {
-      "computers": [],
-      "k": [],
-      "keys": [],
-      "n": [],
+      "computers": [
+        "HOST"
+      ],
+      "k": [
+        0,
+        0
+      ],
+      "keys": [
+        [
+          "r1",
+          "Same title",
+          "high",
+          "execution",
+          0,
+          0,
+          101
+        ]
+      ],
+      "n": [
+        1,
+        1
+      ],
       "res": 1,
       "source_truncated": false,
-      "tools": [],
-      "total": 0,
-      "ts": [],
+      "tools": [
+        "zircolite"
+      ],
+      "total": 2,
+      "ts": [
+        1767268800,
+        1767272400
+      ],
       "undated": 0,
       "v": 1
     },
-    "matches": [],
+    "matches": [
+      {
+        "event": {
+          "CommandLine": "evil.exe -enc c2VjcmV0",
+          "Computer": "HOST",
+          "DestinationIp": "198.51.100.4",
+          "EventID": 1,
+          "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "Image": "C:\\Windows\\evil.exe",
+          "ParentImage": "C:\\Windows\\cmd.exe",
+          "ParentProcessGuid": "parent",
+          "ParentProcessId": 50,
+          "ProcessGuid": "child",
+          "ProcessId": 100,
+          "QueryName": "example.test",
+          "SourceIp": "192.0.2.1",
+          "Timestamp": "2026-01-01T12:00:00Z",
+          "User": "LAB\\alice"
+        },
+        "rule_id": "r1",
+        "rule_name": "Same title",
+        "severity": null,
+        "tags": [],
+        "timestamp": "2026-01-01T12:00:00Z"
+      },
+      {
+        "event": {
+          "CommandLine": "evil.exe -enc c2VjcmV0",
+          "Computer": "HOST",
+          "DestinationIp": "198.51.100.4",
+          "EventID": 1,
+          "Hashes": "SHA256=aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "Image": "C:\\Windows\\evil.exe",
+          "ParentImage": "C:\\Windows\\cmd.exe",
+          "ParentProcessGuid": "parent",
+          "ParentProcessId": 50,
+          "ProcessGuid": "child",
+          "ProcessId": 100,
+          "QueryName": "example.test",
+          "SourceIp": "192.0.2.1",
+          "Timestamp": "2026-01-01T13:00:00Z",
+          "User": "LAB\\alice"
+        },
+        "rule_id": "r1",
+        "rule_name": "Same title",
+        "severity": null,
+        "tags": [],
+        "timestamp": "2026-01-01T13:00:00Z"
+      }
+    ],
     "processes": {
-      "roots": [],
+      "roots": [
+        {
+          "children": [
+            {
+              "children": [],
+              "cmdline": "evil.exe -enc c2VjcmV0",
+              "computer": "HOST",
+              "guid": "child",
+              "hashes": [
+                "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+              ],
+              "hit": true,
+              "image": "evil.exe",
+              "image_alts": [],
+              "image_full": "C:\\Windows\\evil.exe",
+              "pid": "100",
+              "time": "2026-01-01T12:00:00Z",
+              "user": "LAB\\alice"
+            }
+          ],
+          "cmdline": null,
+          "computer": "HOST",
+          "guid": "parent",
+          "hashes": [],
+          "hit": false,
+          "image": "cmd.exe",
+          "image_alts": [],
+          "image_full": "C:\\Windows\\cmd.exe",
+          "pid": "50",
+          "time": null,
+          "user": null
+        }
+      ],
       "stats": {
         "depth_capped": false,
-        "hits": 0,
-        "inferred": 0,
+        "hits": 1,
+        "inferred": 1,
         "max_nodes": 2000,
-        "processes": 0,
-        "roots": 0,
+        "processes": 2,
+        "roots": 1,
         "truncated": false
       }
     },
-    "reader_error": "TypeError"
+    "reader_error": null
   },
   "zircolite_linux": {
     "analytics": {

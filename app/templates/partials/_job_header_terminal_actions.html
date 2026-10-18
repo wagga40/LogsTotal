@@ -12,8 +12,8 @@
 </form>
 {% endif %}
 {% if is_terminal %}
-<a href="/jobs/{{ job.id }}/compare" class="lt-btn lt-btn--secondary">Compare runs</a>
-<a href="/jobs/{{ job.id }}/analysis.json" class="lt-btn lt-btn--secondary">Analysis report</a>
+<a href="/jobs/{{ job.id }}/compare" class="lt-btn lt-btn--ghost">Compare runs</a>
+<a href="/jobs/{{ job.id }}/analysis.json" class="lt-btn lt-btn--ghost">Analysis report</a>
 <a href="/jobs/{{ job.id }}/mitre-layer" target="_blank"
    class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition"
    title="Download MITRE ATT&CK Navigator layer JSON for this job">
