@@ -263,7 +263,9 @@ class _RegexBudget:
             self.timeouts += 1
             return None
         finally:
-            self.remaining -= time.monotonic() - started
+            # A timed match can return late (including time descheduled). Charging
+            # that overrun to future events defeats their independent allowance.
+            self.remaining = max(0.0, self.remaining - (time.monotonic() - started))
 
 
 def _check_regex(check: dict, scan_dicts: list[dict], budget: _RegexBudget | None = None) -> _MatchResult:

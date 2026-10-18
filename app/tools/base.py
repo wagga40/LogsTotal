@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import contextlib
+import hashlib
 import logging
 import os
 import platform
@@ -558,7 +559,7 @@ class ToolAdapter:
     # ── shared helpers ───────────────────────────────────────────────────
 
     # Shared across all adapters: {newline-joined resolved rules paths: {rule_id: filepath}}
-    _rule_index_cache: dict[str, dict[str, str]] = {}
+    _rule_index_cache: dict[str, tuple[str, dict[str, str]]] = {}
 
     def _lookup_rule_yaml(self, rule_id: str) -> str:
         """Find a YAML rule file matching rule_id in any of self.rules_paths.
@@ -583,27 +584,41 @@ class ToolAdapter:
         # differing after it would otherwise collide in the cache and one would silently
         # serve the other's index.
         resolved = "\n".join(str(Path(p).resolve()) for p in self.rules_paths)
-        if resolved not in ToolAdapter._rule_index_cache:
-            ToolAdapter._rule_index_cache[resolved] = self._build_rule_index()
-        return ToolAdapter._rule_index_cache[resolved]
+        digest = hashlib.sha256()
+        for path in self._rule_files():
+            digest.update(str(path).encode())
+            digest.update(b"\0")
+            try:
+                digest.update(path.read_bytes())
+            except OSError:
+                continue
+            digest.update(b"\0")
+        fingerprint = digest.hexdigest()
+        cached = ToolAdapter._rule_index_cache.get(resolved)
+        if cached is None or cached[0] != fingerprint:
+            cached = (fingerprint, self._build_rule_index())
+            ToolAdapter._rule_index_cache[resolved] = cached
+        return cached[1]
+
+    def _rule_files(self) -> Iterator[Path]:
+        for root in self.rules_paths:
+            path = Path(root)
+            candidates = sorted(path.rglob("*")) if path.is_dir() else [path]
+            yield from (p for p in candidates if p.is_file() and p.suffix.lower() in {".yml", ".yaml"})
 
     def _build_rule_index(self) -> dict[str, str]:
         """Scan every rules path for YAML files and build a {rule_id: filepath} map."""
         from app.yaml_utils import safe_load as yaml_safe_load
 
         index: dict[str, str] = {}
-        for rules_path in self.rules_paths:
-            rules_dir = Path(rules_path)
-            if not rules_dir.is_dir():
+        for yml_file in self._rule_files():
+            try:
+                with open(yml_file, encoding="utf-8") as f:
+                    data = yaml_safe_load(f)
+                if isinstance(data, dict) and data.get("id"):
+                    index[data["id"]] = str(yml_file)
+            except Exception:
                 continue
-            for yml_file in rules_dir.rglob("*.yml"):
-                try:
-                    with open(yml_file, encoding="utf-8") as f:
-                        data = yaml_safe_load(f)
-                    if isinstance(data, dict) and data.get("id"):
-                        index[data["id"]] = str(yml_file)
-                except Exception:
-                    continue
         return index
 
     @staticmethod
