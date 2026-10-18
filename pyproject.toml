@@ -25,7 +25,8 @@ classifiers = [
 dependencies = [
     "fastapi>=0.115.5",
     "uvicorn[standard]>=0.32.1",
-    "sqlalchemy[asyncio]>=2.0.36",
+    # fastapi-users-db-sqlalchemy 7.x requires the SQLAlchemy 2.0 API.
+    "sqlalchemy[asyncio]>=2.0.36,<2.1",
     "aiosqlite>=0.20.0",
     "asyncpg>=0.30.0",
     "psycopg2-binary>=2.9.10",

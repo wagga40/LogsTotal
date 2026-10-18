@@ -50,7 +50,7 @@ FROM deps AS css
 WORKDIR /app
 
 # Keep in step with TAILWIND_VERSION in Taskfile.yml.
-ARG TAILWIND_VERSION=3.4.17
+ARG TAILWIND_VERSION=3.4.19
 
 COPY app/static/tailwind-input.css app/static/tailwind-input.css
 COPY app/static/vendor app/static/vendor
