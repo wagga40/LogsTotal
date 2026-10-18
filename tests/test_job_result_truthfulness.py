@@ -115,13 +115,14 @@ async def test_a_run_whose_tools_failed_is_not_reported_as_clean(test_client, as
     assert "border-l-green-500" not in body
 
 
-async def test_a_completed_run_with_no_findings_is_still_reported_as_clean(test_client, async_db, failing_job):
+async def test_a_completed_run_reports_zero_matches_without_a_clean_verdict(test_client, async_db, failing_job):
     failing_job.status = JobStatus.COMPLETED
     failing_job.score_ratio = "0/1"
     failing_job.total_findings = 0
     await async_db.commit()
     body = (await test_client.get(f"/jobs/{failing_job.id}/status-partial")).text
-    assert "No threats detected" in body
+    assert "No matches reported" in body
+    assert "No threats detected" not in body
 
 
 @pytest.mark.parametrize("view", ["compact", "roomy"])

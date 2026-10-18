@@ -1,4 +1,4 @@
-"""RSigma 0.23 batch evaluation with full evidence and strict completion checks."""
+"""RSigma batch evaluation with full evidence and explicit completion checks."""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 
 import yaml
 
-from app.json_utils import loads
+from app.json_utils import dumps, loads
 from app.tools.base import ToolAdapter, ToolOutput
 from app.tools.catalog import TOOLS
 from app.tools.mapping import MetadataMapping, OutputMapping, Selector, decode_records, file_records
@@ -202,30 +202,50 @@ class RsigmaAdapter(ToolAdapter):
                 stdout_path=partial,
                 env={key: value for key, value in os.environ.items() if not key.startswith("RSIGMA_")},
             )
-            if rc != 0:
-                raise ValueError(stderr or f"Exit code {rc}")
-            if _ERRORS.search(stderr):
-                raise ValueError("RSigma reported incomplete evaluation: " + stderr)
             self._check_budget(deadline)
+            if rc != 0:
+                self._diagnostics.incomplete("The engine exited before completing its analysis.")
+            if _ERRORS.search(stderr):
+                self._diagnostics.incomplete("The engine reported skipped or invalid input or rules.")
+
+            # Publish only validated NDJSON. Analytics must see exactly the usable
+            # evidence retained here, even when the original stream is truncated.
+            clean = partial.with_suffix(".validated")
 
             def checked_records():
-                for record in self._records(partial):
-                    self._check_budget(deadline)
-                    yield record
+                with clean.open("w", encoding="utf-8") as stream:
+                    for record in file_records(partial, format="jsonl", diagnostics=self._diagnostics):
+                        self._check_budget(deadline)
+                        try:
+                            self._match(record)
+                            if not isinstance(record.get("rule_id", ""), str) or not isinstance(record["rule_title"], str):
+                                raise ValueError("Invalid rule identity")
+                        except (ValueError, TypeError, KeyError, AttributeError):
+                            self._diagnostics.skip_record()
+                            continue
+                        stream.write(dumps(record) + "\n")
+                        yield record
 
             findings = self.normalize(checked_records())
-            # The pinned CLI always emits the batch summary; validate it to catch
-            # changed CLI formats, accidental dry-runs, or truncated output.
             summary = _SUMMARY.search(stderr)
+            if summary is not None:
+                self._diagnostics.processed_events = int(summary[1])
             if summary is None or int(summary[2]) != sum(f.count for f in findings):
-                raise ValueError("RSigma completion summary is missing or disagrees with its detections")
-            if re.search(r"Loaded 0 rules\b", stderr):
-                raise ValueError("RSigma loaded no detection rules")
+                self._diagnostics.incomplete("The completion summary is missing or disagrees with the detections.")
+            loaded = re.search(r"Loaded (\d+) rules\b", stderr)
+            if loaded:
+                self._diagnostics.rules_loaded = int(loaded[1])
+                if int(loaded[1]) == 0:
+                    self._diagnostics.incomplete("The engine loaded no detection rules.")
+            if self._diagnostics.completion == "incomplete" and not findings:
+                raise ValueError("RSigma did not complete its analysis and returned no usable detections")
+            if self._diagnostics.completion != "incomplete":
+                self._diagnostics.completion = "complete"
             self._check_budget(deadline)
-            partial.replace(output_file)
-            return ToolOutput(success=True, findings=findings, stderr=stderr, duration_ms=int((time.monotonic() - start) * 1000))
+            clean.replace(output_file)
+            return ToolOutput(success=True, findings=findings, stderr=stderr, duration_ms=int((time.monotonic() - start) * 1000), diagnostics=self._diagnostics)
         except (OSError, ValueError) as exc:
-            return ToolOutput(success=False, error=str(exc), stderr=stderr, duration_ms=int((time.monotonic() - start) * 1000))
+            return ToolOutput(success=False, error=str(exc), stderr=stderr, duration_ms=int((time.monotonic() - start) * 1000), diagnostics=self._diagnostics)
 
     @staticmethod
     def _records(path: Path) -> Iterator[dict]:

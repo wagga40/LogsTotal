@@ -766,6 +766,9 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
         output_dir.mkdir(parents=True, exist_ok=True)
 
         log_type_str = job.effective_log_type.value if job.effective_log_type else None
+        from app.analysis_confidence import capture_job_snapshot
+
+        job.execution_snapshot = json_dumps(capture_job_snapshot(log_file.sha256, log_type_str, workflow.name, task_configs, settings.app_version))
         site_settings = get_site_settings_sync(db)
 
         # ── Step 1: Pre-create all TaskResult rows (main thread, single commit) ──
@@ -1026,7 +1029,13 @@ def _persist_tool_result(db, task_result_id: int, output: ToolOutput) -> tuple[b
 
     Returns (was_success, was_failure) booleans.
     """
-    values = {"duration_ms": output.duration_ms, "finished_at": utc_now_naive(), "log_output": _combine_logs(output.stdout, output.stderr)}
+    values = {
+        "duration_ms": output.duration_ms,
+        "finished_at": utc_now_naive(),
+        "log_output": _combine_logs(output.stdout, output.stderr),
+        "diagnostics_json": json_dumps(output.diagnostics.as_dict()),
+        "execution_snapshot": json_dumps(output.execution_snapshot) if output.execution_snapshot is not None else None,
+    }
 
     was_success = False
     was_failure = False
@@ -1043,6 +1052,9 @@ def _persist_tool_result(db, task_result_id: int, output: ToolOutput) -> tuple[b
     else:
         status, values["findings_count"] = TaskStatus.COMPLETED, len(output.findings)
         was_success = True
+        if output.diagnostics.completion == "incomplete":
+            status = TaskStatus.PARTIAL
+            was_failure = True
 
     # Only over the RUNNING row Step 1 created: the recovery sweep or the cancel route may
     # have finalized it while the tool ran, and their FAILED/CANCELLED stands, findings and all.

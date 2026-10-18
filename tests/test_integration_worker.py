@@ -72,6 +72,46 @@ def _make_tool_output(*, findings: list[NormalizedFinding] | None = None, error:
     )
 
 
+def test_partial_tool_result_keeps_evidence_and_marks_job_partial(sync_db, worker_job):
+    import json
+
+    from app.tools.diagnostics import CompletionDiagnostics
+    from app.workers.tasks import _finalize_job, _persist_tool_result
+
+    job = worker_job["job"]
+    job.status = JobStatus.RUNNING
+    tr = TaskResult(job_id=job.id, tool_name="hayabusa", status=TaskStatus.RUNNING)
+    sync_db.add(tr)
+    sync_db.commit()
+    diagnostics = CompletionDiagnostics()
+    diagnostics.skip_record()
+    output = ToolOutput(success=True, findings=[NormalizedFinding("Real detection", "high", 3, "r1")], diagnostics=diagnostics)
+    success, failure = _persist_tool_result(sync_db, tr.id, output)
+    _finalize_job(sync_db, job, success, failure)
+    sync_db.refresh(tr)
+    sync_db.refresh(job)
+    assert tr.status.value == "partial"
+    assert job.status == JobStatus.PARTIAL
+    assert [(f.rule_id, f.count) for f in tr.findings] == [("r1", 3)]
+    assert json.loads(tr.diagnostics_json)["records_skipped"] == 1
+    assert job.total_findings == 3
+
+
+def test_late_partial_result_cannot_overwrite_cancellation(sync_db, worker_job):
+    from app.tools.diagnostics import CompletionDiagnostics
+    from app.workers.tasks import _persist_tool_result
+
+    tr = TaskResult(job_id=worker_job["job"].id, tool_name="hayabusa", status=TaskStatus.CANCELLED)
+    sync_db.add(tr)
+    sync_db.commit()
+    result = ToolOutput(success=True, findings=[NormalizedFinding("Late", "high")], diagnostics=CompletionDiagnostics(completion="incomplete"))
+    assert _persist_tool_result(sync_db, tr.id, result) == (False, False)
+    sync_db.refresh(tr)
+    assert tr.status == TaskStatus.CANCELLED
+    assert tr.findings == []
+    assert tr.diagnostics_json is None
+
+
 @pytest.mark.parametrize(
     "tasks_yaml,expected_status,expected_task_statuses",
     [

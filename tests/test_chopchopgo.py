@@ -161,10 +161,10 @@ def test_stdout_banner_noise_tolerated(chop_env, tmp_path, monkeypatch):
     assert json.loads(out.read_text())[0]["Title"] == "Suspicious Curl"
 
 
-def test_stdout_no_json_is_zero_findings(chop_env, tmp_path, monkeypatch):
+def test_json_null_is_zero_findings(chop_env, tmp_path, monkeypatch):
     binary, rules, _log = chop_env
     adapter = _adapter(binary, rules)
-    monkeypatch.setattr(adapter, "_exec", lambda cmd, timeout, **kw: (0, "no matches\n", ""))
+    monkeypatch.setattr(adapter, "_exec", lambda cmd, timeout, **kw: (0, "null\n", ""))
     result = adapter._execute_and_parse(["fake"], tmp_path / "out.json")
     assert result.success
     assert result.findings == []
@@ -224,3 +224,10 @@ def test_normalize_non_list_is_empty(chop_env):
     adapter = _adapter(binary, rules)
     assert adapter.normalize({"not": "a list"}) == []
     assert adapter.normalize(None) == []
+
+
+def test_missing_stdout_is_not_a_zero_match_result(chop_env, tmp_path, monkeypatch):
+    adapter = _adapter(chop_env[0], chop_env[1])
+    monkeypatch.setattr(adapter, "_exec", lambda *args, **kw: (0, "", ""))
+    result = adapter._execute_and_parse(["unused"], tmp_path / "out.json")
+    assert not result.success

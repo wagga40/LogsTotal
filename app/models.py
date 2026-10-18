@@ -161,6 +161,7 @@ class TaskStatus(str, enum.Enum):
     PENDING = "pending"
     RUNNING = "running"
     COMPLETED = "completed"
+    PARTIAL = "partial"
     FAILED = "failed"
     SKIPPED = "skipped"
     CANCELLED = "cancelled"
@@ -265,6 +266,7 @@ class AnalysisJob(Base):
     finished_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
     analytics_json = Column(Text, nullable=True)  # JSON: analytics_json_payload(_compute_analytics_data(job))
+    execution_snapshot = Column(Text, nullable=True)  # versioned provenance captured when execution starts
     # Indexed as the leading column of visible_job_filter's predicate — it appears in
     # essentially every job query the application makes.
     is_private = Column(Boolean, nullable=False, default=False, server_default="0", index=True)
@@ -302,6 +304,8 @@ class TaskResult(Base):
     duration_ms = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
     log_output = Column(Text, nullable=True)  # combined stdout + stderr from tool
+    diagnostics_json = Column(Text, nullable=True)  # versioned completion diagnostics; null for historical tasks
+    execution_snapshot = Column(Text, nullable=True)  # worker-observed engine/rules/configuration provenance
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
 

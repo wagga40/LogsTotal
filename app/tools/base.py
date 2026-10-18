@@ -19,6 +19,7 @@ from typing import Any
 
 from app.json_utils import load_file as json_load_file
 from app.json_utils import loads as json_loads
+from app.tools.diagnostics import CompletionDiagnostics
 from app.tools.mapping import OutputMapping
 from app.tools.output import RawMatch
 
@@ -164,6 +165,8 @@ class ToolOutput:
     duration_ms: int = 0
     stdout: str = ""
     stderr: str = ""
+    diagnostics: CompletionDiagnostics = field(default_factory=CompletionDiagnostics)
+    execution_snapshot: dict | None = None
 
 
 class ToolAdapter:
@@ -190,6 +193,7 @@ class ToolAdapter:
 
     def __init__(self, config: dict[str, Any]):
         self.config = config
+        self._diagnostics = CompletionDiagnostics()
         # `rules_path` accepts a string or a list of strings, mirroring the str-or-dict
         # shape `tool_path` has. Chainsaw is the reason: SigmaHQ splits its rules across
         # `rules/`, `rules-emerging-threats/` and `rules-threat-hunting/`, and pointing at
@@ -233,6 +237,7 @@ class ToolAdapter:
         cancel_event: threading.Event | None = None,
     ) -> ToolOutput:
         """Route to local or Docker execution based on config."""
+        self._diagnostics = CompletionDiagnostics()
         supported = getattr(self.__class__, "SUPPORTED_TYPES", None)
         if supported is None:
             from app.tools.catalog import TOOLS
@@ -259,15 +264,27 @@ class ToolAdapter:
                 return ToolOutput(success=False, error=f"arch:skip:{skip_reason}")
             if resolved:
                 self.config["tool_path"] = resolved
-                return self._run_local(file_path, output_file)
+                return self._run_recorded(lambda: self._run_local(file_path, output_file))
 
         if self.config.get("docker_image") or self.config.get("dockerfile"):
-            return self._run_docker(file_path, output_file, output_dir)
+            return self._run_recorded(lambda: self._run_docker(file_path, output_file, output_dir))
 
         return ToolOutput(
             success=False,
             error=(f"Workflow task for {self.name} must set tool_path, docker_image, or dockerfile"),
         )
+
+    def _run_recorded(self, run) -> ToolOutput:
+        from app.analysis_confidence import capture_tool_snapshot
+
+        snapshot = capture_tool_snapshot(self)
+        self._execution_snapshot = snapshot
+        result = run()
+        result.execution_snapshot = snapshot
+        after = capture_tool_snapshot(self)
+        if any(snapshot[key] != after[key] for key in ("runtime_sha256", "rules_sha256", "mapping_sha256")):
+            result.diagnostics.incomplete("Engine or rule assets changed during execution; provenance is uncertain.")
+        return result
 
     # ── local execution ──────────────────────────────────────────────────
 
@@ -353,9 +370,14 @@ class ToolAdapter:
             # from_env(timeout=...) is only for API client operations, not container runtime.
             client = _docker_sdk.from_env(timeout=run_timeout + 60)
             try:
-                client.images.get(image)
+                image_info = client.images.get(image)
             except _docker_sdk.errors.ImageNotFound:
-                client.images.pull(image)
+                image_info = client.images.pull(image)
+            image_id = getattr(image_info, "id", None)
+            if isinstance(image_id, str):
+                if hasattr(self, "_execution_snapshot"):
+                    self._execution_snapshot["image_id"] = image_id
+                image = image_id
             container = client.containers.create(
                 image,
                 tool_args,
@@ -392,9 +414,13 @@ class ToolAdapter:
             finally:
                 container.remove(force=True)
 
-            # A crashed container can leave valid but incomplete output behind.
+            # A crashed container can leave usable but incomplete evidence.
             if exit_code != 0:
                 duration_ms = int((time.monotonic() - t0) * 1000)
+                self._diagnostics.incomplete("The engine exited before completing its analysis.")
+                retained = self._parse_output(output_file, stdout, stderr, duration_ms)
+                if retained.success and retained.findings:
+                    return retained
                 return ToolOutput(success=False, error=stdout or f"Container exited with code {exit_code}", stdout=stdout, duration_ms=duration_ms)
         except Exception as exc:
             duration_ms = int((time.monotonic() - t0) * 1000)
@@ -409,15 +435,7 @@ class ToolAdapter:
 
         duration_ms = int((time.monotonic() - t0) * 1000)
 
-        if not output_file.exists():
-            return ToolOutput(success=True, findings=[], stdout=stdout, stderr=stderr, duration_ms=duration_ms)
-
-        try:
-            raw = self._load_output(output_file)
-            findings = self.normalize(raw)
-            return ToolOutput(success=True, findings=findings, stdout=stdout, stderr=stderr, duration_ms=duration_ms)
-        except Exception as exc:
-            return ToolOutput(success=False, error=f"Failed to parse output: {exc}", stdout=stdout, stderr=stderr, duration_ms=duration_ms)
+        return self._parse_output(output_file, stdout, stderr, duration_ms)
 
     def _docker_tool_args(
         self,
@@ -485,8 +503,12 @@ class ToolAdapter:
         )
         duration_ms = int((time.monotonic() - t0) * 1000)
 
-        # Timed-out (rc == -1) or other failure: treat as failure even if partial output exists.
         if rc != 0:
+            if not (self._cancel_event is not None and self._cancel_event.is_set()) and output_file.is_file():
+                self._diagnostics.incomplete("The engine exited before completing its analysis.")
+                retained = self._parse_output(output_file, stdout, stderr, duration_ms)
+                if retained.success and retained.findings:
+                    return retained
             return ToolOutput(
                 success=False,
                 error=stderr or stdout or (f"Command timed out after {self._timeout_seconds}s" if rc == -1 else f"Exit code {rc}"),
@@ -495,24 +517,24 @@ class ToolAdapter:
                 duration_ms=duration_ms,
             )
 
-        if not output_file.exists():
-            return ToolOutput(
-                success=True,
-                findings=[],
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-            )
+        return self._parse_output(output_file, stdout, stderr, duration_ms)
 
+    def _parse_output(self, output_file: Path, stdout: str, stderr: str, duration_ms: int) -> ToolOutput:
+        self._diagnostics.read_summary(self.name, stdout + "\n" + stderr)
         try:
+            if not output_file.is_file():
+                raise ValueError("Expected detection output was not produced")
             raw = self._load_output(output_file)
             findings = self.normalize(raw)
+            if self._diagnostics.records_skipped and not findings:
+                raise ValueError("Detection output contained no usable records")
             return ToolOutput(
                 success=True,
                 findings=findings,
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
+                diagnostics=self._diagnostics,
             )
         except Exception as exc:
             return ToolOutput(
@@ -521,6 +543,7 @@ class ToolAdapter:
                 stdout=stdout,
                 stderr=stderr,
                 duration_ms=duration_ms,
+                diagnostics=self._diagnostics,
             )
 
     # ── output loading ───────────────────────────────────────────────────
@@ -530,8 +553,8 @@ class ToolAdapter:
         from app.tools.mapping import RecordStream, file_records
 
         mapping = self.output_mapping
-        if mapping is not None and (mapping.format == "jsonl" or mapping.strict):
-            return RecordStream(file_records(path, format=mapping.format, strict=mapping.strict))
+        if mapping is not None:
+            return RecordStream(file_records(path, format=mapping.format, strict=mapping.strict, diagnostics=self._diagnostics))
         return self._load_json(path)
 
     def _output_filename(self, file_path: Path) -> str:

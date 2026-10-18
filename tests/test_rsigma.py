@@ -85,12 +85,12 @@ def test_invalid_or_unsupported_output_fails(record):
     [
         ("", "Processed 2 events, 0 matches.", 0, True),
         ("not json", "", 0, False),
-        (json.dumps(detection()), "Error parsing JSON on line 1: bad", 0, False),
-        (json.dumps(detection()), "failure", 1, False),
+        (json.dumps(detection()), "Error parsing JSON on line 1: bad", 0, True),
+        (json.dumps(detection()), "failure", 1, True),
         (json.dumps(detection()), "Processed 1 events, 1 matches.", 0, True),
     ],
 )
-def test_execution_only_publishes_complete_output(tmp_path, monkeypatch, payload, stderr, code, success):
+def test_execution_publishes_usable_output(tmp_path, monkeypatch, payload, stderr, code, success):
     a = adapter()
 
     def execute(cmd, timeout, cancel_event, *, stdout_path, env):
@@ -426,3 +426,20 @@ def test_aborted_output_parsing_does_not_publish(tmp_path, monkeypatch, aborted)
     result = a._execute_and_parse(["unused"], out)
     assert not result.success
     assert not out.exists()
+
+
+def test_incomplete_execution_retains_valid_records_and_cleans_artifact(tmp_path, monkeypatch):
+    a = adapter()
+
+    def execute(cmd, **kw):
+        kw["stdout_path"].write_text(json.dumps(detection()) + '\n{"truncated":\n')
+        return 0, "", "Warning: skipped event\nProcessed 2 events, 2 matches."
+
+    monkeypatch.setattr(a, "_exec", execute)
+    output = tmp_path / "out_rsigma.json"
+    result = a._execute_and_parse(["unused"], output)
+    assert result.success
+    assert result.diagnostics.completion == "incomplete"
+    assert result.diagnostics.records_skipped == 1
+    assert sum(f.count for f in result.findings) == 1
+    assert len(list(a._records(output))) == 1

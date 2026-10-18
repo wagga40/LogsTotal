@@ -112,12 +112,11 @@ class ChopChopGoAdapter(ToolAdapter):
 
         events = self._extract_json_events(stdout)
         if events is None:
-            return ToolOutput(success=True, findings=[], stdout=stdout, stderr=stderr, duration_ms=duration_ms)
+            return ToolOutput(success=False, error="Missing or invalid ChopChopGo JSON output", stdout=stdout, stderr=stderr, duration_ms=duration_ms)
 
         try:
             output_file.write_text(json_dumps(events), encoding="utf-8")
-            findings = self.normalize(events)
-            return ToolOutput(success=True, findings=findings, stdout=stdout, stderr=stderr, duration_ms=duration_ms)
+            return self._parse_output(output_file, stdout, stderr, duration_ms)
         except Exception as exc:
             return ToolOutput(
                 success=False,
@@ -140,6 +139,9 @@ class ChopChopGoAdapter(ToolAdapter):
                 parsed = json_loads(candidate)
             except ValueError:
                 continue
+            # Go encodes the nil result slice as null when no rule matches.
+            if parsed is None:
+                return []
             if isinstance(parsed, list):
                 return parsed
         return None

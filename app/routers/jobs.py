@@ -1985,7 +1985,7 @@ def _compute_live_summary(job: AnalysisJob) -> dict:
         tr_status = enum_val(tr.status)
         if tr_status == "skipped":
             continue
-        if tr_status in ("completed", "failed"):
+        if tr_status in ("completed", "partial", "failed"):
             completed_tools += 1
         if tr.findings:
             tools_with_hits += 1

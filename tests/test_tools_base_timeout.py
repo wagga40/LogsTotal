@@ -15,7 +15,7 @@ from app.tools.zircolite import ZircoliteAdapter
 
 
 @pytest.mark.parametrize("output", [None, "[]", '[{"title":"Partial hit","level":"high","count":1,"matches":[{}]}]'])
-def test_docker_nonzero_exit_fails_even_with_parseable_output(tmp_path, output):
+def test_docker_nonzero_exit_preserves_only_usable_findings(tmp_path, output):
     output_file = tmp_path / "input_zircolite.json"
     if output is not None:
         output_file.write_text(output)
@@ -29,9 +29,14 @@ def test_docker_nonzero_exit_fails_even_with_parseable_output(tmp_path, output):
     with patch("docker.from_env", return_value=client):
         result = adapter.run(tmp_path / "input.evtx", tmp_path, log_type="evtx")
 
-    assert not result.success
-    assert "Killed during analysis" in result.error
-    assert not result.findings
+    if output and "Partial hit" in output:
+        assert result.success
+        assert result.diagnostics.completion == "incomplete"
+        assert result.findings[0].rule_name == "Partial hit"
+    else:
+        assert not result.success
+        assert "Killed during analysis" in result.error
+        assert not result.findings
 
 
 class _FakeProc:

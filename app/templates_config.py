@@ -10,6 +10,7 @@ from pathlib import Path
 from fastapi.templating import Jinja2Templates
 from markupsafe import Markup
 
+from app.analysis_confidence import job_provenance, task_metadata
 from app.config import settings
 from app.docs_site import docs_url
 from app.pagination import page_window, qs_pairs, qs_without_page
@@ -48,6 +49,8 @@ def _time_ago(dt: datetime | None) -> str:
 
 
 templates = Jinja2Templates(directory="app/templates")
+templates.env.filters["job_provenance"] = job_provenance
+templates.env.filters["task_metadata"] = task_metadata
 templates.env.filters["from_json"] = json.loads
 templates.env.filters["time_ago"] = _time_ago
 

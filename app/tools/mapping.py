@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from app.json_utils import load_file, loads
+from app.tools.diagnostics import CompletionDiagnostics
 from app.tools.output import RawMatch, event_timestamp
 
 _MISSING = object()
@@ -98,11 +99,11 @@ class RecordStream:
         return iter(self.records)
 
 
-def file_records(path: Path, *, format: Literal["json", "jsonl"], strict: bool = False) -> Iterator[Any]:
+def file_records(path: Path, *, format: Literal["json", "jsonl"], strict: bool = False, diagnostics: CompletionDiagnostics | None = None) -> Iterator[Any]:
     if format == "json":
         raw = load_file(path)
         if not isinstance(raw, list):
-            if strict:
+            if strict or diagnostics is not None:
                 raise ValueError("Invalid detection output: expected a JSON list")
             return
         for item in raw:
@@ -110,6 +111,8 @@ def file_records(path: Path, *, format: Literal["json", "jsonl"], strict: bool =
                 yield item
             elif strict:
                 raise ValueError("Invalid detection record: expected an object")
+            elif diagnostics is not None:
+                diagnostics.skip_record()
         return
     with path.open("rb") as stream:
         for line in stream:
@@ -120,9 +123,13 @@ def file_records(path: Path, *, format: Literal["json", "jsonl"], strict: bool =
             except (ValueError, KeyError):
                 if strict:
                     raise
+                if diagnostics is not None:
+                    diagnostics.skip_record()
                 continue
             if strict or isinstance(item, dict):
                 yield item
+            elif diagnostics is not None:
+                diagnostics.skip_record()
 
 
 def _decode(record: dict, mapping: OutputMapping, purpose: Literal["finding", "raw"]) -> DecodedDetection:
@@ -144,10 +151,14 @@ def _decode(record: dict, mapping: OutputMapping, purpose: Literal["finding", "r
     return DecodedDetection(**metadata, reported_count=count, events=events, event_projection=mapping.event_projection)
 
 
-def decode_records(records: Iterable[Any], mapping: OutputMapping, *, purpose: Literal["finding", "raw"] = "finding", tool_name: str = "tool") -> Iterator[DecodedDetection]:
+def decode_records(
+    records: Iterable[Any], mapping: OutputMapping, *, purpose: Literal["finding", "raw"] = "finding", tool_name: str = "tool", diagnostics: CompletionDiagnostics | None = None
+) -> Iterator[DecodedDetection]:
     skipped = 0
     for record in records:
         if not isinstance(record, dict) and not mapping.strict:
+            if diagnostics is not None:
+                diagnostics.skip_record()
             continue
         try:
             detection = _decode(record, mapping, purpose)
@@ -155,6 +166,8 @@ def decode_records(records: Iterable[Any], mapping: OutputMapping, *, purpose: L
             if mapping.strict or purpose == "raw":
                 raise
             skipped += 1
+            if diagnostics is not None:
+                diagnostics.skip_record()
             continue
         yield detection
     if skipped:
@@ -187,7 +200,7 @@ def normalize(adapter: Any, raw: Any) -> list:
     findings = []
     rule_cache = {}
     skipped = 0
-    for detection in decode_records(records, mapping, tool_name=adapter.name):
+    for detection in decode_records(records, mapping, tool_name=adapter.name, diagnostics=adapter._diagnostics):
         try:
             key = detection.rule_id or detection.rule_name if mapping.grouping == "identity" else detection.rule_name
             finding = None if mapping.grouping == "blocks" else grouped.get(key)
@@ -217,6 +230,7 @@ def normalize(adapter: Any, raw: Any) -> list:
             if mapping.strict:
                 raise
             skipped += 1
+            adapter._diagnostics.skip_record()
     if skipped:
         _log.warning("%s: skipped %d unparseable %s", adapter.name, skipped, mapping.record_label)
     return findings
