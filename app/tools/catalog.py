@@ -58,7 +58,7 @@ TOOLS = {
             RuntimeProfile("linux", "tools/zircolite/rules/rules_linux.json"),
             RuntimeProfile("journald", "tools/zircolite/rules/rules_linux.json", options=(("config", "zircolite_journald.yaml"),)),
         ),
-        docker_image="wagga40/zircolite:4.0.0@sha256:552f1900fb5533a58fdad1ae61f46c09018271787d5d7a2d08cb318d3221461f",
+        docker_image="wagga40/zircolite:4.5.0@sha256:5607d398b6c5c330525e8abd10db4565faf72360038b2ebb5ac312d799f2ee2e",
     ),
     "chainsaw": ToolSpec(
         "chainsaw",

@@ -1,17 +1,17 @@
 {
   "repo": "Yamato-Security/hayabusa",
-  "version": "v4.1.0",
+  "version": "v4.2.0",
   "binaries": {
-    "hayabusa-intel-lin": "21e5832673adfef8a08511bdec338e841da5bbd160658ecbea101c942466fe8f",
-    "hayabusa-arm-lin": "03f0f7e1893d6f990259ccee8be71d85cb4122a001e083f792d8cdcb31adf7b6",
-    "hayabusa-mac": "df2d81c340fd4d31a3cfe1aa58f4f0bcaebfd6af770faa0ea5153a939d5e9e00"
+    "hayabusa-intel-lin": "f3fe774ebef1d4b7ad242f6cefc7416a6c4202a882b550222a855d9acbb73995",
+    "hayabusa-arm-lin": "eaf4210a74c2b7072b0912c3817a2479fc7609ee20f4417908a7ca0c87fa1169",
+    "hayabusa-mac": "112963e7ca865042c8b3af374deda5e95455f536b54b86f0b806a33599fd9257"
   },
   "rules": {
     "repo": "Yamato-Security/hayabusa-rules",
-    "commit": "10d1b6dc3ec884daf04d736a7fc78bf2ee898664",
-    "committed_at": "2026-09-15T23:21:04Z",
+    "commit": "3264c6f733ddf223fdb3825adc1df9c14104ed87",
+    "committed_at": "2026-10-16T21:06:14Z",
     "trees": {
-      "rules": "df772668bb66bfe249ae9b667fbd6cc79cbaaee6722209bfd01782c70dd6037b",
+      "rules": "58d7887ab456789df0256d88fc3056e8357b07da49011c9abb182ea3f44e605f",
       "config": "14990fa599625ac263fa2180e5e0205cf049ab6cb582df95cb05360851b9a51f"
     }
   }
