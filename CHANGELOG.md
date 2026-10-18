@@ -27,7 +27,7 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ### Updated
 
-- Zircolite 4.5.0 (digest pinned), RSigma 0.24.0, Chainsaw 2.17.1 and Hayabusa 4.2.0;
+- Zircolite 4.6.0 (digest pinned), RSigma 0.24.0, Chainsaw 2.17.1 and Hayabusa 4.2.0;
   refreshed rule snapshots. ChopChopGo stays at 1.1.0.
 - Tool updates accept exact release tags and rule refs for reproducible maintenance.
 - Python dependencies, same-major browser libraries, and the pinned GitHub Actions

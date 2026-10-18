@@ -237,5 +237,5 @@ For a reproducible single-tool update, use an exact release tag and rules commit
 
 The updater resolves refs to commits and records checksums. `--allow-major` also applies
 to RSigma's pre-1.0 minor releases. Zircolite's container pin is changed separately after
-sample validation. Zircolite 4.6.0 was available as source during this update, but its
-Docker image was unavailable; the supported image remains the verified 4.5.0 pin.
+sample validation. The shipped Zircolite 4.6.0 image is pinned by its multi-platform
+manifest digest for AMD64 and ARM64, with compiled rules pinned to the `v4.6.0` release.
