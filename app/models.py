@@ -26,6 +26,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import column_property, deferred, relationship
 
 from app.database import Base
+from app.db_types import CompressedText
 
 
 def enum_val(e) -> str:
@@ -269,7 +270,7 @@ class AnalysisJob(Base):
     # Deferred: the jobs list, the home panel and the status poll load AnalysisJob wholesale
     # every few seconds and never read it (1.3 MB per 20-row page in dev). Its readers ask with
     # undefer() — an un-asked read on an async session is a MissingGreenlet, not a query.
-    analytics_json = deferred(Column(Text, nullable=True))
+    analytics_json = deferred(Column(CompressedText, nullable=True))
     execution_snapshot = Column(Text, nullable=True)  # versioned provenance captured when execution starts
     # Indexed as the leading column of visible_job_filter's predicate — it appears in
     # essentially every job query the application makes.
@@ -426,7 +427,7 @@ class Finding(Base):
     # and `_load_job_full(blobs=...)` (/jobs/{id}/findings.json, analysis.json). The case timeline
     # selects `Finding.details` as a plain column, which mapper-level deferral does not apply
     # to. That is the point: it is visible at the query which callers pay for the blob.
-    details = deferred(Column(Text, nullable=True))  # JSON array of matched events (truncated)
+    details = deferred(Column(CompressedText, nullable=True))  # JSON array of matched events (truncated)
     rule_content = deferred(Column(Text, nullable=True))  # original Sigma rule YAML
 
     __table_args__ = (
@@ -697,7 +698,7 @@ class EntityRelationshipEvidence(Base):
     occurrence_count = Column(Integer, nullable=False, default=1)
     first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
     last_seen_at = Column(DateTime, nullable=False, server_default=func.now())
-    sample_events_json = Column(Text, nullable=True)  # capped JSON list of trimmed events
+    sample_events_json = Column(CompressedText, nullable=True)  # capped JSON list of trimmed events
 
     __table_args__ = (UniqueConstraint("relationship_id", "job_id", name="uq_relationship_evidence"),)
 

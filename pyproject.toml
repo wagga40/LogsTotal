@@ -50,6 +50,7 @@ dependencies = [
     # so a missing httpx does not stop the app booting — it silently disables two
     # advertised features instead. Keep it a runtime dependency.
     "httpx>=0.27",
+    "backports-zstd>=1.0; python_version < \"3.14\"",
 ]
 
 

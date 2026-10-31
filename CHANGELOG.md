@@ -55,6 +55,9 @@ backup step, migration ordering, and rollback for each deployment path.
 - Job pages poll lighter: the jobs list, the recent-jobs panel and the job status poll no
   longer load each job's analytics blob (1.3 MB per 20-row page in development) or every
   tool's full log. A failed tool's log is still shown to admins.
+- Finding sample events, relationship evidence samples and job analytics are stored
+  zstd-compressed (4.8x and 20x on the development data). Rows written before this read
+  unchanged and are compressed when rewritten.
 - Twenty single-column indexes that a composite index already covered are dropped, and
   lists that relied on their order (findings, tags, case links, rule matches) are now
   explicitly ordered. SQLite connections use memory-mapped reads, in-memory temp storage
