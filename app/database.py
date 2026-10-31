@@ -216,7 +216,9 @@ def _migrate_add_missing_columns(conn):
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_workflow_id ON analysisjob (workflow_id)",
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_created_at ON analysisjob (created_at)",
         "CREATE INDEX IF NOT EXISTS ix_taskresult_job_id ON taskresult (job_id)",
-        "CREATE INDEX IF NOT EXISTS ix_finding_task_result_id ON finding (task_result_id)",
+        # The composite, not a task_result_id index of its own: it covers that column too
+        # (migration e064602640a4 dropped the redundant single-column one).
+        "CREATE INDEX IF NOT EXISTS ix_finding_task_severity ON finding (task_result_id, severity)",
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_status ON analysisjob (status)",
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_finished_at ON analysisjob (finished_at)",
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_file_wf_created ON analysisjob (file_id, workflow_id, created_at DESC)",
@@ -258,7 +260,7 @@ def _migrate_add_missing_columns(conn):
             conn.execute(text(idx_sql))
     if "entity_job_link" in all_tables:
         for idx_sql in [
-            "CREATE INDEX IF NOT EXISTS ix_entity_job_link_entity_id ON entity_job_link (entity_id)",
-            "CREATE INDEX IF NOT EXISTS ix_entity_job_link_job_id ON entity_job_link (job_id)",
+            # entity_id is covered by the table's own uq_entity_job (entity_id, job_id).
+            "CREATE INDEX IF NOT EXISTS ix_entity_job_link_job_entity ON entity_job_link (job_id, entity_id)",
         ]:
             conn.execute(text(idx_sql))

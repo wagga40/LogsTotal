@@ -2297,7 +2297,8 @@ async def entity_ioc_pack(
         .all()
     )
 
-    tags = (await db.execute(select(EntityTag).where(EntityTag.entity_id == entity_id))).scalars().all()
+    # Explicit order: SQLite used to return insertion order via an index now dropped (e064602640a4).
+    tags = (await db.execute(select(EntityTag).where(EntityTag.entity_id == entity_id).order_by(EntityTag.id))).scalars().all()
 
     threat_context = await _compute_entity_threat_context(db, [row[0] for row in (await db.execute(all_job_ids_q)).all()])
     focal_categories = [c["key"] for c in threat_context.get("categories", [])]

@@ -525,7 +525,9 @@ def test_case_ai_followup_repairs_already_applied_revision(tmp_db, has_source_de
             assert (runs[0].source_deleted_at is not None) == has_source_deleted_at
         after = dict(conn.execute(text("SELECT * FROM case_ai_analysis WHERE id = 42")).mappings().one())
         assert {key: after[key] for key in before} == before
-        assert inspect(conn).get_indexes("case_ai_analysis") == indexes
+        # Every index survives the repair, except the one e064602640a4 drops on purpose later
+        # in the chain: (case_id) is the leading column of ix_case_ai_analysis_case_created.
+        assert inspect(conn).get_indexes("case_ai_analysis") == [i for i in indexes if i["name"] != "ix_case_ai_analysis_case_id"]
         assert sorted(inspect(conn).get_foreign_keys("case_ai_analysis"), key=lambda fk: fk["constrained_columns"]) == sorted(
             foreign_keys, key=lambda fk: fk["constrained_columns"]
         )
@@ -571,3 +573,28 @@ def test_analysis_confidence_migration_tolerates_columns_the_legacy_patcher_adde
     run_auto_migrate()
     with _connect(tmp_db) as conn:
         assert conn.scalar(text("SELECT version_num FROM alembic_version")) == get_head_revision()
+
+
+def test_redundant_prefix_indexes_drop_and_restore(tmp_db):
+    """e064602640a4 drops twenty single-column indexes a composite covers; its downgrade puts
+    every one back, and both directions tolerate an index that is already absent."""
+    from alembic import command
+    from app.migrations import _alembic_config
+
+    sample = {("entity_job_link", "ix_entity_job_link_job_id"), ("finding", "ix_finding_task_result_id"), ("job_tag", "ix_job_tag_job_id")}
+
+    def present():
+        with _connect(tmp_db) as conn:
+            return {(table, name) for table, name in sample if name in {i["name"] for i in inspect(conn).get_indexes(table)}}
+
+    command.upgrade(_alembic_config(), "b8d46f1e932a")
+    assert present() == sample
+    command.upgrade(_alembic_config(), "e064602640a4")
+    assert present() == set()
+    command.downgrade(_alembic_config(), "b8d46f1e932a")
+    assert present() == sample
+    with _connect(tmp_db) as conn:
+        conn.execute(text("DROP INDEX ix_job_tag_job_id"))
+        conn.commit()
+    command.upgrade(_alembic_config(), "e064602640a4")  # one already gone: still migrates
+    assert present() == set()

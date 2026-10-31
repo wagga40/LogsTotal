@@ -287,9 +287,9 @@ class AnalysisJob(Base):
     submitter = relationship("User", foreign_keys=[submitted_by_user_id])
     task_results = relationship("TaskResult", back_populates="job", cascade="all, delete-orphan")
     comments = relationship("Comment", cascade="all, delete-orphan", foreign_keys="Comment.job_id")
-    ai_analyses = relationship("JobAiAnalysis", cascade="all, delete-orphan", foreign_keys="JobAiAnalysis.job_id")
+    ai_analyses = relationship("JobAiAnalysis", cascade="all, delete-orphan", foreign_keys="JobAiAnalysis.job_id", order_by="JobAiAnalysis.id")
     # Analyst tags. NOT `Finding.tags`, which is a JSON string of SIGMA rule tags — see JobTag.
-    tags = relationship("JobTag", back_populates="job", cascade="all, delete-orphan")
+    tags = relationship("JobTag", back_populates="job", cascade="all, delete-orphan", order_by="JobTag.id")
 
 
 # ── Task Result ───────────────────────────────────────────────────────────────────
@@ -317,7 +317,10 @@ class TaskResult(Base):
     finished_at = Column(DateTime, nullable=True)
 
     job = relationship("AnalysisJob", back_populates="task_results")
-    findings = relationship("Finding", back_populates="task_result", cascade="all, delete-orphan")
+    # order_by on every collection whose parent column lost its own index (e064602640a4):
+    # SQLite returned these in that index's order — insertion order — and the composite now
+    # chosen instead sorts by its second column, which reordered findings.json.
+    findings = relationship("Finding", back_populates="task_result", cascade="all, delete-orphan", order_by="Finding.id")
 
 
 # ── Site Settings ─────────────────────────────────────────────────────────────────
@@ -402,7 +405,7 @@ class Finding(Base):
     __tablename__ = "finding"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_result_id = Column(Integer, ForeignKey("taskresult.id"), nullable=False, index=True)
+    task_result_id = Column(Integer, ForeignKey("taskresult.id"), nullable=False)
     rule_id = Column(String(100), nullable=True)
     rule_name = Column(String(500), nullable=False)
     severity = Column(Enum(Severity), nullable=False, default=Severity.INFORMATIONAL)
@@ -479,8 +482,8 @@ class Entity(Base):
         Index("ix_entity_last_seen", "last_seen_at"),
     )
 
-    job_links = relationship("EntityJobLink", back_populates="entity", cascade="all, delete-orphan")
-    tags = relationship("EntityTag", back_populates="entity", cascade="all, delete-orphan")
+    job_links = relationship("EntityJobLink", back_populates="entity", cascade="all, delete-orphan", order_by="EntityJobLink.id")
+    tags = relationship("EntityTag", back_populates="entity", cascade="all, delete-orphan", order_by="EntityTag.id")
     finding_links = relationship("FindingEntityLink", back_populates="entity", cascade="all, delete-orphan")
     case_links = relationship("CaseEntityLink", back_populates="entity", cascade="all, delete-orphan")
     comments = relationship("Comment", cascade="all, delete-orphan", foreign_keys="Comment.entity_id")
@@ -492,8 +495,8 @@ class EntityJobLink(Base):
     __tablename__ = "entity_job_link"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
-    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
+    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
     occurrence_count = Column(Integer, nullable=False, default=1)
 
     __table_args__ = (
@@ -516,7 +519,7 @@ class EntityTag(Base):
     __tablename__ = "entity_tag"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
+    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False)
     # Indexed on its own: the uq_entity_tag composite leads with entity_id, so a
     # dashboard `WHERE tag IN (...)` pivot would otherwise be a full scan.
     tag = Column(String(50), nullable=False, index=True)
@@ -549,7 +552,7 @@ class JobTag(Base):
     __tablename__ = "job_tag"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
     # Indexed on its own, for the same reason as EntityTag.tag: the uq_job_tag composite
     # leads with job_id, so a `WHERE tag IN (...)` filter on the jobs list would otherwise
     # be a full scan.
@@ -581,13 +584,13 @@ class JobWatch(Base):
     __tablename__ = "job_watch"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
     user_id = Column(GUID(), ForeignKey("user.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("job_id", "user_id", name="uq_job_watch"),)
 
-    events = relationship("JobWatchEvent", cascade="all, delete-orphan")
+    events = relationship("JobWatchEvent", cascade="all, delete-orphan", order_by="JobWatchEvent.id")
     # Eager-loaded by the fan-out, which needs the User to run `can_view_job` — a lazy read
     # there is a MissingGreenlet on the async side and an extra query per watcher on both.
     user = relationship("User", foreign_keys=[user_id])
@@ -613,7 +616,7 @@ class JobWatchEvent(Base):
     __tablename__ = "job_watch_event"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    watch_id = Column(Integer, ForeignKey("job_watch.id"), nullable=False, index=True)
+    watch_id = Column(Integer, ForeignKey("job_watch.id"), nullable=False)
     # Denormalised from the watch so the bell can filter by job visibility without a
     # second join, and so cleanup on job deletion is one statement.
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
@@ -637,7 +640,7 @@ class FindingEntityLink(Base):
     __tablename__ = "finding_entity_link"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    finding_id = Column(Integer, ForeignKey("finding.id"), nullable=False, index=True)
+    finding_id = Column(Integer, ForeignKey("finding.id"), nullable=False)
     entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
 
     __table_args__ = (UniqueConstraint("finding_id", "entity_id", name="uq_finding_entity"),)
@@ -659,7 +662,7 @@ class EntityRelationship(Base):
     __tablename__ = "entity_relationship"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    source_entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
+    source_entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False)
     target_entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
     relationship_type = Column(String(40), nullable=False, index=True)
     first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -689,7 +692,7 @@ class EntityRelationshipEvidence(Base):
     __tablename__ = "entity_relationship_evidence"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    relationship_id = Column(Integer, ForeignKey("entity_relationship.id"), nullable=False, index=True)
+    relationship_id = Column(Integer, ForeignKey("entity_relationship.id"), nullable=False)
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
     occurrence_count = Column(Integer, nullable=False, default=1)
     first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -793,9 +796,9 @@ class InvestigationCase(Base):
     closed_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)  # running investigation narrative, 8000-char cap enforced in the route
 
-    ai_analyses = relationship("CaseAiAnalysis", cascade="all, delete-orphan", foreign_keys="CaseAiAnalysis.case_id")
-    entity_links = relationship("CaseEntityLink", back_populates="case", cascade="all, delete-orphan")
-    job_links = relationship("CaseJobLink", back_populates="case", cascade="all, delete-orphan")
+    ai_analyses = relationship("CaseAiAnalysis", cascade="all, delete-orphan", foreign_keys="CaseAiAnalysis.case_id", order_by="CaseAiAnalysis.id")
+    entity_links = relationship("CaseEntityLink", back_populates="case", cascade="all, delete-orphan", order_by="CaseEntityLink.id")
+    job_links = relationship("CaseJobLink", back_populates="case", cascade="all, delete-orphan", order_by="CaseJobLink.id")
     comments = relationship("Comment", cascade="all, delete-orphan", foreign_keys="Comment.case_id")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
 
@@ -806,7 +809,7 @@ class CaseEntityLink(Base):
     __tablename__ = "case_entity_link"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False)
     entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
     added_by_user_id = Column(GUID(), ForeignKey("user.id"), nullable=True)
     added_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -830,7 +833,7 @@ class CaseJobLink(Base):
     __tablename__ = "case_job_link"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False)
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
     added_by_user_id = Column(GUID(), ForeignKey("user.id"), nullable=True)
     added_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -950,7 +953,7 @@ class EntityEnrichmentResult(Base):
     __tablename__ = "entity_enrichment_result"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
+    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False)
     service_id = Column(Integer, ForeignKey("enrichment_service.id"), nullable=False, index=True)
     response_json = Column(Text, nullable=True)  # raw API body, truncated to a cap
     summary_json = Column(Text, nullable=True)  # post-extracted dict shown on the entity page
@@ -1033,8 +1036,8 @@ class IntelRule(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(120), nullable=False)
     description = Column(String(500), nullable=True)
-    owner_user_id = Column(GUID(), ForeignKey("user.id"), nullable=True, index=True)
-    enabled = Column(Boolean, nullable=False, default=True, server_default="1", index=True)
+    owner_user_id = Column(GUID(), ForeignKey("user.id"), nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="1")
 
     # What the criteria are written against: `entity` (the Intel dashboard grammar, matched
     # per entity in the job) or `job` (the jobs-list grammar, matched against the job itself).
@@ -1121,8 +1124,8 @@ class IntelRule(Base):
     )
 
     owner = relationship("User", foreign_keys=[owner_user_id])
-    matches = relationship("IntelRuleMatch", back_populates="rule", cascade="all, delete-orphan")
-    job_matches = relationship("JobRuleMatch", back_populates="rule", cascade="all, delete-orphan")
+    matches = relationship("IntelRuleMatch", back_populates="rule", cascade="all, delete-orphan", order_by="IntelRuleMatch.id")
+    job_matches = relationship("JobRuleMatch", back_populates="rule", cascade="all, delete-orphan", order_by="JobRuleMatch.id")
 
 
 class RuleList(Base):
@@ -1210,7 +1213,7 @@ class IntelRuleMatch(Base):
     __tablename__ = "intel_rule_match"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    rule_id = Column(Integer, ForeignKey("intel_rule.id"), nullable=False, index=True)
+    rule_id = Column(Integer, ForeignKey("intel_rule.id"), nullable=False)
     entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
@@ -1250,7 +1253,7 @@ class JobRuleMatch(Base):
     __tablename__ = "job_rule_match"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    rule_id = Column(Integer, ForeignKey("intel_rule.id"), nullable=False, index=True)
+    rule_id = Column(Integer, ForeignKey("intel_rule.id"), nullable=False)
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
     acknowledged_at = Column(DateTime, nullable=True)
@@ -1385,7 +1388,7 @@ class JobAiAnalysis(Base):
     __tablename__ = "job_ai_analysis"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
     provider_id = Column(Integer, ForeignKey("ai_provider.id"), nullable=True, index=True)
     provider_name = Column(String(80), nullable=False)
     model = Column(String(200), nullable=False)
@@ -1424,7 +1427,7 @@ class CaseAiAnalysis(Base):
     __tablename__ = "case_ai_analysis"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False)
     provider_id = Column(Integer, ForeignKey("ai_provider.id"), nullable=True, index=True)
     provider_name = Column(String(80), nullable=False)
     model = Column(String(200), nullable=False)
@@ -1502,7 +1505,7 @@ class ActivityEvent(Base):
     # A key from `app.activity.ACTIONS` — a registry, so the filter list, the docs table
     # and the call sites cannot drift apart.
     action = Column(String(80), nullable=False, index=True)
-    category = Column(String(30), nullable=False, index=True)
+    category = Column(String(30), nullable=False)
     target_type = Column(String(40), nullable=True)
     target_id = Column(String(64), nullable=True)
     summary = Column(String(500), nullable=True)

@@ -1988,6 +1988,7 @@ async def _load_case_export_context(db: AsyncSession, case_id: int, user: User) 
                 await db.execute(
                     select(EntityJobLink)
                     .where(EntityJobLink.entity_id.in_([e.id for e in entities]), EntityJobLink.job_id.in_(case_job_ids))
+                    .order_by(EntityJobLink.id)
                     .options(selectinload(EntityJobLink.job))
                 )
             )
