@@ -9,6 +9,24 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+### Fixed
+
+- Fleet upgrades and `deploy:env` no longer fail on a host whose root login shell is fish.
+  The `.env` install was quoted twice, and fish reads a backslash before a quote inside
+  single quotes as an escape, so the upgrade stopped after staging the release with
+  `-f: -c: line 4: unexpected EOF while looking for matching `''`, leaving the stacks
+  stopped. Remote commands are now quoted the same way by POSIX shells and fish.
+
+### Upgrade notes
+
+- An upgrade runs the scripts of the release it starts from. Upgrading a fleet with a
+  fish-shelled host **from 1.1.0 or 1.2.0** therefore still hits the bug: run that one
+  upgrade as `DEPLOY_KEEPENV=false ./logstotal upgrade:multiserver`. The overlay never
+  touches `.env`, so skipping the extra backup and restore is safe. Do not combine it with
+  `DEPLOY_CLEAN=true`.
+- A fleet left stopped by this failure already has the new code on every host. Finish it
+  with `./logstotal deploy:start`, or re-run the upgrade with `DEPLOY_KEEPENV=false`.
+
 ## [1.2.0] — 2026-10-31
 
 ### Added
