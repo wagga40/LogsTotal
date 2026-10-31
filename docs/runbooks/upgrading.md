@@ -192,7 +192,7 @@ DEPLOY_STOP=true DEPLOY_START=true ./logstotal upgrade:rollback
 DEPLOY_STOP=true DEPLOY_START=true ./logstotal upgrade:rollback -- cp.example.com w1.example.com
 ```
 
-A fleet rollback does not check migrations. If the upgrade changed the database, restore it first.
+A fleet rollback makes the same check against the control plane's database before it stops any host. If the upgrade changed the database, restore it first.
 
 Without a snapshot (the upgrade ran with `SKIP_SNAPSHOT=true`, or the snapshots have been used up), install the older release again. The previous version is in `backups/pre-upgrade-version-*.txt`:
 
@@ -224,6 +224,22 @@ Both check the backup with `./logstotal backup:verify` before restoring. The ful
 
 To roll back across a migration that removed or renamed something: stop the stack, restore the pre-upgrade backup, then restore the old code with `./logstotal upgrade:rollback`. Do not try to downgrade the schema with Alembic.
 
+### Rolling back the analysis-confidence migration
+
+Migration `b8d46f1e932a` adds nullable provenance and diagnostics columns and the `PARTIAL` task status. Older code cannot read `PARTIAL` rows, so the release that applies it is a special case of the table above. Older workers cannot read them either: `./logstotal upgrade` stops every worker before migrating, and if you upgrade any other way, stop them yourself first.
+
+`./logstotal upgrade:rollback` refuses to cross this migration, on a single host and on a fleet. Restoring the pre-upgrade backup is the simplest way back. To keep the jobs analysed since the upgrade, downgrade the schema while the new code is still installed, then roll the code back:
+
+```bash
+docker compose stop web worker
+docker compose run --rm web python3 -m alembic downgrade a76e3b9c214d
+./logstotal upgrade:rollback
+```
+
+On a fleet, stop it with `./logstotal deploy:stop`, open the control plane's install directory with `./logstotal deploy:shell` and run the same `docker compose run` there, then roll back with `DEPLOY_STOP=true DEPLOY_START=true ./logstotal upgrade:rollback`. On a development checkout, the downgrade is `pdm run alembic downgrade a76e3b9c214d`.
+
+The downgrade turns partial tasks into failed ones and keeps their findings. It drops the provenance and diagnostics columns. PostgreSQL keeps the unused `PARTIAL` enum label, which older code never reads.
+
 Uploaded files and the object store are never changed by a rollback or a database restore. Files uploaded after the restored backup stay in storage without a database row; `/admin/storage` reports them as orphans — see [Storage and retention](storage.md#orphaned-files).
 
 ## After you upgrade
@@ -240,16 +256,3 @@ New settings arrive commented out in `.env.example` with a safe default, so you 
 ---
 
 **Related:** [Database migrations](migrations.md) · [Back up and restore](backup-and-restore.md) · [Fleet reference](../reference/fleet.md) · [Troubleshooting](../troubleshooting.md)
-
-## Analysis confidence migration (next release)
-
-This version adds nullable execution snapshots on jobs and tasks, task diagnostics, and
-the `PARTIAL` task status. Stop all old workers before startup applies migration
-`b8d46f1e932a`; mixed worker versions are unsupported. Existing results keep their original
-findings and unknown provenance.
-
-Use the full pre-upgrade snapshot for rollback. If deliberately keeping new findings while
-rolling back only the application, first stop workers and web, then use the new code to run
-`pdm run alembic downgrade a76e3b9c214d`. This maps partial tasks to failed tasks without
-removing their findings, and drops the new metadata columns. PostgreSQL keeps the unused
-`PARTIAL` enum label. Install the old code only after this downgrade completes.

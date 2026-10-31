@@ -111,6 +111,27 @@ def test_user_at_host_entries_are_not_double_prefixed(tmp_path: Path):
     assert "DRY-RUN ssh root@w1.example.com" in result.stdout
 
 
+def test_rollback_checks_the_schema_before_stopping_anything(tmp_path: Path):
+    """The control plane's database is asked first: once a host is stopped and restored,
+    the code that could still downgrade the schema is gone."""
+    result = _run_deploy(
+        tmp_path,
+        {"DEPLOY_HOSTS": "cp.example.com,w1.example.com", "DEPLOY_ACTION": "rollback", "DEPLOY_STOP": "true"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    guard = result.stdout.index("cp.example.com (control-plane): checking the database")
+    assert guard < result.stdout.index("stopping stacks")
+
+
+def test_a_worker_only_rollback_does_not_check_the_schema(tmp_path: Path):
+    result = _run_deploy(
+        tmp_path,
+        {"DEPLOY_HOSTS": "cp.example.com,w1.example.com", "DEPLOY_ONLY": "w1.example.com", "DEPLOY_ACTION": "rollback"},
+    )
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "checking the database" not in result.stdout
+
+
 def test_stop_only_action_stops_workers_first(tmp_path: Path):
     result = _run_deploy(
         tmp_path,
