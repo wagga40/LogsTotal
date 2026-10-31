@@ -5,6 +5,7 @@ All DB access here uses the sync SQLAlchemy engine.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import threading
@@ -1521,6 +1522,9 @@ def recalculate_single_analytics(job_id: int, bg_task_id: int | None = None):
 
         persist_entities_from_analytics(db, job.id, data)
         db.commit()
+        # The links may have changed (or exist for the first time): relink Explore's view.
+        with contextlib.suppress(Exception):
+            build_event_overlay(job.id)
         _mark_bg_task(db, bg_task_id, "completed", detail="Analytics recalculated.")
         _log.info("recalculate_single_analytics: job %d done", job_id)
     except Exception as exc:

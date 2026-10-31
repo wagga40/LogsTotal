@@ -419,7 +419,12 @@ def run_overlay(db, job_id: int) -> str:
 
         if enum_val(job.status) not in TERMINAL_JOB_STATUSES:
             return "no detection links yet (the analysis writes them when it finishes)"
-        return "no detection links (analysed before they were captured; recalculate analytics)"
+        # Analysed before links were captured: rebuild them from the raw outputs, while
+        # those still exist. Without this an older job's "Detections only" never worked.
+        links = rebuild_event_links(db, job_id)
+        if links is None:
+            note_link_failure(job_id, "This job was analysed before detections were linked to events, and its raw tool outputs, which linking needs, are no longer stored.")
+            return "no detection links, and no raw outputs left to rebuild them from"
     links_bytes = orjson.dumps(links)
     links_sha = hashlib.sha256(links_bytes).hexdigest()[:16]
     current = job_artifacts.get_sync(db, job_id, job_artifacts.EVENT_OVERLAY)
@@ -468,6 +473,50 @@ def run_overlay(db, job_id: int) -> str:
         return f"overlay failed: {exc}"
     finally:
         shutil.rmtree(staging, ignore_errors=True)
+
+
+def rebuild_event_links(db, job_id: int) -> dict | None:
+    """A finished job's detection links, recomputed from its raw outputs and stored; None
+    when the outputs are gone. One parse, keeping no events: the same extraction the
+    analytics pass runs, with only the link sink attached."""
+    from app import job_artifacts
+    from app.intel.event_timeline import extract_all_from_raw_output, has_raw_output
+    from app.storage import job_outputs_dir
+    from app.tools.event_keys import LinkAccumulator
+
+    with job_outputs_dir(job_id) as job_dir:
+        if job_dir is None or not has_raw_output(job_id, job_dir=job_dir):
+            return None
+        sink = LinkAccumulator()
+        extract_all_from_raw_output(job_id, consumer=lambda _event: None, job_dir=job_dir, links=sink)
+    links = sink.result()
+    job_artifacts.put_sync(db, job_id, job_artifacts.EVENT_LINKS, links)
+    db.commit()
+    logger.info("Job %d: rebuilt %d detection links from raw outputs", job_id, len(links["links"]))
+    return links
+
+
+#: Why a job's detections cannot be linked, for the Explore pane to say so instead of waiting.
+_LINK_FAILURE_KEY = "logstotal:events:link-failed:{}"
+
+
+def note_link_failure(job_id: int, reason: str) -> None:
+    try:
+        from app.redis_client import get_redis
+
+        get_redis().set(_LINK_FAILURE_KEY.format(int(job_id)), reason, ex=3600)
+    except Exception:
+        pass
+
+
+def link_failure(job_id: int) -> str | None:
+    try:
+        from app.redis_client import get_redis
+
+        value = get_redis().get(_LINK_FAILURE_KEY.format(int(job_id)))
+    except Exception:
+        return None
+    return value.decode() if isinstance(value, bytes) else value
 
 
 def overlay_locations_for_job_sync(db, job) -> list[tuple[str, str]]:

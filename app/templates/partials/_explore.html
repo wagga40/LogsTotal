@@ -49,7 +49,11 @@
     <p class="text-xs text-amber-300">{{ store.warnings | join('; ') }}.</p>
     {% endif %}
     {% if not linked %}
-    <p class="text-xs text-gray-500">This job's detections are not linked to its events yet, so detection terms (det:, level:, rule:) are unavailable. That happens on its own once the index and the analysis have both finished.</p>
+    {% if link_status_url %}
+    {% include "partials/_explore_link_status.html" %}
+    {% else %}
+    <p class="text-xs text-gray-400">No job in this case has its detections linked to its events yet, so detection terms (det:, level:, rule:) are unavailable. Linking runs by itself; reload the tab in a moment.</p>
+    {% endif %}
     {% endif %}
   </form>
 

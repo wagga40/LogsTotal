@@ -359,3 +359,30 @@ async def test_case_explore_refusals_and_exports(test_client, async_db, events_e
     assert (off.status_code, off.text) == (missing.status_code, missing.text)
     await _login(test_client, USER)
     assert (await test_client.get(f"/intel/cases/{open_case.id}/explore-partial")).status_code == 403, "cases are member+, like every case route"
+
+
+async def test_an_unlinked_job_says_it_is_linking_then_offers_the_detections(member_client, async_db, events_env, fake_redis):
+    from sqlalchemy import delete
+
+    from app import job_artifacts
+    from app.models import JobArtifact
+
+    upload_dir, queued = events_env
+    job = await _indexed(async_db, upload_dir)
+    await async_db.execute(delete(JobArtifact).where(JobArtifact.job_id == job.id))
+    await async_db.commit()
+    pane = await member_client.get(f"/jobs/{job.id}/explore-partial")
+    assert "Linking this job" in pane.text and f'hx-get="/jobs/{job.id}/explore/link-status"' in pane.text
+    assert ("overlay", job.id) in queued, "opening the pane asks the worker to link"
+    assert 'name="det"' in pane.text and "disabled" in pane.text.split('name="det"')[1].split(">")[0]
+    still = await member_client.get(f"/jobs/{job.id}/explore/link-status")
+    assert 'hx-trigger="every 4s"' in still.text and 'hx-target="this"' in still.text, "never the form's inherited #explore-results"
+    fake_redis.set(f"logstotal:events:link-failed:{job.id}", "Its raw tool outputs are no longer stored.")
+    failed = await member_client.get(f"/jobs/{job.id}/explore/link-status")
+    assert "no longer stored" in failed.text and "every 4s" not in failed.text, "a failure stops the polling"
+    fake_redis.delete(f"logstotal:events:link-failed:{job.id}")
+    kind, version = job_artifacts.EVENT_OVERLAY
+    async_db.add(JobArtifact(job_id=job.id, kind=kind, version=version, payload=job_artifacts.pack({"gen": GEN, "links_sha": "ab12cd34", "rules": [], "detected_events": 0})))
+    await async_db.commit()
+    done = await member_client.get(f"/jobs/{job.id}/explore/link-status")
+    assert "now linked" in done.text and "Show detections" in done.text and "every 4s" not in done.text

@@ -147,3 +147,48 @@ def test_without_a_ready_store_the_overlay_waits(sync_db, ready_store):
     sync_db.query(EventStore).update({"status": "building"})
     sync_db.commit()
     assert run_overlay(sync_db, job.id) == "no ready store yet"
+
+
+def test_an_older_job_without_links_has_them_rebuilt_from_its_raw_outputs(sync_db, ready_store, monkeypatch):
+    """Jobs analysed before links were recorded never got an overlay, so "Detections only"
+    stayed disabled for them. The overlay task now re-reads the raw outputs first."""
+    from app import job_artifacts
+    from app.config import settings
+    from app.events.store import run_overlay
+    from app.intel import event_timeline
+    from app.models import JobArtifact
+
+    job, _store_dir = ready_store
+    stored = job_artifacts.get_sync(sync_db, job.id, job_artifacts.EVENT_LINKS)
+    sync_db.query(JobArtifact).filter(JobArtifact.job_id == job.id).delete()
+    sync_db.commit()
+    out = settings.upload_dir / f"job_{job.id}"
+    out.mkdir()
+    (out / "zircolite_output.json").write_text("[]")
+    seen = []
+
+    def fake_extract(job_id, *a, links=None, consumer=None, job_dir=None, **kw):
+        seen.append((job_id, job_dir is not None, consumer is not None))
+        rule = tuple(stored["rules"][0])
+        for link in stored["links"]:
+            links._append(rule, link[1:])
+        return {}, []
+
+    monkeypatch.setattr(event_timeline, "has_raw_output", lambda job_id, job_dir=None: True)
+    monkeypatch.setattr(event_timeline, "extract_all_from_raw_output", fake_extract)
+    outcome = run_overlay(sync_db, job.id)
+    assert outcome.startswith("1 detected events"), outcome
+    assert seen == [(job.id, True, True)], "one streaming parse, events not kept"
+    assert job_artifacts.get_sync(sync_db, job.id, job_artifacts.EVENT_LINKS)["links"] == stored["links"]
+
+
+def test_an_older_job_whose_outputs_are_gone_says_so(sync_db, ready_store, fake_redis):
+    from app import job_artifacts
+    from app.events.store import link_failure, run_overlay
+    from app.models import JobArtifact
+
+    job, _store_dir = ready_store
+    sync_db.query(JobArtifact).filter(JobArtifact.job_id == job.id, JobArtifact.kind == job_artifacts.EVENT_LINKS[0]).delete()
+    sync_db.commit()
+    assert "no raw outputs" in run_overlay(sync_db, job.id)
+    assert "no longer stored" in link_failure(job.id)

@@ -47,7 +47,7 @@ from app.events import cache, detail
 from app.events.engine import EngineBusy, EngineError, EngineTimeout, StorePart, StoreView, UnionView, get_engine
 from app.events.query import LEVELS, QueryError, Rule, Schema, column_filter_to_terms, combine, compile_query
 from app.events.state import PER_PAGE, ExploreState, column_label, default_columns
-from app.events.store import request_build_async, store_for_job_async
+from app.events.store import link_failure, request_build_async, store_for_job_async
 from app.models import AnalysisJob, CaseJobLink, EventStoreStatus, Finding, InvestigationCase, LogFile, TaskResult, User, can_explore_job, visible_job_filter
 from app.site_settings import get_site_settings
 from app.templates_config import templates
@@ -102,6 +102,7 @@ class _Target:
     page_url: str
     parts: list[_Part]
     coverage: dict | None = None
+    link_failure: str | None = None
 
     @property
     def base_url(self) -> str:
@@ -236,7 +237,7 @@ async def _job_target(db: AsyncSession, job, request: Request, user, site) -> tu
     overlay = await _job_overlay(db, job.id, row.gen)
     if overlay is not None:
         part.overlays.append(overlay)
-    return _Target("job", job.id, f"/jobs/{job.id}", [part]), None
+    return _Target("job", job.id, f"/jobs/{job.id}", [part], link_failure=None if overlay else link_failure(job.id)), None
 
 
 async def _explorable_case(db: AsyncSession, case_id: int, user: User):
@@ -364,6 +365,8 @@ def _base(target: _Target, view, schema: Schema, state: ExploreState, user, site
             "truncated": (view.manifest.get("totals") or {}).get("truncated"),
         },
         "coverage": target.coverage,
+        "link_failure": target.link_failure,
+        "link_status_url": f"{target.base_url}/link-status" if target.kind == "job" else None,
         "store_labels": target.labels,
         "linked": schema.overlay,
         "levels": LEVELS,
@@ -716,6 +719,27 @@ async def explore_build(job_id: int, request: Request, db: AsyncSession = Depend
         await activity.record("job.events_index", request=request, user=user, target_type="job", target_id=str(job_id))
     row, _sha = await store_for_job_async(db, job)
     return _job_status(request, job, row, user, site)
+
+
+@router.get("/{job_id}/explore/link-status", response_class=HTMLResponse)
+async def explore_link_status(job_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+    """While a job's detections are being linked: the notice that polls for the end of it.
+
+    Answers the notice again (still polling) until the overlay exists, then a notice with a
+    button that reloads the pane, never the pane itself: the user may be typing a search.
+    """
+    job, _site = await _explorable_job(db, job_id, user)
+    row, _sha = await store_for_job_async(db, job)
+    meta = await job_artifacts.get_payload(db, job.id, job_artifacts.EVENT_OVERLAY)
+    overlay = job_artifacts.unpack(meta) if meta else None
+    linked = bool(row and overlay and overlay.get("gen") == row.gen)
+    context = {
+        "linked": linked,
+        "link_failure": None if linked else link_failure(job.id),
+        "link_status_url": f"/jobs/{job.id}/explore/link-status",
+        "base_url": f"/jobs/{job.id}/explore",
+    }
+    return _render(request, "partials/_explore_link_status.html", context)
 
 
 @router.get("/{job_id}/explore/results", response_class=HTMLResponse)
