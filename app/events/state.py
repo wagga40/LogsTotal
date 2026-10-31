@@ -22,7 +22,16 @@ MAX_COLUMNS = 30
 #: Fields a stack groups by: beyond three, nearly every combination is unique and the
 #: "rarest first" view stops singling anything out.
 MAX_STACK = 3
-FIXED_LABELS = {"_lt_time": "Time (UTC)", "_lt_host": "Host", "_lt_channel": "Channel", "_lt_eid": "Event ID", "_lt_rid": "Record ID", "_lt_seq": "Sequence", "_lt_line": "Line"}
+FIXED_LABELS = {
+    "_lt_time": "Time (UTC)",
+    "_lt_store": "Source",
+    "_lt_host": "Host",
+    "_lt_channel": "Channel",
+    "_lt_eid": "Event ID",
+    "_lt_rid": "Record ID",
+    "_lt_seq": "Sequence",
+    "_lt_line": "Line",
+}
 DEFAULT_COLUMNS = ("_lt_time", "_lt_host", "_lt_channel", "_lt_eid")
 #: After the fixed columns, the first two of these the store has, as the summary columns.
 SUMMARY_CANDIDATES = ("CommandLine", "Image", "TargetUserName", "ServiceName", "QueryName", "proctitle", "exe", "MESSAGE", "message")
@@ -109,10 +118,12 @@ class ExploreState:
         return urlencode(self.pairs(**override))
 
 
-def default_columns(manifest: dict) -> tuple[str, ...]:
+def default_columns(manifest: dict, *, union: bool = False) -> tuple[str, ...]:
+    """Time, host, channel, event id and two summary fields; across a case, the Source too."""
     names = {c["name"] for c in manifest.get("columns") or []}
     summary = [c for c in SUMMARY_CANDIDATES if c in names][:2]
-    return (*DEFAULT_COLUMNS, *summary)
+    fixed = ("_lt_time", "_lt_store", *DEFAULT_COLUMNS[1:]) if union else DEFAULT_COLUMNS
+    return (*fixed, *summary)
 
 
 def column_label(name: str) -> str:

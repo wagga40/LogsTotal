@@ -341,6 +341,8 @@ app.include_router(intel.router)
 app.include_router(intel_rules.router)
 app.include_router(intel_tags.router)
 app.include_router(cases.router)
+# /intel/cases/{case_id}/explore…, after cases for the same reason explore follows ai.
+app.include_router(explore.case_router)
 app.include_router(case_ai.router)
 app.include_router(comments.router)
 app.include_router(workflows.router)

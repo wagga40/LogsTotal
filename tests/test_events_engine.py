@@ -226,7 +226,8 @@ def test_the_engine_rules_hold_in_the_source():
     tree = ast.parse(source)
     executes = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute) and n.func.attr == "execute"]
     on_connection = [n for n in executes if isinstance(n.func.value, ast.Attribute) and n.func.value.attr == "_con"]
-    init = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == "__init__")
+    engine_class = next(n for n in ast.walk(tree) if isinstance(n, ast.ClassDef) and n.name == "Engine")
+    init = next(n for n in engine_class.body if isinstance(n, ast.FunctionDef) and n.name == "__init__")
     assert all(init.lineno <= n.lineno <= init.end_lineno for n in on_connection), "outside setup, every query runs on its own cursor"
     sets = re.findall(r'"(SET [^"]*)', source)
     assert sets and all(s.startswith("SET GLOBAL ") for s in sets), sets
@@ -294,3 +295,66 @@ def test_an_export_cannot_hold_its_slot_forever(store, monkeypatch):
         next(stream)
     monkeypatch.setattr(engine_mod, "EXPORT_MAX_SECONDS", 300)
     assert [r[0] for b in eng.export(view, _q(schema, ""), ["_lt_uid"], max_rows=1) for r in b] == [TIME_ORDER[0]], "both slots were released"
+
+
+# ── several stores as one (case-wide Explore) ───────────────────────────────
+
+
+def _second_store(root: Path) -> dict:
+    """Two events on another host, with EventID typed as text there (a conflict to merge)."""
+    root.mkdir(parents=True)
+    con = duckdb.connect()
+    con.execute(
+        "CREATE TABLE e (_lt_uid BIGINT, _lt_time TIMESTAMP, _lt_host VARCHAR, _lt_channel VARCHAR, _lt_eid BIGINT, _lt_rid BIGINT, _lt_seq BIGINT,"
+        ' _lt_line BIGINT, _lt_family VARCHAR, _lt_extra VARCHAR, "EventID" VARCHAR, "Extra" VARCHAR)'
+    )
+    con.execute("INSERT INTO e VALUES (0, '2026-01-01 09:30:00', 'srv9', 'security', 4688, 1, NULL, NULL, 'security|4688', NULL, '4688', 'cmd payload')")
+    con.execute("INSERT INTO e VALUES (1, '2026-01-03 00:00:00', 'srv9', 'security', 4624, 2, NULL, NULL, 'security|4624', NULL, '4624', NULL)")
+    con.execute(f"COPY e TO '{root}/events.parquet' (FORMAT parquet)")
+    con.execute(f"COPY (SELECT _lt_uid, lower(concat_ws(chr(31), _lt_host, \"Extra\")) AS _lt_text FROM e) TO '{root}/text.parquet' (FORMAT parquet)")
+    ov = root / "overlays" / "job_9"
+    ov.mkdir(parents=True)
+    con.execute(f"COPY (SELECT 0::BIGINT AS _lt_uid, 0::BIGINT AS rule_ix) TO '{ov}/hits.parquet' (FORMAT parquet)")
+    con.execute(f"COPY (SELECT 0::BIGINT AS _lt_uid, 4 AS level_rank, 1::BIGINT AS n_rules, 1::BIGINT AS tools_mask) TO '{ov}/levels.parquet' (FORMAT parquet)")
+    con.close()
+    return {
+        "columns": [{"name": "EventID", "type": "VARCHAR", "path": "System/EventID", "count": 2}, {"name": "Extra", "type": "VARCHAR", "path": "Extra", "count": 1}],
+        "totals": {"events": 2, "undated": 0},
+        "time": {"min": "2026-01-01T09:30:00", "max": "2026-01-03T00:00:00"},
+        "text_index": {"present": True},
+    }
+
+
+@pytest.fixture()
+def union(store):
+    from app.events.engine import StorePart, UnionView, merge_manifests
+
+    eng, view, _schema, tmp_path = store
+    second = tmp_path / "events" / "t" / GEN
+    manifest2 = _second_store(second)
+    parts = [StorePart(view.root, view.manifest, ((view.overlay, 0),)), StorePart(second.resolve(), manifest2, ((second.resolve() / "overlays" / "job_9", len(RULES)),))]
+    uv = UnionView(parts, gen="case-test", overlay_tag="u1")
+    rules = (*RULES, Rule(3, "sigma", "d", "Second store rule", "critical"))
+    schema = Schema.from_manifest(merge_manifests([view.manifest, manifest2]), overlay=True, rules=rules)
+    return eng, uv, schema
+
+
+def test_a_union_counts_and_orders_across_stores(union):
+    eng, uv, schema = union
+    assert eng.count(uv, _q(schema, "")) == 8 and uv.columns["EventID"] == "VARCHAR", "BIGINT in one store, text in the other"
+    rows = eng.page(uv, _q(schema, ""), limit=20, columns=["_lt_store", "_lt_host"]).rows
+    assert [(r["_lt_store"], r["_lt_uid"] & ((1 << 40) - 1)) for r in rows] == [(0, 3), (1, 0), (0, 0), (0, 1), (0, 5), (0, 4), (1, 1), (0, 2)]
+    assert eng.count(uv, _q(schema, "host:srv9")) == 2 and eng.count(uv, _q(schema, "payload")) == 1
+    assert eng.count(uv, _q(schema, "EventID:4688")) == 1, "a merged text column still matches its numbers"
+
+
+def test_a_union_keeps_each_jobs_rules_apart(union):
+    eng, uv, schema = union
+    assert eng.count(uv, _q(schema, "det:yes")) == 3
+    assert eng.count(uv, _q(schema, "level:critical")) == 1 and eng.count(uv, _q(schema, "rule:*second*")) == 1
+    assert eng.count(uv, _q(schema, "rule:whoami")) == 1, "the first store's rule 0 is not the second store's rule 0"
+    uid = (1 << 40) + 0
+    event = eng.event(uv, uid)
+    assert event["rules"] == [3] and event["fields"]["_lt_store"] == 1 and event["fields"]["Extra"] == "cmd payload"
+    hist = eng.histogram(uv, _q(schema, ""), width_px=48)
+    assert sum(hist["counts"]) == 7 and sum(hist["detected"]) == 3

@@ -100,7 +100,7 @@
             @click="open({{ row._lt_uid }})">
           <td class="pl-2 align-middle">{% if row._det is defined and row._det is not none %}<span class="inline-block w-2 h-2 rounded-full {{ sev_dot(levels[row._det]) }}" title="Detected: {{ levels[row._det] }}{% if row._rules and row._rules > 1 %}, {{ row._rules }} rules{% endif %}"></span>{% endif %}</td>
           {% for c in columns %}
-          {% set text = cell(row[c]) %}
+          {% set text = store_labels[row[c]] if c == '_lt_store' and row[c] is not none and row[c] < store_labels | length else cell(row[c]) %}
           <td class="px-2 py-1 font-mono text-gray-300 max-w-[28rem] truncate" title="{{ text }}">{{ text }}</td>
           {% endfor %}
         </tr>

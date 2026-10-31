@@ -548,7 +548,10 @@ findings and never its events. Every refusal is the same 404 a missing job retur
 routes cannot be used to probe which jobs exist. The full process tree on the job page
 follows the same rule; everyone else keeps the tree of matched processes only.
 
-- **Exports are audited** (`export.job_events`, with the search that produced them) and rate
+- **On a case**, Explore is member+ like every case page, and reads only the case's jobs the
+  viewer may see (`visible_job_filter`): a private job another member linked into a shared
+  case contributes nothing.
+- **Exports are audited** (`export.job_events`, `export.case_events`, with the search that produced them) and rate
   limited per user (`EVENTS_EXPORT_RATE_LIMIT_PER_MINUTE`). CSV cells are defused against
   spreadsheet formula injection.
 - **Indexes are copies of the uploads.** They sit beside the uploads in the same storage

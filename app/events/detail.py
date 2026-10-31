@@ -14,7 +14,7 @@ from datetime import datetime
 from app.events.state import FIXED_LABELS
 
 #: Fixed columns shown in the drawer's first group, in this order.
-_FIXED_SHOWN = ("_lt_time", "_lt_host", "_lt_channel", "_lt_eid", "_lt_rid", "_lt_seq", "_lt_line")
+_FIXED_SHOWN = ("_lt_time", "_lt_store", "_lt_host", "_lt_channel", "_lt_eid", "_lt_rid", "_lt_seq", "_lt_line")
 
 
 def _display(value: object) -> str:

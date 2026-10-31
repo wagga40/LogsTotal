@@ -290,3 +290,72 @@ async def test_stacking_lists_combinations_rarest_first(member_client, async_db,
     assert "1</strong> of 4 events" in narrowed.text, "the term finds exactly that combination"
     capped = await member_client.get(f"/jobs/{job.id}/explore/results", params={"stack": "EventID,Image,User,CommandLine"})
     assert capped.text.count('title="Remove ') == 3, "three fields at most"
+
+
+# ── case-wide Explore ───────────────────────────────────────────────────────
+
+
+async def _case(async_db, owner, jobs, *, shared=True):
+    from app.models import CaseJobLink, InvestigationCase
+
+    case = InvestigationCase(name="C", status="open", created_by_user_id=owner.id, is_shared=shared)
+    async_db.add(case)
+    await async_db.flush()
+    async_db.add_all([CaseJobLink(case_id=case.id, job_id=j.id, added_by_user_id=owner.id) for j in jobs])
+    await async_db.commit()
+    return case
+
+
+async def test_a_case_explores_every_visible_jobs_upload_as_one(test_client, async_db, events_env, people):
+    upload_dir, _ = events_env
+    first = await _indexed(async_db, upload_dir)
+    second = await _indexed(async_db, upload_dir)
+    hidden = await _indexed(async_db, upload_dir, submitter=people["admin"].id, private=True)
+    unindexed, _lf = await _job(async_db)
+    case = await _case(async_db, people["admin"], [first, second, hidden, unindexed])
+    await _login(test_client, MEMBER)
+    pane = await test_client.get(f"/intel/cases/{case.id}/explore-partial")
+    assert pane.status_code == 200 and "8</strong> of 8 events" in pane.text, "two uploads; the private one is left out"
+    assert "from 2 of the 3 jobs in this case you can see" in pane.text and f'href="/jobs/{unindexed.id}#explore"' in pane.text
+    assert f"s.json (#{first.id})" in pane.text, "the Source column names the upload and its job"
+    det = await test_client.get(f"/intel/cases/{case.id}/explore/results", params={"det": "1"})
+    assert "2</strong> of 8 events" in det.text, "each job's detection on its own upload"
+    assert det.headers["HX-Replace-Url"] == f"/intel/cases/{case.id}?det=1#explore"
+    await _login(test_client, ADMIN)
+    assert "12</strong> of 12 events" in (await test_client.get(f"/intel/cases/{case.id}/explore-partial")).text, "an admin sees the private job too"
+    uid = (1 << 40) + 0
+    drawer = await test_client.get(f"/intel/cases/{case.id}/explore/event", params={"uid": uid})
+    assert "Source" in drawer.text and f"(#{second.id})" in drawer.text
+
+
+async def test_case_explore_refusals_and_exports(test_client, async_db, events_env, people, monkeypatch):
+    from sqlalchemy import select
+
+    from app.config import settings
+    from app.models import ActivityEvent
+    from app.site_settings import get_site_settings
+
+    upload_dir, _ = events_env
+    job = await _indexed(async_db, upload_dir)
+    private_case = await _case(async_db, people["admin"], [job], shared=False)
+    open_case = await _case(async_db, people["admin"], [job])
+    empty_case = await _case(async_db, people["admin"], [(await _job(async_db))[0]])
+    await _login(test_client, MEMBER)
+    missing = await test_client.get("/intel/cases/999999/explore-partial")
+    assert missing.status_code == 404
+    hidden = await test_client.get(f"/intel/cases/{private_case.id}/explore-partial")
+    assert (hidden.status_code, hidden.text) == (missing.status_code, missing.text)
+    assert "None of the 1 job" in (await test_client.get(f"/intel/cases/{empty_case.id}/explore-partial")).text
+    site = await get_site_settings(async_db)
+    site.activity_log_enabled = True
+    await async_db.commit()
+    export = await test_client.get(f"/intel/cases/{open_case.id}/explore/export.csv")
+    assert export.status_code == 200 and export.headers["content-disposition"].endswith(f'case-{open_case.id}-events.csv"')
+    assert export.text.lstrip("﻿").splitlines()[0].startswith("Time (UTC),Source,Host")
+    audited = (await async_db.scalars(select(ActivityEvent).where(ActivityEvent.action == "export.case_events"))).all()
+    assert [(a.target_type, a.target_id) for a in audited] == [("case", str(open_case.id))]
+    monkeypatch.setattr(settings, "events_enabled", False)
+    off = await test_client.get(f"/intel/cases/{open_case.id}/explore-partial")
+    assert (off.status_code, off.text) == (missing.status_code, missing.text)
+    await _login(test_client, USER)
+    assert (await test_client.get(f"/intel/cases/{open_case.id}/explore-partial")).status_code == 403, "cases are member+, like every case route"

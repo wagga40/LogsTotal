@@ -20,6 +20,15 @@ Explore always applies the job's own visibility first: a private job stays visib
 its submitter and admins. Every refusal answers exactly like a job that does not exist.
 Explore needs both `EVENTS_ENABLED` (environment) and **Explore** on `/admin/settings`.
 
+## On a case
+
+The case page has an Explore tab too (member+, like every case page). It reads the indexes
+of every job in the case the viewer may see, as one table with a **Source** column, and
+links each job's detections to its own upload. A banner counts the case's jobs that are
+indexed and links the ones that are not. One case explores at most 20 uploads at once; the
+banner says when some were left out. Exports from it are audited as **Case events
+exported**.
+
 ## How an index is built
 
 1. When a worker picks up a job, it asks for an index of the upload. One index serves every

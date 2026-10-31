@@ -171,6 +171,7 @@ ACTIONS: dict[str, ActionSpec] = {
     "export.job_analysis": ActionSpec("export", "Job analysis report exported"),
     "export.job_raw": ActionSpec("export", "Raw job output downloaded"),
     "export.job_events": ActionSpec("export", "Job events exported"),
+    "export.case_events": ActionSpec("export", "Case events exported"),
 }
 
 

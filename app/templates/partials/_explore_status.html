@@ -1,6 +1,6 @@
 {#
   The Explore pane before its index is ready: none yet, queued, building, failed, evicted, or
-  (on S3) being fetched to this server.
+  (on S3) being fetched to this server. On a case, `case-none`: none of its jobs is indexed.
 
   While work is in flight the region polls `explore-partial` every 5s with an outerHTML swap
   of itself. The ready pane carries no trigger, so the first poll that finds the index ready
@@ -8,7 +8,7 @@
 #}
 <div id="explore-region" hx-history="false"
      class="bg-gray-900 border border-gray-800 rounded-xl p-6"
-     {% if phase in ('pending', 'building', 'preparing') %}hx-get="/jobs/{{ job.id }}/explore-partial" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
+     {% if phase in ('pending', 'building', 'preparing') %}hx-get="{{ pane_url }}" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
   <h3 class="text-sm font-semibold text-gray-200 mb-2">Explore every event</h3>
   {% if phase == 'none' %}
   <p class="text-sm text-gray-400">This upload has no event index yet. The index holds every event of the log, not only the ones a rule matched, so you can search, chart and export all of them.</p>
@@ -20,6 +20,8 @@
   <p class="text-sm text-gray-400">Fetching the event index from storage. This page updates by itself.</p>
   {% elif phase == 'failed' %}
   <p class="text-sm text-red-300">The event index could not be built{% if row and row.error_message %}: {{ row.error_message }}{% else %}.{% endif %}</p>
+  {% elif phase == 'case-none' %}
+  <p class="text-sm text-gray-400">None of the {{ coverage.jobs }} job{{ '' if coverage.jobs == 1 else 's' }} in this case you can see has an event index yet. Open a job and build its index from its Explore tab; new uploads are indexed automatically.</p>
   {% elif phase == 'evicted' %}
   <p class="text-sm text-gray-400">The event index was removed to save space. It can be rebuilt from the upload.</p>
   {% else %}
@@ -28,7 +30,7 @@
   {% if can_build %}
   <div class="mt-4">
     <button type="button" class="lt-btn lt-btn--primary lt-btn--sm"
-            hx-post="/jobs/{{ job.id }}/explore/build" hx-target="#explore-region" hx-swap="outerHTML">
+            hx-post="{{ build_url }}" hx-target="#explore-region" hx-swap="outerHTML">
       {{ 'Try again' if phase == 'failed' else 'Build event index' }}
     </button>
   </div>

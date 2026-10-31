@@ -122,6 +122,141 @@ class StoreView:
                 return [c for c in family.get("columns") or [] if c in known]
         return None
 
+    # The sources a query reads, as SQL table expressions. A UnionView answers the same names.
+
+    @property
+    def order_source(self) -> str | None:
+        return f"read_parquet({_lit(self.root / 'order.parquet')})"
+
+    @property
+    def text_source(self) -> str:
+        return f"read_parquet({_lit(self.root / 'text.parquet')})"
+
+    @property
+    def hits_source(self) -> str | None:
+        return f"read_parquet({_lit(self.overlay / 'hits.parquet')})" if self.overlay is not None else None
+
+    @property
+    def levels_source(self) -> str | None:
+        return f"read_parquet({_lit(self.overlay / 'levels.parquet')})" if self.overlay is not None else None
+
+
+#: Bits a part's index occupies in a UnionView uid: up to 2^40 events per store.
+UNION_SHIFT = 40
+
+
+@dataclass(frozen=True)
+class StorePart:
+    """One store inside a UnionView, with the overlays of the jobs on it that are in scope.
+
+    Each overlay comes with the offset its `rule_ix` values move by, so the rules of every
+    job form one table: two jobs' rule 0 are different rules.
+    """
+
+    root: Path
+    manifest: dict
+    overlays: tuple[tuple[Path, int], ...] = ()
+
+
+class UnionView:
+    """Several stores queried as one (case-wide Explore).
+
+    Each part's events keep their columns (`UNION ALL BY NAME`: a field one store lacks is
+    NULL there, and a field typed differently across stores is read as text) and gain
+    `_lt_store`, the part's index. Uids are made unique by adding `index << UNION_SHIFT`,
+    so every query, match-set and grammar term written for one store works unchanged.
+    """
+
+    def __init__(self, parts: list[StorePart], *, gen: str, overlay_tag: str = ""):
+        if not parts:
+            raise EngineError("no store to explore")
+        self.parts = tuple(parts)
+        self.gen = gen
+        self.overlay_tag = overlay_tag
+        self.manifest = merge_manifests([p.manifest for p in parts])
+        self.root = None
+        self.overlay = None
+
+    def _union(self, select: str, file: str, *, parts=None) -> str:
+        branches = [select.format(shift=k << UNION_SHIFT, k=k, src=f"read_parquet({_lit(part.root / file)})") for k, part in enumerate(self.parts) if parts is None or k in parts]
+        return "(" + " UNION ALL BY NAME ".join(branches) + ")"
+
+    @property
+    def events(self) -> str:
+        return self._union("SELECT * REPLACE (_lt_uid + {shift} AS _lt_uid), CAST({k} AS BIGINT) AS _lt_store FROM {src}", "events.parquet")
+
+    @property
+    def columns(self) -> dict[str, str]:
+        types = {name: _FIXED_TYPES.get(name, "VARCHAR") for name in FIXED}
+        types["_lt_store"] = "BIGINT"
+        types.update({c["name"]: c["type"] for c in self.manifest.get("columns") or []})
+        return types
+
+    column = StoreView.column
+    family_columns = StoreView.family_columns
+
+    @property
+    def order_source(self) -> str | None:
+        return None  # each store's order is its own; the union sorts
+
+    @property
+    def text_source(self) -> str:
+        return self._union("SELECT _lt_uid + {shift} AS _lt_uid, _lt_text FROM {src}", "text.parquet")
+
+    def _overlay_union(self, select: str, file: str) -> str | None:
+        branches = [
+            select.format(shift=k << UNION_SHIFT, offset=offset, src=f"read_parquet({_lit(path / file)})") for k, part in enumerate(self.parts) for path, offset in part.overlays
+        ]
+        return ("(" + " UNION ALL ".join(branches) + ")") if branches else None
+
+    @property
+    def hits_source(self) -> str | None:
+        return self._overlay_union("SELECT _lt_uid + {shift} AS _lt_uid, rule_ix + {offset} AS rule_ix FROM {src}", "hits.parquet")
+
+    @property
+    def levels_source(self) -> str | None:
+        inner = self._overlay_union("SELECT _lt_uid + {shift} AS _lt_uid, level_rank, n_rules FROM {src}", "levels.parquet")
+        if inner is None:
+            return None
+        # Two jobs on one upload can both have detected an event: keep its highest level.
+        return f"(SELECT _lt_uid, max(level_rank) AS level_rank, sum(n_rules) AS n_rules FROM {inner} GROUP BY _lt_uid)"  # noqa: S608 — server-built paths
+
+
+def merge_manifests(manifests: list[dict]) -> dict:
+    """One manifest for several stores: their columns (a type conflict reads as text, counts
+    add up), totals, time span and families; free text only when every store has it."""
+    columns: dict[str, dict] = {}
+    families: dict[tuple, set] = {}
+    totals = {"events": 0, "undated": 0, "truncated": False}
+    lows, highs, warnings = [], [], []
+    for manifest in manifests:
+        for c in manifest.get("columns") or []:
+            seen = columns.get(c["name"].lower())
+            if seen is None:
+                columns[c["name"].lower()] = {"name": c["name"], "type": c["type"], "path": c.get("path") or c["name"], "count": int(c.get("count") or 0)}
+            else:
+                seen["count"] += int(c.get("count") or 0)
+                if seen["type"] != c["type"]:
+                    seen["type"] = "VARCHAR"
+        for f in manifest.get("families") or []:
+            families.setdefault((f.get("channel"), f.get("eid")), set()).update(f.get("columns") or [])
+        t = manifest.get("totals") or {}
+        totals["events"] += int(t.get("events") or 0)
+        totals["undated"] += int(t.get("undated") or 0)
+        totals["truncated"] = totals["truncated"] or bool(t.get("truncated"))
+        span = manifest.get("time") or {}
+        lows += [span["min"]] if span.get("min") else []
+        highs += [span["max"]] if span.get("max") else []
+        warnings += manifest.get("warnings") or []
+    return {
+        "columns": list(columns.values()),
+        "families": [{"channel": ch, "eid": eid, "columns": sorted(cols)} for (ch, eid), cols in families.items()],
+        "totals": totals,
+        "time": {"min": min(lows) if lows else None, "max": max(highs) if highs else None},
+        "text_index": {"present": all((m.get("text_index") or {}).get("present") for m in manifests)},
+        "warnings": list(dict.fromkeys(warnings)),
+    }
+
 
 @dataclass(frozen=True)
 class Page:
@@ -194,18 +329,18 @@ class Engine:
     def _ctes(self, view: StoreView, compiled: Compiled, *extra: str) -> list[str]:
         parts = []
         if "hits" in compiled.needs or "hits" in extra:
-            parts.append(f"{HITS} AS (SELECT * FROM read_parquet({_lit(self._overlay_file(view, 'hits.parquet'))}))")  # noqa: S608 — server-built paths and manifest identifiers; values are bound
+            parts.append(f"{HITS} AS (SELECT * FROM {self._linked(view.hits_source)})")  # noqa: S608 — server-built sources
         if "levels" in compiled.needs or "levels" in extra:
-            parts.append(f"{LEVELS_TABLE} AS (SELECT * FROM read_parquet({_lit(self._overlay_file(view, 'levels.parquet'))}))")  # noqa: S608 — server-built paths and manifest identifiers; values are bound
+            parts.append(f"{LEVELS_TABLE} AS (SELECT * FROM {self._linked(view.levels_source)})")  # noqa: S608 — server-built sources
         if "text" in compiled.needs:
-            parts.append(f"{TEXT} AS (SELECT * FROM read_parquet({_lit(view.root / 'text.parquet')}))")  # noqa: S608 — server-built paths and manifest identifiers; values are bound
+            parts.append(f"{TEXT} AS (SELECT * FROM {view.text_source})")  # noqa: S608 — server-built sources
         return parts
 
     @staticmethod
-    def _overlay_file(view: StoreView, name: str) -> Path:
-        if view.overlay is None:
+    def _linked(source: str | None) -> str:
+        if source is None:
             raise EngineError("this job's detections are not linked to the store yet")
-        return view.overlay / name
+        return source
 
     def _filter(self, view: StoreView, compiled: Compiled) -> tuple[str, list]:
         """(WHERE body, params) for *compiled*: its match-set when one exists, else the query."""
@@ -306,9 +441,8 @@ class Engine:
         offset, limit = max(0, int(offset)), max(1, min(PAGE_MAX, int(limit)))
         if sort is not None:
             view.column(sort)
-        if compiled.where is None and sort is None:
-            order = view.root / "order.parquet"
-            uids = [r[0] for r in self._run(f"SELECT _lt_uid FROM read_parquet({_lit(order)}) WHERE _lt_pos >= ? AND _lt_pos < ? ORDER BY _lt_pos", [offset, offset + limit])]  # noqa: S608
+        if compiled.where is None and sort is None and view.order_source is not None:
+            uids = [r[0] for r in self._run(f"SELECT _lt_uid FROM {view.order_source} WHERE _lt_pos >= ? AND _lt_pos < ? ORDER BY _lt_pos", [offset, offset + limit])]  # noqa: S608
         elif self._wants_match_set(compiled, sort, offset):
             path = self.match_set(view, compiled, sort, desc)
             uids = [r[0] for r in self._run(f"SELECT _lt_uid FROM read_parquet({_lit(path)}) WHERE _m_pos >= ? AND _m_pos < ? ORDER BY _m_pos", [offset, offset + limit])]  # noqa: S608
@@ -325,9 +459,8 @@ class Engine:
         names = [view.column(c) for c in dict.fromkeys(wanted)]
         ids = ", ".join(str(int(u)) for u in uids)  # our own integers
         got = {r[0]: dict(zip(names, r, strict=True)) for r in self._run(f"SELECT {', '.join(map(_ident, names))} FROM {view.events} WHERE _lt_uid IN ({ids})")}  # noqa: S608
-        if view.overlay is not None:
-            levels = _lit(view.overlay / "levels.parquet")
-            for uid, rank, n_rules in self._run(f"SELECT _lt_uid, level_rank, n_rules FROM read_parquet({levels}) WHERE _lt_uid IN ({ids})"):  # noqa: S608
+        if view.levels_source is not None:
+            for uid, rank, n_rules in self._run(f"SELECT _lt_uid, level_rank, n_rules FROM {view.levels_source} WHERE _lt_uid IN ({ids})"):  # noqa: S608
                 if uid in got:
                     got[uid]["_det"], got[uid]["_rules"] = rank, n_rules
         return [got[u] for u in uids if u in got]
@@ -342,7 +475,7 @@ class Engine:
         if start is None or end is None:
             return {"bucket_seconds": 0, "origin": None, "counts": [], "detected": []}
         ax = histogram.axis(start, end, width_px)
-        linked = view.overlay is not None
+        linked = view.levels_source is not None
         ctes, sql, params = self._matched(view, compiled, "_lt_uid, _lt_time", *(("levels",) if linked else ()))
         detected = "count(l._lt_uid)" if linked else "0"
         join = f" LEFT JOIN {LEVELS_TABLE} l ON l._lt_uid = m._lt_uid" if linked else ""
@@ -393,12 +526,13 @@ class Engine:
         # Only the columns this event's family can hold (the manifest lists them): decoding all
         # ~300 columns of a wide store for one row cost 57 ms, its family's ~30 a few.
         family = view.family_columns(*head[0])
-        select = "*" if family is None else ", ".join(_ident(c) for c in dict.fromkeys([*FIXED, *family]))
+        fixed = [*FIXED, "_lt_store"] if "_lt_store" in view.columns else list(FIXED)
+        select = "*" if family is None else ", ".join(_ident(c) for c in dict.fromkeys([*fixed, *family]))
         names, rows = self._run(f"SELECT {select} FROM {view.events} WHERE _lt_uid = ?", [int(uid)], names=True)  # noqa: S608
         record = dict(zip(names, rows[0], strict=True))
         rules: list[int] = []
-        if view.overlay is not None:
-            rules = [r[0] for r in self._run(f"SELECT rule_ix FROM read_parquet({_lit(view.overlay / 'hits.parquet')}) WHERE _lt_uid = ? ORDER BY rule_ix", [int(uid)])]  # noqa: S608
+        if view.hits_source is not None:
+            rules = [r[0] for r in self._run(f"SELECT DISTINCT rule_ix FROM {view.hits_source} WHERE _lt_uid = ? ORDER BY rule_ix", [int(uid)])]  # noqa: S608
         return {"fields": {k: v for k, v in record.items() if v is not None}, "rules": rules}
 
     def export(self, view: StoreView, compiled: Compiled, columns: list[str], *, max_rows: int) -> Iterator[list[tuple]]:

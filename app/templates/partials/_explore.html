@@ -38,6 +38,13 @@
     <input type="hidden" name="from" value="{{ state.start.isoformat() if state.start else '' }}" x-ref="from">
     <input type="hidden" name="to" value="{{ state.end.isoformat() if state.end else '' }}" x-ref="to">
     <input type="hidden" name="stack" value="{{ state.stack | join(',') }}" x-ref="stack">
+    {% if coverage %}
+    <p class="text-xs text-gray-400">
+      Every event of {{ coverage.uploads }} upload{{ '' if coverage.uploads == 1 else 's' }}, from {{ coverage.indexed }} of the {{ coverage.jobs }} job{{ '' if coverage.jobs == 1 else 's' }} in this case you can see.
+      {% if coverage.missing_total %}Not indexed yet: {% for j in coverage.missing %}<a class="text-blue-400 hover:underline" href="/jobs/{{ j.id }}#explore">#{{ j.id }}</a>{% if not loop.last %}, {% endif %}{% endfor %}{% if coverage.missing_total > coverage.missing | length %} and {{ coverage.missing_total - coverage.missing | length }} more{% endif %}.{% endif %}
+      {% if coverage.skipped %}{{ coverage.skipped }} job{{ '' if coverage.skipped == 1 else 's' }} left out: a case explores at most 20 uploads at once.{% endif %}
+    </p>
+    {% endif %}
     {% if store.warnings %}
     <p class="text-xs text-amber-300">{{ store.warnings | join('; ') }}.</p>
     {% endif %}

@@ -1,17 +1,21 @@
-"""Explore: search, filter, chart and export every event of a job's upload.
+"""Explore: search, filter, chart and export every event of a job's upload, or of a case.
 
-Mounted at `/jobs` after `jobs.router` and `ai.router`, whose literal second segments keep
-their precedence; every route here is `/{job_id}/explore…`.
+Two routers share every handler through `_Target`:
 
-**Access is narrower than the job page.** Explore shows events no rule fired on, so it needs
-`models.can_explore_job` (active, `can_view_job`, and member+ or the job's own signed-in
-submitter) on top of `EVENTS_ENABLED` and `SiteSettings.show_explore`. **Every refusal is
-`HTTPException(404, "Job not found.")`**, the body `job_detail` answers for a job that does
-not exist: a public job someone may read but not explore, a private job, an off switch and
-a missing id must be indistinguishable, or the 404 becomes a probe.
+- `router`, at `/jobs`, mounted after `jobs.router` and `ai.router` (whose literal second
+  segments keep their precedence): `/{job_id}/explore…`.
+- `case_router`, at `/intel/cases`, mounted after `cases.router`: `/{case_id}/explore…`,
+  every event of every visible job in the case, as one table (`engine.UnionView`).
+
+**Access is narrower than the job page.** Explore shows events no rule fired on, so a job
+needs `models.can_explore_job` (active, `can_view_job`, and member+ or the job's own
+signed-in submitter), and a case needs member+ and a case the viewer may see, with each of
+its jobs through `visible_job_filter`. Both need `EVENTS_ENABLED` and
+`SiteSettings.show_explore`. **Every refusal is the 404 a missing job or case answers**,
+so the routes cannot be used to probe what exists.
 
 Queries are blocking DuckDB work in `app/events/engine.py`; every call goes through
-`run_in_threadpool`, and the closure handed over takes plain values only — never an ORM
+`run_in_threadpool`, and the closures handed over take plain values only — never an ORM
 instance, whose lazy read inside a worker thread is a `MissingGreenlet`.
 """
 
@@ -19,9 +23,11 @@ from __future__ import annotations
 
 import contextlib
 import csv
+import hashlib
 import io
 import logging
 import re
+from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 
 import orjson
@@ -32,68 +38,143 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import activity, job_artifacts
-from app.auth.users import current_user_optional
+from app.auth.users import current_member_or_above, current_user_optional
 from app.config import settings
 from app.constants import SEVERITY_COLORS
 from app.csv_utils import csv_safe
 from app.database import get_async_session
 from app.events import cache, detail
-from app.events.engine import EngineBusy, EngineError, EngineTimeout, StoreView, get_engine
+from app.events.engine import EngineBusy, EngineError, EngineTimeout, StorePart, StoreView, UnionView, get_engine
 from app.events.query import LEVELS, QueryError, Rule, Schema, column_filter_to_terms, combine, compile_query
 from app.events.state import PER_PAGE, ExploreState, column_label, default_columns
 from app.events.store import request_build_async, store_for_job_async
-from app.models import AnalysisJob, EventStoreStatus, Finding, TaskResult, User, can_explore_job
+from app.models import AnalysisJob, CaseJobLink, EventStoreStatus, Finding, InvestigationCase, LogFile, TaskResult, User, can_explore_job, visible_job_filter
 from app.site_settings import get_site_settings
 from app.templates_config import templates
 
 router = APIRouter(prefix="/jobs", tags=["explore"])
+case_router = APIRouter(prefix="/intel/cases", tags=["explore"])
 logger = logging.getLogger(__name__)
 
 NOT_FOUND = "Job not found."
+CASE_NOT_FOUND = "Case not found"
 CSV_MAX_ROWS = 500_000
-STACK_ROWS = 1000
 NDJSON_MAX_ROWS = 100_000
+STACK_ROWS = 1000
 FIELDS_SHOWN = 60
+#: Uploads one case Explore reads at once; past it the banner says which were left out.
+CASE_STORES_MAX = 20
+#: Case jobs considered (the coverage banner counts them all).
+CASE_JOBS_MAX = 500
 _TECHNIQUE = re.compile(r"^t\d{4}(?:\.\d{3})?$")
+_COLORS = {"events": "#60a5fa", "detected": SEVERITY_COLORS["high"], "brush": "rgba(148,163,184,0.25)"}
 
 
-async def _explorable(db: AsyncSession, job_id: int, user: User | None):
-    job = await db.get(AnalysisJob, job_id)
-    if job is None or not settings.events_enabled or not can_explore_job(job, user):
-        raise HTTPException(404, NOT_FOUND)
-    site = await get_site_settings(db)
-    if not site.show_explore:
-        raise HTTPException(404, NOT_FOUND)
-    return job, site
+# ── what Explore runs over ──────────────────────────────────────────────────
 
 
 @dataclass
-class _Ctx:
-    """Everything a query needs, as plain values: safe to hand to a threadpool."""
+class _JobOverlay:
+    """One job's detections on a store: plain values, safe for the threadpool."""
 
     job_id: int
+    tag: str
+    rules: list[list]
+    tags: dict[tuple[str, str], list[str]]
+
+
+@dataclass
+class _Part:
     sha256: str
     gen: str
-    event_count: int
-    overlay_tag: str = ""
-    rules: list[list] = field(default_factory=list)
-    tags: dict[tuple[str, str], list[str]] = field(default_factory=dict)
+    label: str
+    events: int
+    overlays: list[_JobOverlay] = field(default_factory=list)
+    job_ids: list[int] = field(default_factory=list)
 
 
-async def _ready_ctx(db: AsyncSession, job) -> tuple[_Ctx | None, object | None]:
-    """(_Ctx, None) for a ready store, else (None, the store row or None)."""
-    row, sha = await store_for_job_async(db, job)
-    if row is None or row.status != EventStoreStatus.READY.value or not row.gen or not sha:
-        return None, row
-    ctx = _Ctx(job_id=job.id, sha256=sha, gen=row.gen, event_count=row.event_count or 0)
-    meta = await job_artifacts.get_payload(db, job.id, job_artifacts.EVENT_OVERLAY)
-    overlay = job_artifacts.unpack(meta) if meta else None
-    if overlay and overlay.get("gen") == row.gen:
-        ctx.overlay_tag, ctx.rules = str(overlay.get("links_sha") or ""), list(overlay.get("rules") or [])
-        ctx.tags = await _rule_tags(db, job.id)
-    else:
-        _ask_for_overlay(job.id)
-    return ctx, row
+@dataclass
+class _Target:
+    """A job's upload, or a case's uploads. Every handler below takes one."""
+
+    kind: str
+    id: int
+    page_url: str
+    parts: list[_Part]
+    coverage: dict | None = None
+
+    @property
+    def base_url(self) -> str:
+        return f"{self.page_url}/explore"
+
+    @property
+    def events(self) -> int:
+        return sum(p.events for p in self.parts)
+
+    @property
+    def labels(self) -> list[str]:
+        return [p.label for p in self.parts]
+
+    @property
+    def union(self) -> bool:
+        return self.kind == "case"
+
+
+def _rules(overlay: _JobOverlay, offset: int) -> list[Rule]:
+    from app.intel.tactics import normalize_tactic_tag
+
+    out = []
+    for ix, (tool, key, name, level) in enumerate(overlay.rules):
+        tags = overlay.tags.get((tool, key)) or overlay.tags.get((tool, name)) or []
+        stripped = [t.lower().removeprefix("attack.") for t in tags]
+        tactics = tuple(dict.fromkeys(t for t in (normalize_tactic_tag(tag) for tag in tags) if t))
+        techniques = tuple(dict.fromkeys(t.upper() for t in stripped if _TECHNIQUE.match(t)))
+        out.append(Rule(offset + ix, tool, key, name, level, tactics, techniques))
+    return out
+
+
+_manifests: dict[str, dict] = {}
+
+
+def _manifest(root) -> dict:
+    from app.json_utils import load_file
+
+    key = str(root)
+    if key not in _manifests:
+        if len(_manifests) > 64:
+            _manifests.clear()
+        _manifests[key] = load_file(root / "manifest.json")
+    return _manifests[key]
+
+
+@contextlib.contextmanager
+def _open(target: _Target):
+    """The target's stores and overlays at local paths, as (view, schema). Blocking."""
+    with contextlib.ExitStack() as stack:
+        parts: list[StorePart] = []
+        rules: list[Rule] = []
+        tags: list[str] = []
+        for part in target.parts:
+            root = stack.enter_context(cache.store_dir(part.sha256, part.gen))
+            manifest = _manifest(root)
+            overlays = []
+            for ov in part.overlays:
+                path = cache.overlay_dir(part.sha256, part.gen, ov.job_id, ov.tag)
+                if path is None:
+                    continue
+                overlays.append((path, len(rules)))
+                rules.extend(_rules(ov, len(rules)))
+                tags.append(f"{ov.job_id}:{ov.tag}")
+            parts.append(StorePart(root, manifest, tuple(overlays)))
+        tag = hashlib.sha256("|".join(tags).encode()).hexdigest()[:16] if tags else ""
+        if target.union:
+            gen = "case-" + hashlib.sha256("|".join(p.gen for p in target.parts).encode()).hexdigest()[:16]
+            view = UnionView(parts, gen=gen, overlay_tag=tag)
+        else:
+            only = parts[0]
+            view = StoreView(root=only.root, manifest=only.manifest, gen=target.parts[0].gen, overlay=only.overlays[0][0] if only.overlays else None, overlay_tag=tag)
+        linked = view.levels_source is not None
+        yield view, Schema.from_manifest(view.manifest, overlay=linked, rules=tuple(rules) if linked else ())
 
 
 async def _rule_tags(db: AsyncSession, job_id: int) -> dict[tuple[str, str], list[str]]:
@@ -113,6 +194,15 @@ async def _rule_tags(db: AsyncSession, job_id: int) -> dict[tuple[str, str], lis
     return out
 
 
+async def _job_overlay(db: AsyncSession, job_id: int, gen: str) -> _JobOverlay | None:
+    meta = await job_artifacts.get_payload(db, job_id, job_artifacts.EVENT_OVERLAY)
+    overlay = job_artifacts.unpack(meta) if meta else None
+    if not overlay or overlay.get("gen") != gen:
+        _ask_for_overlay(job_id)
+        return None
+    return _JobOverlay(job_id, str(overlay.get("links_sha") or ""), list(overlay.get("rules") or []), await _rule_tags(db, job_id))
+
+
 def _ask_for_overlay(job_id: int) -> None:
     """Explore was opened on a stale or missing overlay: ask the worker, at most once a minute."""
     try:
@@ -127,43 +217,86 @@ def _ask_for_overlay(job_id: int) -> None:
         logger.debug("Could not ask for job %d's overlay", job_id, exc_info=True)
 
 
-def _schema(ctx: _Ctx, manifest: dict, *, linked: bool) -> Schema:
-    """The store's columns, and the job's rules when its overlay is at hand."""
-    from app.intel.tactics import normalize_tactic_tag
-
-    if not linked:
-        return Schema.from_manifest(manifest)
-    rules = []
-    for ix, (tool, key, name, level) in enumerate(ctx.rules):
-        tags = ctx.tags.get((tool, key)) or ctx.tags.get((tool, name)) or []
-        tactics = tuple(dict.fromkeys(t for t in (normalize_tactic_tag(tag) for tag in tags) if t))
-        techniques = tuple(dict.fromkeys(tag.lower().removeprefix("attack.").upper() for tag in tags if _TECHNIQUE.match(tag.lower().removeprefix("attack."))))
-        rules.append(Rule(ix, tool, key, name, level, tactics, techniques))
-    return Schema.from_manifest(manifest, overlay=True, rules=tuple(rules))
+async def _explorable_job(db: AsyncSession, job_id: int, user: User | None):
+    job = await db.get(AnalysisJob, job_id)
+    if job is None or not settings.events_enabled or not can_explore_job(job, user):
+        raise HTTPException(404, NOT_FOUND)
+    site = await get_site_settings(db)
+    if not site.show_explore:
+        raise HTTPException(404, NOT_FOUND)
+    return job, site
 
 
-_manifests: dict[tuple[str, str], dict] = {}
+async def _job_target(db: AsyncSession, job, request: Request, user, site) -> tuple[_Target | None, HTMLResponse | None]:
+    """The job's target, or the status response for an upload without a ready index."""
+    row, sha = await store_for_job_async(db, job)
+    if row is None or row.status != EventStoreStatus.READY.value or not row.gen or not sha:
+        return None, _job_status(request, job, row, user, site)
+    part = _Part(sha, row.gen, "", row.event_count or 0)
+    overlay = await _job_overlay(db, job.id, row.gen)
+    if overlay is not None:
+        part.overlays.append(overlay)
+    return _Target("job", job.id, f"/jobs/{job.id}", [part]), None
 
 
-def _manifest(root) -> dict:
-    from app.json_utils import load_file
+async def _explorable_case(db: AsyncSession, case_id: int, user: User):
+    case = await db.get(InvestigationCase, case_id)
+    if case is None or not (user.is_superuser or case.created_by_user_id == user.id or case.is_shared) or not settings.events_enabled:
+        raise HTTPException(404, CASE_NOT_FOUND)
+    site = await get_site_settings(db)
+    if not site.show_explore:
+        raise HTTPException(404, CASE_NOT_FOUND)
+    return case, site
 
-    key = (str(root), root.name)
-    if key not in _manifests:
-        if len(_manifests) > 32:
-            _manifests.clear()
-        _manifests[key] = load_file(root / "manifest.json")
-    return _manifests[key]
+
+async def _case_target(db: AsyncSession, case, request: Request, user, site) -> tuple[_Target | None, HTMLResponse | None]:
+    """The case's visible jobs' indexed uploads, deduplicated, at most CASE_STORES_MAX."""
+    stmt = (
+        select(AnalysisJob.id, LogFile.original_filename)
+        .join(CaseJobLink, CaseJobLink.job_id == AnalysisJob.id)
+        .join(LogFile, LogFile.id == AnalysisJob.file_id)
+        .where(CaseJobLink.case_id == case.id)
+        .order_by(AnalysisJob.id)
+        .limit(CASE_JOBS_MAX)
+    )
+    vis = visible_job_filter(user)
+    if vis is not True:
+        stmt = stmt.where(vis)
+    jobs = (await db.execute(stmt)).all()
+    parts: dict[tuple[str, str], _Part] = {}
+    missing: list[dict] = []
+    skipped = 0
+    for job_id, filename in jobs:
+        job = await db.get(AnalysisJob, job_id)
+        row, sha = await store_for_job_async(db, job)
+        if row is None or row.status != EventStoreStatus.READY.value or not row.gen or not sha:
+            missing.append({"id": job_id, "filename": filename})
+            continue
+        key = (sha, row.gen)
+        if key not in parts:
+            if len(parts) >= CASE_STORES_MAX:
+                skipped += 1
+                continue
+            parts[key] = _Part(sha, row.gen, filename or sha[:12], row.event_count or 0)
+        part = parts[key]
+        part.job_ids.append(job_id)
+        overlay = await _job_overlay(db, job_id, row.gen)
+        if overlay is not None:
+            part.overlays.append(overlay)
+    for part in parts.values():
+        # One upload can sit under several jobs of the case: the Source column names them all.
+        part.label = f"{part.label} (" + ", ".join(f"#{j}" for j in part.job_ids) + ")"
+    coverage = {"jobs": len(jobs), "indexed": len(jobs) - len(missing) - skipped, "uploads": len(parts), "missing": missing[:10], "missing_total": len(missing), "skipped": skipped}
+    if not parts:
+        return None, _render(
+            request,
+            "partials/_explore_status.html",
+            {"phase": "case-none", "coverage": coverage, "pane_url": f"/intel/cases/{case.id}/explore-partial", "user": user, "site_settings": site},
+        )
+    return _Target("case", case.id, f"/intel/cases/{case.id}", list(parts.values()), coverage), None
 
 
-@contextlib.contextmanager
-def _view(ctx: _Ctx):
-    """The store and the job's overlay at local paths, for the length of the block. Blocking."""
-    with cache.store_dir(ctx.sha256, ctx.gen) as root:
-        overlay = cache.overlay_dir(ctx.sha256, ctx.gen, ctx.job_id, ctx.overlay_tag) if ctx.overlay_tag else None
-        manifest = _manifest(root)
-        view = StoreView(root=root, manifest=manifest, gen=ctx.gen, overlay=overlay, overlay_tag=ctx.overlay_tag if overlay else "")
-        yield view, _schema(ctx, manifest, linked=overlay is not None)
+# ── shared pieces ───────────────────────────────────────────────────────────
 
 
 def _compile(state: ExploreState, schema: Schema, *, with_range: bool = True):
@@ -172,16 +305,16 @@ def _compile(state: ExploreState, schema: Schema, *, with_range: bool = True):
     return combine(typed, compile_query(state.control_terms(linked=schema.overlay, with_range=with_range), schema))
 
 
-def _columns_meta(view: StoreView) -> list[dict]:
+def _columns_meta(view) -> list[dict]:
     total = max(1, int((view.manifest.get("totals") or {}).get("events") or 1))
     cols = sorted(view.manifest.get("columns") or [], key=lambda c: (-int(c.get("count") or 0), c["name"].lower()))
     return [{"name": c["name"], "path": c.get("path") or c["name"], "type": c["type"], "coverage": round(100 * int(c.get("count") or 0) / total, 1)} for c in cols]
 
 
-def _results_context(view: StoreView, schema: Schema, state: ExploreState) -> dict:
+def _results_context(view, schema: Schema, state: ExploreState, target: _Target) -> dict:
     """Run the page's queries. Blocking: called inside the threadpool."""
     engine = get_engine()
-    columns = [c for c in state.columns_or(default_columns(view.manifest)) if c in view.columns]
+    columns = [c for c in state.columns_or(default_columns(view.manifest, union=target.union)) if c in view.columns]
     try:
         compiled = _compile(state, schema)
     except QueryError as exc:
@@ -202,15 +335,15 @@ def _results_context(view: StoreView, schema: Schema, state: ExploreState) -> di
     return {"rows": page.rows, "total": total, "pages": pages, "state": state, "columns": columns, "stack": stack}
 
 
-def _stack(engine, view: StoreView, compiled, state: ExploreState) -> dict:
+def _stack(engine, view, compiled, state: ExploreState) -> dict:
     """Value combinations of the stacked fields among the matches, rarest first, each with the
     terms that narrow the search to it (built here, carried in data-term)."""
     result = engine.stack(view, compiled, list(state.stack), limit=STACK_ROWS)
     rows = []
     for values, n in result["rows"]:
         terms = [
-            filter_term(field, "=" + _cell(v)) if v is not None else ("" if field.startswith("_lt_") else f"-{column_filter_to_terms(field, '*')}")
-            for field, v in zip(state.stack, values, strict=True)
+            filter_term(name, "=" + _cell(v)) if v is not None else ("" if name.startswith("_lt_") else f"-{column_filter_to_terms(name, '*')}")
+            for name, v in zip(state.stack, values, strict=True)
         ]
         rows.append({"cells": [_cell(v) for v in values], "n": n, "term": " ".join(t for t in terms if t)})
     return {"fields": list(state.stack), "rows": rows, "groups": result["groups"], "shown": len(rows)}
@@ -220,127 +353,77 @@ def _render(request: Request, template: str, context: dict, *, headers: dict | N
     return templates.TemplateResponse(request, template, {"request": request, **context}, headers=headers)
 
 
-def _base(job, ctx: _Ctx, view: StoreView, schema: Schema, state: ExploreState, user, site) -> dict:
+def _base(target: _Target, view, schema: Schema, state: ExploreState, user, site) -> dict:
     return {
-        "job": job,
         "user": user,
         "state": state,
         "store": {
-            "events": ctx.event_count,
+            "events": target.events,
             "time": view.manifest.get("time") or {},
             "warnings": view.manifest.get("warnings") or [],
             "truncated": (view.manifest.get("totals") or {}).get("truncated"),
         },
+        "coverage": target.coverage,
+        "store_labels": target.labels,
         "linked": schema.overlay,
-        "rules": ctx.rules,
         "levels": LEVELS,
         "column_label": column_label,
         "filterable_fixed": FILTERABLE_FIXED,
         "column_types": view.columns,
         "per_page": PER_PAGE,
-        "base_url": f"/jobs/{job.id}/explore",
+        "base_url": target.base_url,
         "site_settings": site,
         # Shipped to the canvas as data, never declared in the client: one palette.
-        "colors": {"events": "#60a5fa", "detected": SEVERITY_COLORS["high"], "brush": "rgba(148,163,184,0.25)"},
+        "colors": _COLORS,
     }
 
 
-# ── the pane ────────────────────────────────────────────────────────────────
-
-
-@router.get("/{job_id}/explore-partial", response_class=HTMLResponse)
-async def explore_partial(job_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
-    """The whole Explore pane, or its status when the upload has no ready index."""
-    job, site = await _explorable(db, job_id, user)
-    ctx, row = await _ready_ctx(db, job)
-    if ctx is None:
-        return _status(request, job, row, user, site)
-    if not cache.is_local_or_cached(ctx.sha256, ctx.gen):
-        cache.prefetch(ctx.sha256, ctx.gen)
-        return _render(request, "partials/_explore_status.html", {"job": job, "phase": "preparing", "user": user, "site_settings": site})
-
+async def _in_threadpool(target: _Target, request: Request, fn: Callable):
     def work():
-        with _view(ctx) as (view, schema):
-            state = ExploreState.from_params(request.query_params, set(view.columns))
-            return view, schema, state, _results_context(view, schema, state), _columns_meta(view)
+        with _open(target) as (view, schema):
+            return fn(view, schema, ExploreState.from_params(request.query_params, set(view.columns)))
 
-    view, schema, state, results, fields = await run_in_threadpool(work)
-    context = _base(job, ctx, view, schema, state, user, site) | results | {"fields": fields[:FIELDS_SHOWN], "field_count": len(fields)}
+    return await run_in_threadpool(work)
+
+
+# ── handlers, shared by the job and the case routes ─────────────────────────
+
+
+async def _pane(request: Request, target: _Target, user, site) -> HTMLResponse:
+    cold = [p for p in target.parts if not cache.is_local_or_cached(p.sha256, p.gen)]
+    if cold:
+        for p in cold:
+            cache.prefetch(p.sha256, p.gen)
+        return _render(request, "partials/_explore_status.html", {"phase": "preparing", "pane_url": f"{target.base_url}-partial", "user": user, "site_settings": site})
+
+    def run(view, schema, state):
+        return view, schema, state, _results_context(view, schema, state, target), _columns_meta(view)
+
+    view, schema, state, results, fields = await _in_threadpool(target, request, run)
+    context = _base(target, view, schema, state, user, site) | results | {"fields": fields[:FIELDS_SHOWN], "field_count": len(fields)}
     return _render(request, "partials/_explore.html", context)
 
 
-def _status(request: Request, job, row, user, site) -> HTMLResponse:
-    phase = "none" if row is None else row.status
-    return _render(
-        request,
-        "partials/_explore_status.html",
-        {"job": job, "phase": phase, "row": row, "user": user, "site_settings": site, "can_build": site.explore_build_enabled and phase in ("none", "failed", "evicted")},
-    )
-
-
-@router.post("/{job_id}/explore/build", response_class=HTMLResponse)
-async def explore_build(job_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
-    """Ask for this upload's event index (jobs analysed before indexes existed, or a retry)."""
-    job, site = await _explorable(db, job_id, user)
-    if not site.explore_build_enabled:
-        raise HTTPException(404, NOT_FOUND)
-    store_id = await request_build_async(db, job, manual=True)
-    await db.commit()
-    if store_id is not None:
-        from app.workers.tasks import build_event_store
-
-        try:
-            build_event_store(store_id)
-        except Exception:
-            logger.warning("Job %d: could not queue the event index build", job_id, exc_info=True)
-        await activity.record("job.events_index", request=request, user=user, target_type="job", target_id=str(job_id))
-    row, _sha = await store_for_job_async(db, job)
-    return _status(request, job, row, user, site)
-
-
-# ── results, chart, fields, drawer ──────────────────────────────────────────
-
-
-async def _with_ready(db, job_id, request, user, fn):
-    job, site = await _explorable(db, job_id, user)
-    ctx, row = await _ready_ctx(db, job)
-    if ctx is None:
-        return None, _status(request, job, row, user, site)
-
-    def work():
-        with _view(ctx) as (view, schema):
-            return fn(view, schema, ExploreState.from_params(request.query_params, set(view.columns)))
-
-    return (job, site, ctx), await run_in_threadpool(work)
-
-
-@router.get("/{job_id}/explore/results", response_class=HTMLResponse)
-async def explore_results(job_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
-    """The table, its counts and its pager, for the current search. Sets the address bar."""
-
+async def _results(request: Request, target: _Target, user, site) -> HTMLResponse:
     def run(view, schema, state):
         fcol, fval = request.query_params.get("fcol"), request.query_params.get("fval")
         if fcol and fcol in view.columns and fval is not None:
             term = filter_term(fcol, fval)
             if term:
                 state = replace(state, q=f"{state.q} {term}".strip(), page=1)
-        return view, schema, state, _results_context(view, schema, state)
+        return view, schema, state, _results_context(view, schema, state, target)
 
-    held, out = await _with_ready(db, job_id, request, user, run)
-    if held is None:
-        return out
-    job, site, ctx = held
-    view, schema, state, results = out
+    view, schema, state, results = await _in_threadpool(target, request, run)
     state = results.get("state", state)
+    qs = state.qs()
     headers = {
-        "HX-Replace-Url": f"/jobs/{job.id}{'?' + state.qs() if state.qs() else ''}#explore",
+        "HX-Replace-Url": f"{target.page_url}{'?' + qs if qs else ''}#explore",
         "HX-Trigger": orjson.dumps({"exploreResults": {"qs": state.qs(ev=None, page=1), "q": state.q}}).decode(),
     }
-    return _render(request, "partials/_explore_results.html", _base(job, ctx, view, schema, state, user, site) | results, headers=headers)
+    return _render(request, "partials/_explore_results.html", _base(target, view, schema, state, user, site) | results, headers=headers)
 
 
-@router.get("/{job_id}/explore/histogram.json")
-async def explore_histogram(job_id: int, request: Request, width: int = 800, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+async def _histogram(request: Request, target: _Target, width: int) -> JSONResponse:
     def run(view, schema, state):
         try:
             compiled = _compile(state, schema, with_range=False)
@@ -353,16 +436,10 @@ async def explore_histogram(job_id: int, request: Request, width: int = 800, db:
         except EngineError as exc:
             return {"error": str(exc)}
 
-    held, out = await _with_ready(db, job_id, request, user, run)
-    if held is None:
-        return JSONResponse({"error": "not indexed"})
-    return JSONResponse(out)
+    return JSONResponse(await _in_threadpool(target, request, run))
 
 
-@router.get("/{job_id}/explore/field", response_class=HTMLResponse)
-async def explore_field(job_id: int, request: Request, f: str = "", db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
-    """The most frequent values of one field among the current matches, with + / - terms."""
-
+async def _field(request: Request, target: _Target, f: str) -> HTMLResponse:
     def run(view, schema, state):
         if f not in view.columns:
             return {"error": "No such field."}
@@ -376,7 +453,7 @@ async def explore_field(job_id: int, request: Request, f: str = "", db: AsyncSes
             return {"error": str(exc)}
         rows = []
         for value, n in facet["values"]:
-            text = value.isoformat() if hasattr(value, "isoformat") else str(value)
+            text = _cell(value)
             rows.append(
                 {
                     "value": text,
@@ -388,16 +465,11 @@ async def explore_field(job_id: int, request: Request, f: str = "", db: AsyncSes
             )
         return {"facet": facet, "rows": rows}
 
-    held, out = await _with_ready(db, job_id, request, user, run)
-    if held is None:
-        return HTMLResponse("")
+    out = await _in_threadpool(target, request, run)
     return _render(request, "partials/_explore_field.html", {"field": f, "label": column_label(f), **out})
 
 
-@router.get("/{job_id}/explore/event", response_class=HTMLResponse)
-async def explore_event(job_id: int, request: Request, uid: int = -1, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
-    """One event in the drawer: its fields by group, the rules that matched it, its JSON."""
-
+async def _event(request: Request, target: _Target, uid: int) -> HTMLResponse:
     def run(view, schema, state):
         try:
             event = get_engine().event(view, uid) if uid >= 0 else None
@@ -405,79 +477,23 @@ async def explore_event(job_id: int, request: Request, uid: int = -1, db: AsyncS
             return {"error": str(exc)}
         if event is None:
             return {"error": "No such event."}
-        fields = event["fields"]
+        fields = dict(event["fields"])
+        if "_lt_store" in fields and 0 <= int(fields["_lt_store"]) < len(target.labels):
+            fields["_lt_store"] = target.labels[int(fields["_lt_store"])]
         return {
             "uid": uid,
             "groups": detail.group_fields(fields, view.manifest),
             "json": orjson.dumps(detail.rebuild_json(fields, view.manifest), option=orjson.OPT_INDENT_2).decode(),
-            "matched": [schema.rules[ix] for ix in event["rules"] if ix < len(schema.rules)],
+            "matched": [r for r in schema.rules if r.ix in set(event["rules"])],
             "plus": _plus_terms(fields),
             "around": _around(fields),
         }
 
-    held, out = await _with_ready(db, job_id, request, user, run)
-    if held is None:
-        return HTMLResponse("")
-    job, _site, _ctx = held
-    return _render(request, "partials/_explore_event.html", {"job": job, **out})
+    out = await _in_threadpool(target, request, run)
+    return _render(request, "partials/_explore_event.html", out)
 
 
-#: The fixed columns the drawer offers a + for, by the shortcut that searches them.
-_FIXED_SHORTCUTS = {"_lt_host": "host", "_lt_channel": "channel", "_lt_eid": "eid"}
-
-
-def filter_term(column: str, cell: str) -> str:
-    """A filter-row cell as a query term. The fixed columns go through their shortcuts
-    (`_lt_eid` is searched as `eid:`), and Time takes a comparison as after:/before:."""
-    if column in _FIXED_SHORTCUTS:
-        return column_filter_to_terms(_FIXED_SHORTCUTS[column], cell, shortcut=True)
-    if column == "_lt_time":
-        cell = (cell or "").strip()
-        for op, key in ((">=", "after"), (">", "after"), ("<=", "before"), ("<", "before")):
-            if cell.startswith(op) and cell[len(op) :].strip():
-                return f"{key}:{cell[len(op) :].strip()}"
-        return ""
-    if column.startswith("_lt_"):
-        return ""
-    return column_filter_to_terms(column, cell)
-
-
-#: Columns whose filter-row cell means something (every other fixed one has no term).
-FILTERABLE_FIXED = frozenset({*_FIXED_SHORTCUTS, "_lt_time"})
-
-
-def _plus_terms(fields: dict) -> dict[str, str]:
-    """A "+ add to the search" term for every field shown in the drawer."""
-    out = {}
-    for name, value in fields.items():
-        if value is None:
-            continue
-        if name in _FIXED_SHORTCUTS:
-            out[name] = column_filter_to_terms(_FIXED_SHORTCUTS[name], "=" + str(value), shortcut=True)
-        elif not name.startswith("_lt_"):
-            out[name] = column_filter_to_terms(name, "=" + (value.isoformat() if hasattr(value, "isoformat") else str(value)))
-    return out
-
-
-def _around(fields: dict) -> dict | None:
-    """The "±5 minutes on this host" search: the host term and the time window."""
-    from datetime import timedelta
-
-    host, when = fields.get("_lt_host"), fields.get("_lt_time")
-    if not host or when is None:
-        return None
-    return {
-        "term": column_filter_to_terms("host", "=" + str(host), shortcut=True),
-        "from": (when - timedelta(minutes=5)).isoformat(),
-        "to": (when + timedelta(minutes=5)).isoformat(),
-    }
-
-
-@router.get("/{job_id}/explore/suggest")
-async def explore_suggest(
-    job_id: int, request: Request, q: str = "", pos: int = -1, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)
-):
-    """Completions for the term under the caret: field names and shortcuts, or a field's values."""
+async def _suggest(request: Request, target: _Target, q: str, pos: int) -> JSONResponse:
     from app.events.query import SHORTCUTS
     from app.intel.queries import caret_token
 
@@ -507,14 +523,8 @@ async def explore_suggest(
             return token, []
         return token, [str(v) for v, _n in facet["values"] if fragment in str(v).lower()][:12]
 
-    held, out = await _with_ready(db, job_id, request, user, run)
-    if held is None:
-        return JSONResponse({"start": 0, "end": 0, "prefix": None, "suggestions": []})
-    token, suggestions = out
+    token, suggestions = await _in_threadpool(target, request, run)
     return JSONResponse({"start": token["start"], "end": token["end"], "prefix": token["prefix"], "suggestions": suggestions})
-
-
-# ── export ──────────────────────────────────────────────────────────────────
 
 
 def _export_limited(user: User) -> bool:
@@ -530,19 +540,11 @@ def _export_limited(user: User) -> bool:
         return False
 
 
-@router.get("/{job_id}/explore/export.{fmt}")
-async def explore_export(job_id: int, fmt: str, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+async def _export(request: Request, target: _Target, user: User, fmt: str) -> Response:
     """The matching events as CSV (visible columns, 500k rows) or NDJSON (every field, 100k)."""
-    if fmt not in ("csv", "ndjson"):
-        raise HTTPException(404, NOT_FOUND)
-    job, _site = await _explorable(db, job_id, user)
-    ctx, _row = await _ready_ctx(db, job)
-    if ctx is None:
-        raise HTTPException(404, NOT_FOUND)
     if _export_limited(user):
         return Response(f"Too many exports in the last minute (limit {settings.events_export_rate_limit_per_minute}). Try again shortly.", status_code=429, media_type="text/plain")
-
-    held = _view(ctx)
+    held = _open(target)
     view, schema = await run_in_threadpool(held.__enter__)
     try:
         state = ExploreState.from_params(request.query_params, set(view.columns))
@@ -552,7 +554,7 @@ async def explore_export(job_id: int, fmt: str, request: Request, db: AsyncSessi
             await run_in_threadpool(held.__exit__, None, None, None)
             return Response(str(exc), status_code=400, media_type="text/plain")
         if fmt == "csv":
-            columns = [c for c in state.columns_or(default_columns(view.manifest)) if c in view.columns]
+            columns = [c for c in state.columns_or(default_columns(view.manifest, union=target.union)) if c in view.columns]
             max_rows = CSV_MAX_ROWS
         else:
             columns = list(view.columns)
@@ -565,15 +567,20 @@ async def explore_export(job_id: int, fmt: str, request: Request, db: AsyncSessi
     except Exception:
         await run_in_threadpool(held.__exit__, None, None, None)
         raise
-    await activity.record(
-        "export.job_events",
-        request=request,
-        user=user,
-        target_type="job",
-        target_id=str(job_id),
-        summary=f"{fmt}: {state.q or 'all events'}"[:200],
-        meta={"format": fmt, "query": state.q, "det": state.det, "max_rows": max_rows},
-    )
+    audit = {
+        "request": request,
+        "user": user,
+        "target_type": target.kind,
+        "target_id": str(target.id),
+        "summary": f"{fmt}: {state.q or 'all events'}"[:200],
+        "meta": {"format": fmt, "query": state.q, "det": state.det, "max_rows": max_rows},
+    }
+    # Literal action keys: tests/test_activity_log.py reads them off the call sites.
+    if target.union:
+        await activity.record("export.case_events", **audit)
+    else:
+        await activity.record("export.job_events", **audit)
+    labels = target.labels
 
     def body():
         try:
@@ -586,7 +593,7 @@ async def explore_export(job_id: int, fmt: str, request: Request, db: AsyncSessi
             while batch:
                 for row in batch:
                     if fmt == "csv":
-                        writer.writerow([csv_safe(_cell(v)) for v in row])
+                        writer.writerow([csv_safe(_cell(labels[v] if c == "_lt_store" and v is not None and v < len(labels) else v)) for c, v in zip(columns, row, strict=True)])
                     else:
                         out.write(orjson.dumps({c: v for c, v in zip(columns, row, strict=True) if v is not None}, default=str).decode() + "\n")
                 yield out.getvalue()
@@ -598,7 +605,56 @@ async def explore_export(job_id: int, fmt: str, request: Request, db: AsyncSessi
             held.__exit__(None, None, None)
 
     media = "text/csv; charset=utf-8" if fmt == "csv" else "application/x-ndjson"
-    return StreamingResponse(body(), media_type=media, headers={"Content-Disposition": f'attachment; filename="job-{job_id}-events.{fmt}"'})
+    return StreamingResponse(body(), media_type=media, headers={"Content-Disposition": f'attachment; filename="{target.kind}-{target.id}-events.{fmt}"'})
+
+
+#: The fixed columns the drawer offers a + for, by the shortcut that searches them.
+_FIXED_SHORTCUTS = {"_lt_host": "host", "_lt_channel": "channel", "_lt_eid": "eid"}
+#: Columns whose filter-row cell means something (every other fixed one has no term).
+FILTERABLE_FIXED = frozenset({*_FIXED_SHORTCUTS, "_lt_time"})
+
+
+def filter_term(column: str, cell: str) -> str:
+    """A filter-row cell as a query term. The fixed columns go through their shortcuts
+    (`_lt_eid` is searched as `eid:`), and Time takes a comparison as after:/before:."""
+    if column in _FIXED_SHORTCUTS:
+        return column_filter_to_terms(_FIXED_SHORTCUTS[column], cell, shortcut=True)
+    if column == "_lt_time":
+        cell = (cell or "").strip()
+        for op, key in ((">=", "after"), (">", "after"), ("<=", "before"), ("<", "before")):
+            if cell.startswith(op) and cell[len(op) :].strip():
+                return f"{key}:{cell[len(op) :].strip()}"
+        return ""
+    if column.startswith("_lt_"):
+        return ""
+    return column_filter_to_terms(column, cell)
+
+
+def _plus_terms(fields: dict) -> dict[str, str]:
+    """A "+ add to the search" term for every field shown in the drawer."""
+    out = {}
+    for name, value in fields.items():
+        if value is None:
+            continue
+        if name in _FIXED_SHORTCUTS:
+            out[name] = column_filter_to_terms(_FIXED_SHORTCUTS[name], "=" + str(value), shortcut=True)
+        elif not name.startswith("_lt_"):
+            out[name] = column_filter_to_terms(name, "=" + _cell(value))
+    return out
+
+
+def _around(fields: dict) -> dict | None:
+    """The "±5 minutes on this host" search: the host term and the time window."""
+    from datetime import timedelta
+
+    host, when = fields.get("_lt_host"), fields.get("_lt_time")
+    if not host or when is None:
+        return None
+    return {
+        "term": column_filter_to_terms("host", "=" + str(host), shortcut=True),
+        "from": (when - timedelta(minutes=5)).isoformat(),
+        "to": (when + timedelta(minutes=5)).isoformat(),
+    }
 
 
 def _cell(value) -> str:
@@ -607,3 +663,160 @@ def _cell(value) -> str:
     if hasattr(value, "isoformat"):
         return value.isoformat()
     return str(value)
+
+
+# ── job routes ──────────────────────────────────────────────────────────────
+
+
+def _job_status(request: Request, job, row, user, site) -> HTMLResponse:
+    phase = "none" if row is None else row.status
+    return _render(
+        request,
+        "partials/_explore_status.html",
+        {
+            "phase": phase,
+            "row": row,
+            "user": user,
+            "site_settings": site,
+            "pane_url": f"/jobs/{job.id}/explore-partial",
+            "build_url": f"/jobs/{job.id}/explore/build",
+            "can_build": site.explore_build_enabled and phase in ("none", "failed", "evicted"),
+        },
+    )
+
+
+async def _job_or_status(db, job_id, request, user):
+    job, site = await _explorable_job(db, job_id, user)
+    target, status = await _job_target(db, job, request, user, site)
+    return target, status, site
+
+
+@router.get("/{job_id}/explore-partial", response_class=HTMLResponse)
+async def explore_partial(job_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+    """The whole Explore pane, or its status when the upload has no ready index."""
+    target, status, site = await _job_or_status(db, job_id, request, user)
+    return status or await _pane(request, target, user, site)
+
+
+@router.post("/{job_id}/explore/build", response_class=HTMLResponse)
+async def explore_build(job_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+    """Ask for this upload's event index (jobs analysed before indexes existed, or a retry)."""
+    job, site = await _explorable_job(db, job_id, user)
+    if not site.explore_build_enabled:
+        raise HTTPException(404, NOT_FOUND)
+    store_id = await request_build_async(db, job, manual=True)
+    await db.commit()
+    if store_id is not None:
+        from app.workers.tasks import build_event_store
+
+        try:
+            build_event_store(store_id)
+        except Exception:
+            logger.warning("Job %d: could not queue the event index build", job_id, exc_info=True)
+        await activity.record("job.events_index", request=request, user=user, target_type="job", target_id=str(job_id))
+    row, _sha = await store_for_job_async(db, job)
+    return _job_status(request, job, row, user, site)
+
+
+@router.get("/{job_id}/explore/results", response_class=HTMLResponse)
+async def explore_results(job_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+    """The table, its counts and its pager, for the current search. Sets the address bar."""
+    target, status, site = await _job_or_status(db, job_id, request, user)
+    return status or await _results(request, target, user, site)
+
+
+@router.get("/{job_id}/explore/histogram.json")
+async def explore_histogram(job_id: int, request: Request, width: int = 800, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+    target, status, _site = await _job_or_status(db, job_id, request, user)
+    return JSONResponse({"error": "not indexed"}) if status else await _histogram(request, target, width)
+
+
+@router.get("/{job_id}/explore/field", response_class=HTMLResponse)
+async def explore_field(job_id: int, request: Request, f: str = "", db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+    """The most frequent values of one field among the current matches, with + / - terms."""
+    target, status, _site = await _job_or_status(db, job_id, request, user)
+    return HTMLResponse("") if status else await _field(request, target, f)
+
+
+@router.get("/{job_id}/explore/event", response_class=HTMLResponse)
+async def explore_event(job_id: int, request: Request, uid: int = -1, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+    """One event in the drawer: its fields by group, the rules that matched it, its JSON."""
+    target, status, _site = await _job_or_status(db, job_id, request, user)
+    return HTMLResponse("") if status else await _event(request, target, uid)
+
+
+@router.get("/{job_id}/explore/suggest")
+async def explore_suggest(
+    job_id: int, request: Request, q: str = "", pos: int = -1, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)
+):
+    """Completions for the term under the caret: field names and shortcuts, or a field's values."""
+    target, status, _site = await _job_or_status(db, job_id, request, user)
+    return JSONResponse({"start": 0, "end": 0, "prefix": None, "suggestions": []}) if status else await _suggest(request, target, q, pos)
+
+
+@router.get("/{job_id}/explore/export.{fmt}")
+async def explore_export(job_id: int, fmt: str, request: Request, db: AsyncSession = Depends(get_async_session), user: User | None = Depends(current_user_optional)):
+    if fmt not in ("csv", "ndjson"):
+        raise HTTPException(404, NOT_FOUND)
+    target, status, _site = await _job_or_status(db, job_id, request, user)
+    if status is not None:
+        raise HTTPException(404, NOT_FOUND)
+    return await _export(request, target, user, fmt)
+
+
+# ── case routes ─────────────────────────────────────────────────────────────
+
+
+async def _case_or_status(db, case_id, request, user):
+    case, site = await _explorable_case(db, case_id, user)
+    target, status = await _case_target(db, case, request, user, site)
+    return target, status, site
+
+
+@case_router.get("/{case_id}/explore-partial", response_class=HTMLResponse)
+async def case_explore_partial(case_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User = Depends(current_member_or_above)):
+    """Every event of every visible job in the case, as one Explore pane."""
+    target, status, site = await _case_or_status(db, case_id, request, user)
+    return status or await _pane(request, target, user, site)
+
+
+@case_router.get("/{case_id}/explore/results", response_class=HTMLResponse)
+async def case_explore_results(case_id: int, request: Request, db: AsyncSession = Depends(get_async_session), user: User = Depends(current_member_or_above)):
+    target, status, site = await _case_or_status(db, case_id, request, user)
+    return status or await _results(request, target, user, site)
+
+
+@case_router.get("/{case_id}/explore/histogram.json")
+async def case_explore_histogram(case_id: int, request: Request, width: int = 800, db: AsyncSession = Depends(get_async_session), user: User = Depends(current_member_or_above)):
+    target, status, _site = await _case_or_status(db, case_id, request, user)
+    return JSONResponse({"error": "not indexed"}) if status else await _histogram(request, target, width)
+
+
+@case_router.get("/{case_id}/explore/field", response_class=HTMLResponse)
+async def case_explore_field(case_id: int, request: Request, f: str = "", db: AsyncSession = Depends(get_async_session), user: User = Depends(current_member_or_above)):
+    target, status, _site = await _case_or_status(db, case_id, request, user)
+    return HTMLResponse("") if status else await _field(request, target, f)
+
+
+@case_router.get("/{case_id}/explore/event", response_class=HTMLResponse)
+async def case_explore_event(case_id: int, request: Request, uid: int = -1, db: AsyncSession = Depends(get_async_session), user: User = Depends(current_member_or_above)):
+    target, status, _site = await _case_or_status(db, case_id, request, user)
+    return HTMLResponse("") if status else await _event(request, target, uid)
+
+
+@case_router.get("/{case_id}/explore/suggest")
+async def case_explore_suggest(
+    case_id: int, request: Request, q: str = "", pos: int = -1, db: AsyncSession = Depends(get_async_session), user: User = Depends(current_member_or_above)
+):
+    target, status, _site = await _case_or_status(db, case_id, request, user)
+    return JSONResponse({"start": 0, "end": 0, "prefix": None, "suggestions": []}) if status else await _suggest(request, target, q, pos)
+
+
+@case_router.get("/{case_id}/explore/export.{fmt}")
+async def case_explore_export(case_id: int, fmt: str, request: Request, db: AsyncSession = Depends(get_async_session), user: User = Depends(current_member_or_above)):
+    if fmt not in ("csv", "ndjson"):
+        raise HTTPException(404, CASE_NOT_FOUND)
+    target, status, _site = await _case_or_status(db, case_id, request, user)
+    if status is not None:
+        raise HTTPException(404, CASE_NOT_FOUND)
+    return await _export(request, target, user, fmt)

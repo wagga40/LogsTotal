@@ -987,6 +987,9 @@ def test_build_case_tabs_shape():
     # The narrative lives on Overview; this tab is the comment thread alone.
     assert by_key["discussion"]["badge"] is None and by_key["discussion"]["lazy_event"] == "loadComments"
     assert by_key["graph"]["badge"] is None and by_key["graph"]["lazy_event"] == "loadGraph"
+    # Explore, when it is on, sits right after the Timeline it complements.
+    with_explore = [t["key"] for t in _build_case_tabs(entity_count=3, job_count=5, explore=True)]
+    assert with_explore == ["overview", "timeline", "explore", "entities", "jobs", "processes", "graph", "discussion"]
 
 
 async def test_case_detail_renders_tab_strip_with_six_keys_and_badges(test_client, cases_data):
