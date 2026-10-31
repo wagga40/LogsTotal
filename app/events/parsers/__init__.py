@@ -25,7 +25,7 @@ from app.tools.event_keys import message_sha, norm_channel, norm_host, norm_int
 Parsed = tuple[dict, dict]
 
 #: Formats whose events are EVTX records, so their System block gives the fixed columns.
-WINDOWS_TYPES = frozenset({"evtx", "json_evtx", "json_winlogbeat", "xml"})
+WINDOWS_TYPES = frozenset({"evtx", "json_evtx", "json_winlogbeat", "xml_evtx", "xml"})
 
 
 def iter_events(path: Path, log_type: str, *, stats: dict, spellings: dict, reference: datetime | None = None, evtx_threads: int = 1) -> Iterator[Parsed]:
@@ -34,6 +34,8 @@ def iter_events(path: Path, log_type: str, *, stats: dict, spellings: dict, refe
         "evtx": _evtx,
         "json_evtx": _json_evtx,
         "json_winlogbeat": _winlogbeat,
+        # `xml_evtx` is the LogType value; `xml` is kept for callers that spelled it short.
+        "xml_evtx": _xml_file,
         "xml": _xml_file,
         "sysmon_linux": _sysmon_linux,
         "auditd": _auditd,

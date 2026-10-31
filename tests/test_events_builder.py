@@ -175,3 +175,21 @@ def test_a_tampered_store_is_refused(tmp_path):
         stream.write(b"x")
     with pytest.raises(ManifestError):
         validate_manifest(out)
+
+
+def test_every_log_type_has_its_own_parser():
+    """A LogType value with no entry falls through to the line parser and loses its structure:
+    `xml_evtx` did, because the table was keyed `xml`."""
+    import inspect
+
+    from app.events import parsers
+    from app.models import LogType
+
+    source = inspect.getsource(parsers.iter_events)
+    for log_type in LogType:
+        if log_type is not LogType.UNKNOWN:
+            assert f'"{log_type.value}":' in source, log_type
+    assert LogType.XML_EVTX.value in parsers.WINDOWS_TYPES
+    stats: dict = {}
+    events = list(parsers.iter_events(ROOT / "samples/windows/security_events.xml", LogType.XML_EVTX.value, stats=stats, spellings={}))
+    assert events and events[0][1]["eid"] is not None, "parsed as events, not as lines"
