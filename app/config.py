@@ -241,7 +241,7 @@ class Settings(BaseSettings):
 
     # Event stores (app/events/): every event of an upload, as Parquet. A derived cache,
     # rebuildable from the upload, built by a subprocess beside the detection tools.
-    events_enabled: bool = False
+    events_enabled: bool = True
     events_build_timeout_seconds: int = 3600
     events_build_memory_mb: int = 1024
     events_build_max_rss_mb: int = 2048

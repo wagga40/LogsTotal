@@ -34,6 +34,23 @@ The events timeline is built during the analytics step and stored with the job. 
 
 The events timeline shows every timestamp in UTC, while the hourly histogram keeps each tool's own time offset. On a job whose tools disagree about the time zone the two can sit an offset apart; the events timeline is the correct one.
 
+### Event indexes
+
+Explore's event indexes live under `events/` beside the uploads and are not touched by
+output cleanup: Explore, and the full process tree, keep working after a job's raw outputs
+are swept. They are a cache rebuilt from the upload, so removing one is always safe; the
+job's Explore tab then offers **Build event index**.
+
+- `EVENTS_RETENTION_DAYS` evicts indexes nobody opened for that long and
+  `EVENTS_MAX_TOTAL_MB` caps their total, least recently opened out first. Both are off by
+  default and run in the 10-minute event index sweep.
+- Deleting an upload deletes its indexes. An index no row owns is listed on
+  `/admin/storage` as an orphan and removed by **Purge**.
+- `.events_cache/` is the web server's own cache (search results; on S3, local copies of
+  indexes, up to `EVENTS_CACHE_MAX_MB`). It trims itself and is never offered for deletion.
+
+See [Explore and event indexes](../reference/explore.md).
+
 ### Orphaned files
 
 A stored file or output directory that no database row refers to any more is an orphan. `/admin/storage` finds them on either storage backend (local or S3) and shows how much space they hold; **Purge** removes them as a background task. Nothing removes orphans on a schedule.

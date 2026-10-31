@@ -29,12 +29,20 @@ backup step, migration ordering, and rollback for each deployment path.
   the finding events, evidence samples, analytics and rule texts written before they were
   stored compressed. Run it once after upgrading, then Vacuum.
 
-- Event stores, the groundwork for Explore, **off by default** (`EVENTS_ENABLED`). With it
-  on, every upload's events are parsed by LogsTotal itself (EVTX, JSON, winlogbeat,
-  EVTX-XML, Sysmon for Linux, auditd, journald, syslog) into Parquet, in a subprocess
-  beside the detection tools. It is built once per file, rebuilt on demand, and evicted
-  by `EVENTS_RETENTION_DAYS` and `EVENTS_MAX_TOTAL_MB`. A 213 MB EVTX took 6.5 s and
-  became an 11.5 MB store.
+- **Explore**: a new tab on the job page that lists every event of the upload, not only
+  the matched ones. It has free-text and field search with a documented syntax, a
+  histogram you can drag to zoom, field values with +/- filters, sortable and filterable
+  columns, an event panel with the rules that matched, and CSV/NDJSON export. It is for
+  members, admins and a job's own submitter. Exports are audited and rate limited. See
+  [Explore and event indexes](docs/reference/explore.md).
+- Event indexes, which Explore runs on, **on by default** (`EVENTS_ENABLED`). Every
+  upload's events are parsed by LogsTotal itself (EVTX, JSON, winlogbeat, EVTX-XML, Sysmon
+  for Linux, auditd, journald, syslog) into Parquet, in a subprocess beside the detection
+  tools. An index is built once per file and rebuilt on demand, and can be evicted by
+  `EVENTS_RETENTION_DAYS` and `EVENTS_MAX_TOTAL_MB`. A 213 MB EVTX took 6.5 s and became an
+  11.5 MB index. Jobs analysed before this get a **Build event index** button.
+- The process tree on the job page, for Explore users, shows every process the log
+  started, with the detected ones marked, instead of the matched ones only.
 
 ### Fixed
 

@@ -179,7 +179,7 @@ Used with `COMPOSE_PROFILES=proxy`. The four `PROXY_TLS` modes, what each needs,
 | `REQUEST_LOG_ENABLED` | Log one line per request with status and duration (default: `false`). `/static/` and `/health` are never logged; the request id is set either way |
 | `ACTIVITY_RETENTION_DAYS` | How long activity-log rows are kept, in days; `0` keeps forever (default: `90`). Capture itself is the `activity_log_enabled` site setting, not an environment variable |
 | `BACKGROUND_TASK_RETENTION_DAYS` | How long finished background-task rows are kept, in days; `0` keeps forever (default: `30`). Only finished rows are pruned |
-| `EVENTS_ENABLED` | Build an event store (every event of each upload, as Parquet) beside every analysis, for Explore. Off until Explore ships; the stores are a derived cache, rebuildable from the upload at any time (default: `false`) |
+| `EVENTS_ENABLED` | Build an event index (every event of each upload, as Parquet) beside every analysis, and offer the Explore tab. The indexes are a derived cache, rebuildable from the upload at any time; `false` stops new builds and hides Explore, and leaves existing indexes on disk (default: `true`) |
 | `EVENTS_BUILD_TIMEOUT_SECONDS` | Wall-clock limit for one store build; past it the build's whole process group is killed and the store marked failed (default: `3600`) |
 | `EVENTS_BUILD_MEMORY_MB` | DuckDB's memory limit inside the store build. Measured: 724 MB peak for a 184k-event, 89-column EVTX at the default (default: `1024`) |
 | `EVENTS_BUILD_MAX_RSS_MB` | Resident memory past which the store build is killed (Linux; read from /proc). DuckDB's own limit does not cap the process (default: `2048`) |
