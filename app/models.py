@@ -265,7 +265,11 @@ class AnalysisJob(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
     finished_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
-    analytics_json = Column(Text, nullable=True)  # JSON: analytics_json_payload(_compute_analytics_data(job))
+    # JSON: analytics_json_payload(_compute_analytics_data(job)), up to hundreds of KB per job.
+    # Deferred: the jobs list, the home panel and the status poll load AnalysisJob wholesale
+    # every few seconds and never read it (1.3 MB per 20-row page in dev). Its readers ask with
+    # undefer() — an un-asked read on an async session is a MissingGreenlet, not a query.
+    analytics_json = deferred(Column(Text, nullable=True))
     execution_snapshot = Column(Text, nullable=True)  # versioned provenance captured when execution starts
     # Indexed as the leading column of visible_job_filter's predicate — it appears in
     # essentially every job query the application makes.

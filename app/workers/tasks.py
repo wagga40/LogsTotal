@@ -1586,6 +1586,8 @@ def backfill_entities(bg_task_id: int | None = None):
     try:
         _mark_bg_task(db, bg_task_id, "running")
 
+        from sqlalchemy.orm import undefer
+
         from app.intel.entities import persist_entities_from_analytics
 
         BATCH = 100
@@ -1595,6 +1597,7 @@ def backfill_entities(bg_task_id: int | None = None):
         while True:
             batch = (
                 db.query(AnalysisJob)
+                .options(undefer(AnalysisJob.analytics_json))
                 .filter(
                     AnalysisJob.analytics_json.isnot(None),
                     AnalysisJob.id > last_id,

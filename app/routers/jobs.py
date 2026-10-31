@@ -990,7 +990,7 @@ async def job_analytics(
     user: User | None = Depends(current_user_optional),
 ):
     """HTMX partial — lazy-load analytics cards (MITRE, timeline, entities, threat detection)."""
-    job = await _load_job_full(db, job_id)
+    job = await _load_job_full(db, job_id, analytics=True)
     if not job:
         return HTMLResponse("")
     if not _can_view_private(job, user):
@@ -1274,7 +1274,7 @@ async def job_analytics_json(
     ``mitre``, ``timeline``, ``entities``, ``threats``.
     Omit to export everything.
     """
-    job = await _load_job_full(db, job_id)
+    job = await _load_job_full(db, job_id, analytics=True)
     if not job:
         raise HTTPException(404)
     if not job.analytics_json:
@@ -1883,13 +1883,14 @@ async def job_delete(
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
 
-async def _load_job_full(db: AsyncSession, job_id: int, *, blobs: tuple = ()) -> AnalysisJob | None:
+async def _load_job_full(db: AsyncSession, job_id: int, *, blobs: tuple = (), analytics: bool = False) -> AnalysisJob | None:
     """The job with its task results and findings.
 
     Backs the 3-second job-status poll, so `Finding.details` and `Finding.rule_content`
     stay deferred: the page uses `details` only as a boolean (`Finding.has_details`, a
     selected expression) and `rule_content` not at all. `blobs` names the deferred
-    `Finding` columns an export genuinely serialises.
+    `Finding` columns an export genuinely serialises; `analytics` undefers
+    `AnalysisJob.analytics_json` for the two analytics routes that render it.
     """
     findings_loader = selectinload(AnalysisJob.task_results).selectinload(TaskResult.findings)
     if blobs:
@@ -1905,6 +1906,7 @@ async def _load_job_full(db: AsyncSession, job_id: int, *, blobs: tuple = ()) ->
             # session is a MissingGreenlet rather than an extra query.
             selectinload(AnalysisJob.tags),
             findings_loader,
+            *([undefer(AnalysisJob.analytics_json)] if analytics else []),
         )
     )
     return result.scalar_one_or_none()
