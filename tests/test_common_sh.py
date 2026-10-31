@@ -411,6 +411,60 @@ class TestRemoteCommandsRunUnderBash:
         res = _with_shim("""host_exec somehost "printf '%s\\n' \\"it's fine\\"" """, tmp_path, shell="fish")
         assert "it's fine" in res.stdout, res.stdout + res.stderr
 
+    @pytest.mark.skipif(shutil.which("fish") is None, reason="fish not installed")
+    def test_host_install_env_survives_a_fish_login_shell(self, tmp_path: Path):
+        """The 1.2.0 fleet upgrade died here: `-f: -c: line 4: unexpected EOF while looking
+        for matching `''`. host_install_env quotes its body TWICE (once for its own
+        `bash -c`, once more in host_exec), so the outer quoting carries the inner `'\\''`
+        — a backslash immediately before a quote, inside single quotes. POSIX reads that
+        backslash literally; fish reads `\\'` as an escaped quote, the string never closes
+        where bash expects, and the install refuses before anything runs."""
+        shim = _ssh_shim(tmp_path, "fish")
+        # scp: `scp [opts] SRC host:DEST` → a local copy.
+        (shim / "scp").write_text(
+            '#!/usr/bin/env bash\nargs=("$@"); n=${#args[@]}\ncp "${args[$((n-2))]}" "${args[$((n-1))]#*:}"\n',
+            encoding="utf-8",
+        )
+        (shim / "scp").chmod(0o755)
+        src = tmp_path / "env.src"
+        src.write_text("A=1\n", encoding="utf-8")
+        dest = tmp_path / "it's a dir"
+        res = _with_shim(f"host_install_env {shlex.quote(str(src))} somehost {shlex.quote(str(dest))}", tmp_path, shell="fish")
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert "unexpected EOF" not in res.stderr
+        assert (dest / ".env").read_text(encoding="utf-8") == "A=1\n"
+
+    @pytest.mark.skipif(shutil.which("fish") is None, reason="fish not installed")
+    def test_backslashes_survive_a_fish_login_shell(self, tmp_path: Path):
+        """fish honours `\\\\` and `\\'` inside single quotes; POSIX honours neither."""
+        cmd = r"""printf '%s|' 'a\b' 'c\\d' 'x\' "it's" """
+        res = _with_shim(f"host_exec somehost {shlex.quote(cmd)}", tmp_path, shell="fish")
+        assert res.returncode == 0, res.stdout + res.stderr
+        assert res.stdout == "a\\b|c\\\\d|x\\|it's|"
+
+    @pytest.mark.parametrize("payload", ["plain", "it's", "a\\b", "x\\'y", "c\\\\d", "end\\", "'\\''", '$HOME "q"\nline2'])
+    def test_shquote_never_puts_a_backslash_inside_single_quotes(self, tmp_path: Path, payload: str):
+        """The fish-relevant invariant, checkable without fish (CI has none): inside single
+        quotes fish honours `\\'` and `\\\\`, POSIX honours nothing, so the two agree only
+        if no backslash ever sits inside the quotes. Plus the POSIX round trip."""
+        res = _run(f"shquote {shlex.quote(payload)}", tmp_path)
+        out, state, i = res.stdout, "bare", 0
+        while i < len(out):
+            ch = out[i]
+            if state == "single":
+                assert ch != "\\", f"backslash inside single quotes: {out!r}"
+                state = "bare" if ch == "'" else state
+            elif ch == "\\":
+                i += 1  # escapes the next char, bare or double-quoted alike
+            elif state == "double":
+                state = "bare" if ch == '"' else state
+            else:
+                state = {"'": "single", '"': "double"}.get(ch, state)
+            i += 1
+        assert state == "bare", f"unterminated quote: {out!r}"
+        back = subprocess.run(["bash", "-c", f"printf %s {out}"], capture_output=True, text=True)
+        assert back.stdout == payload
+
     def test_a_heredoc_caller_still_reaches_the_inner_bash(self, tmp_path: Path):
         """The 12 `host_exec h bash -s <<EOS` sites in deploy-multiserver.sh depend on
         stdin reaching the remote command. Wrapping in bash -c must not consume it —

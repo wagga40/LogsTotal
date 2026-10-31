@@ -320,11 +320,18 @@ hosts_have_local() {
 # not necessarily a POSIX one — fish, for instance, rejects a bare `rc=$?` outright
 # ("Unsupported use of '='").
 #
-# Single-quote escaping is the one form that survives both: POSIX closes-escapes-reopens
-# with '\'' and fish reads the same bytes as quote, literal-quote, quote. Verified
-# against real fish, including a payload containing an apostrophe.
+# The two shells disagree about one thing inside single quotes: POSIX honours no escapes
+# there, fish honours `\'` and `\\`. So no backslash may ever sit INSIDE the quotes —
+# each one is stepped outside as '\\' (one backslash in both), and each quote as '"'"'
+# (a double-quoted quote in both). The old '\'' form was fine for one level, but quoting
+# its output again puts a backslash right before a quote inside the quotes, which fish
+# reads as an escaped quote: host_install_env (quoted twice) died on every fish-shelled
+# host with "unexpected EOF while looking for matching `''".
+#
+# Quotes are replaced first because that replacement introduces no backslash; the
+# backslash pass then never touches what the quote pass wrote.
 shquote() {
-  printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
+  printf "'%s'" "$(printf '%s' "$1" | sed -e "s/'/'\"'\"'/g" -e "s/\\\\/'\\\\\\\\'/g")"
 }
 
 # host_exec HOST CMD... — run CMD on HOST: over SSH, or directly for the `local`
