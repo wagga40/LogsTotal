@@ -61,6 +61,7 @@ def capture_case(case: dict, directory: Path, *, compressed: bool = False) -> di
     # replace rather than snapshotted, so the recorded expectations stay as they were.
     assert analytics.pop("timeline_buckets") == buckets, "stored buckets equal a fresh parse"
     assert analytics.pop("process_forest") == build_process_forest(events), "stored forest equals the materialised build"
+    analytics.pop("event_links")  # its own tests: tests/test_event_keys.py
     analytics["relationships"] = sorted([[list(key), count] for key, count in analytics["relationships"].items()])
     analytics["relationship_evidence"] = sorted([[list(key), value] for key, value in analytics["relationship_evidence"].items()])
     matches = []

@@ -149,7 +149,7 @@ class TestEntityValuesRoundTripToNodes:
         """
         from app import analytics
 
-        def _feed(_job_id, _rule_tactic, _technique_tactic, *, markers=None, rule_meta=None, consumer=None, job_dir=None, process_events=None):
+        def _feed(_job_id, _rule_tactic, _technique_tactic, *, markers=None, rule_meta=None, consumer=None, job_dir=None, process_events=None, links=None):
             if consumer is not None:
                 consumer(event)
             return {}, []

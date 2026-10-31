@@ -1201,6 +1201,8 @@ def _cache_analytics(job: AnalysisJob, data: dict, job_dir: Path | None = None) 
             job_artifacts.put_sync(db, job.id, job_artifacts.TL_BUCKETS, data["timeline_buckets"])
         if "process_forest" in data:
             job_artifacts.put_sync(db, job.id, job_artifacts.PROC_FOREST, data["process_forest"])
+        if "event_links" in data:
+            job_artifacts.put_sync(db, job.id, job_artifacts.EVENT_LINKS, data["event_links"])
     return True
 
 

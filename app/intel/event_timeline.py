@@ -31,6 +31,7 @@ from app.intel.tactics import (
 )
 from app.tools.catalog import TOOLS, output_tool
 from app.tools.event_fields import EventView
+from app.tools.event_keys import LinkAccumulator
 from app.tools.output_files import logical_name
 from app.tools.registry import get_adapter_class
 
@@ -92,6 +93,7 @@ def parse_single_output_file(
     rule_meta: dict[str | tuple[str, str], tuple[str | None, str | None, int | None]] | None = None,
     consumer: Callable[[dict], None] | None = None,
     max_events: int | None = None,
+    links: LinkAccumulator | None = None,
 ) -> tuple[dict[str, dict[str, int]], list[dict]]:
     """Parse one tool output file into (buckets, events). Thread-safe.
 
@@ -169,6 +171,9 @@ def parse_single_output_file(
             ts = match.timestamp
             _record(ts, tactic)
             _mark(ts, tactic, match.rule_name, event, match.severity, match.rule_id)
+            if links is not None:
+                # The source event's identity, so the event store can mark it detected.
+                links.add(tool, match.rule_id, match.rule_name, match.severity, event, ts)
             seen += 1
             if consumer is None:
                 events.append(event)
@@ -214,6 +219,7 @@ def extract_all_from_raw_output(
     consumer: Callable[[dict], None] | None = None,
     job_dir: Path | None = None,
     process_events: list[dict] | None = None,
+    links: LinkAccumulator | None = None,
 ) -> tuple[dict[str, dict[str, int]], list[dict]]:
     """Read raw tool output files and extract ALL events.
 
@@ -265,7 +271,7 @@ def extract_all_from_raw_output(
                 if is_process_event(event):
                     process_events.append(event)
 
-        result = parse_single_output_file(output_files[0], rt, tt, markers=markers, rule_meta=rule_meta, consumer=single)
+        result = parse_single_output_file(output_files[0], rt, tt, markers=markers, rule_meta=rule_meta, consumer=single, links=links)
         if consumer is None and process_events is not None:
             process_events.extend(e for e in result[1] if is_process_event(e))
         return result
@@ -292,6 +298,7 @@ def extract_all_from_raw_output(
 
     def _parse(path: Path):
         sink = MarkerAccumulator() if markers is not None else None
+        link_sink = LinkAccumulator() if links is not None else None
         mine: list[dict] = []
         per_file = guarded
         if guarded is not None and process_events is not None:
@@ -300,7 +307,7 @@ def extract_all_from_raw_output(
                 if guarded(event) and is_process_event(event):
                     mine.append(event)
 
-        return (*parse_single_output_file(path, rt, tt, markers=sink, rule_meta=rule_meta, consumer=per_file), sink, mine)
+        return (*parse_single_output_file(path, rt, tt, markers=sink, rule_meta=rule_meta, consumer=per_file, links=link_sink), sink, mine, link_sink)
 
     results: dict[Path, tuple] = {}
     with ThreadPoolExecutor(max_workers=min(len(output_files), 4)) as pool:
@@ -313,7 +320,9 @@ def extract_all_from_raw_output(
     for path in output_files:  # merged in path order, never completion order
         if path not in results:
             continue
-        file_buckets, file_events, file_markers, file_processes = results[path]
+        file_buckets, file_events, file_markers, file_processes, file_links = results[path]
+        if links is not None and file_links is not None:
+            links.merge(file_links)
         all_events.extend(file_events)
         file_bucket_list.append(file_buckets)
         if markers is not None and file_markers is not None:

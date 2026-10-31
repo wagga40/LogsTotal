@@ -80,6 +80,7 @@ def _compute_analytics_data(job: AnalysisJob, job_dir: Path | None = None) -> di
     from app.intel.lineage import build_process_forest
     from app.intel.relationships import EVIDENCE_CAP, extract_relationships, trim_evidence_event
     from app.threat_detection import ThreatAccumulator
+    from app.tools.event_keys import LinkAccumulator
 
     cfg = get_analytics_fields()
 
@@ -228,6 +229,7 @@ def _compute_analytics_data(job: AnalysisJob, job_dir: Path | None = None) -> di
     # (build_process_forest reads nothing else), so it costs a fraction of the materialised
     # parse the Processes tab used to re-run on every cache miss.
     process_events: list[dict] = []
+    links = LinkAccumulator()
     full_buckets, _ = extract_all_from_raw_output(
         job.id,
         rule_tactic,
@@ -237,6 +239,7 @@ def _compute_analytics_data(job: AnalysisJob, job_dir: Path | None = None) -> di
         consumer=_consume,
         job_dir=job_dir,
         process_events=process_events,
+        links=links,
     )
     timeline, timeline_tactics = format_timeline(full_buckets)
 
@@ -262,12 +265,14 @@ def _compute_analytics_data(job: AnalysisJob, job_dir: Path | None = None) -> di
         # Persisted as JobArtifact rows by the worker, never in analytics_json.
         "timeline_buckets": full_buckets,
         "process_forest": build_process_forest(process_events),
+        # Each detection's source-event identity, kept past output retention for the overlay.
+        "event_links": links.result(),
     }
 
 
 # Transient analytics keys computed for downstream persistence but never stored
 # in AnalysisJob.analytics_json (they would only bloat the cached blob).
-_TRANSIENT_ANALYTICS_KEYS = ("relationships", "relationship_evidence", "event_markers", "timeline_buckets", "process_forest")
+_TRANSIENT_ANALYTICS_KEYS = ("relationships", "relationship_evidence", "event_markers", "timeline_buckets", "process_forest", "event_links")
 
 
 def analytics_json_payload(data: dict) -> dict:
