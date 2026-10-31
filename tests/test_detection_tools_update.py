@@ -321,7 +321,7 @@ def test_zircolite_version_includes_profile_pin(tmp_path):
     workflows = tmp_path / "workflows"
     workflows.mkdir()
     (workflows / "windows.yml").write_text("tasks:\n  - tool: zircolite\n    profile: windows\n")
-    assert updater.local_version(tmp_path, "zircolite") == "4.6.0"
+    assert updater.local_version(tmp_path, "zircolite") == "4.7.0"
 
 
 def test_legacy_zircolite_override_version_still_discovered(tmp_path):

@@ -77,7 +77,7 @@ def test_profile_merges_options_replaces_lists_and_does_not_mutate():
     assert result["extra_args"] == ["--flag"]
     assert result["docker_options"] == ["--network=none"]
     assert result["timeout"] == 123
-    assert result["docker_image"].startswith("wagga40/zircolite:4.6.0@sha256:")
+    assert result["docker_image"].startswith("wagga40/zircolite:4.7.0@sha256:")
     result["options"]["config"] = "other"
     assert task == original
     assert resolve_task_config({"tool": "zircolite", "profile": "journald"})["options"] == {"config": "zircolite_journald.yaml"}
@@ -150,7 +150,7 @@ def test_profile_images_and_custom_overrides_are_available_before_install(tmp_pa
     assert result.returncode == 0, result.stderr
     assert set(result.stdout.splitlines()) == {
         "registry.example/tool:2",
-        "wagga40/zircolite:4.6.0@sha256:9c157f5205658a547d1a88c39d7d06ed7814fc9b3a97db0a5a171e0e1a9794cb",
+        "wagga40/zircolite:4.7.0@sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f",
     }
 
 
