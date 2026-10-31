@@ -50,6 +50,7 @@ Workers run these tasks on a fixed schedule. They run only while at least one wo
 |-----------|---------|-------|---------|
 | 03:00 | Revoked API tokens | 90 days | fixed |
 | 03:30 | Enrichment results not fetched again | 30 days | fixed |
+| 04:10 | — SQLite only: refreshes planner statistics, and returns free pages to the filesystem past a threshold | | `DB_VACUUM_FREELIST_PERCENT` |
 | 04:15 | Webhook delivery history | 30 days | `WEBHOOK_DELIVERY_RETENTION_DAYS` |
 | 04:30 | Deleted comments | 180 days | fixed |
 | 04:45 | Raw tool output directories | 90 days | `JOB_OUTPUT_RETENTION_DAYS`, or the override on `/admin/storage` |

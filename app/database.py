@@ -22,6 +22,9 @@ _is_sqlite = "sqlite" in settings.database_url
 # CHECK_CACHE_TTL_SECONDS argument — a knob here would owe .env.example a line and
 # docs/configuration.md a row for something no operator should ever need to tune.
 SQLITE_BUSY_TIMEOUT_MS = 15000
+# Module constants, not settings, on the same argument: tuning values no operator should touch.
+SQLITE_MMAP_BYTES = 256 * 1024 * 1024
+SQLITE_JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 
 
 def _set_sqlite_pragmas(dbapi_conn, connection_record):
@@ -31,6 +34,14 @@ def _set_sqlite_pragmas(dbapi_conn, connection_record):
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA cache_size=-64000")  # 64 MB cache
     cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    # Reads through the OS page cache instead of copying pages into SQLite's own buffers.
+    # Safe with WAL; a virtual-address reservation, not resident memory.
+    cursor.execute(f"PRAGMA mmap_size={SQLITE_MMAP_BYTES}")
+    # Sorts and temp indexes in memory, not in a temp file next to the database.
+    cursor.execute("PRAGMA temp_store=MEMORY")
+    # After a checkpoint the WAL is truncated back to this size, so one large write (a
+    # backfill, a VACUUM) does not leave a WAL as large as the database behind for good.
+    cursor.execute(f"PRAGMA journal_size_limit={SQLITE_JOURNAL_SIZE_LIMIT_BYTES}")
     # Off by default in SQLite, so without this the default backend would not enforce the
     # constraints its own schema declares: a delete that missed a child table would leave
     # dangling rows here — a nav-bell count over an empty dropdown, links to jobs that no

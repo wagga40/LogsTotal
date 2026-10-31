@@ -280,6 +280,31 @@ def reset_cache() -> None:
 # ── Database footprint ────────────────────────────────────────────────────────
 
 
+_AUTO_VACUUM_MODES = {0: "none", 1: "full", 2: "incremental"}
+
+
+def sqlite_free_space(conn) -> dict:
+    """Pages, free pages and auto-vacuum mode of the open SQLite database. Pure reads.
+
+    Free pages are whole pages on the freelist. Rows deleted from scattered pages leave those
+    pages partly full, which only a full VACUUM repacks, so this is a floor on what a VACUUM
+    would reclaim, not an estimate of it.
+    """
+    from sqlalchemy import text
+
+    pages = conn.execute(text("PRAGMA page_count")).scalar() or 0
+    page_size = conn.execute(text("PRAGMA page_size")).scalar() or 0
+    free = conn.execute(text("PRAGMA freelist_count")).scalar() or 0
+    mode = conn.execute(text("PRAGMA auto_vacuum")).scalar() or 0
+    return {
+        "bytes": pages * page_size,
+        "free_pages": free,
+        "free_bytes": free * page_size,
+        "free_percent": (100.0 * free / pages) if pages else 0.0,
+        "auto_vacuum": _AUTO_VACUUM_MODES.get(mode, str(mode)),
+    }
+
+
 def database_footprint_sync() -> dict:
     """Where the database's bytes are, using the database's own accounting.
 
@@ -316,6 +341,12 @@ def database_footprint_sync() -> dict:
                 result["total_bytes"] = conn.execute(text("SELECT pg_database_size(current_database())")).scalar()
                 return result
 
+            # Free pages, the WAL and the auto-vacuum mode: deleting rows never shrinks the
+            # file, and the WAL can hold as much again until a checkpoint, so without these
+            # the total above reads as live data when part of it is reclaimable.
+            space = sqlite_free_space(conn)
+            wal = [p for p in sqlite_db_paths() if p.name.endswith("-wal")]
+            result["sqlite"] = {**space, "wal_bytes": wal[0].stat().st_size if wal else 0}
             # SQLite: the file itself is the honest total.
             page_count = conn.execute(text("PRAGMA page_count")).scalar() or 0
             page_size = conn.execute(text("PRAGMA page_size")).scalar() or 0

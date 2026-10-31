@@ -283,3 +283,10 @@ def test_vacuum_checkpoints_the_wal_and_counts_it(sync_db, tmp_path, monkeypatch
     from app.workers.utils import humanbytes
 
     assert bt.detail == f"reclaimed {humanbytes(before - on_disk())}"
+    # The manual Vacuum also switches the file to incremental mode, so later reclaims by the
+    # daily optimise task are an incremental_vacuum instead of another whole-file rewrite.
+    check = sqlite3.connect(path)
+    try:
+        assert check.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
+    finally:
+        check.close()

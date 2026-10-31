@@ -160,6 +160,12 @@ _SPECS: tuple[TaskSpec, ...] = (
         category=SCHEDULED,
         notes="Hourly; re-fetches each list whose own interval has elapsed. A failed fetch keeps the values it has.",
     ),
+    TaskSpec(
+        key="optimize_database_periodic",
+        label="Optimise the database",
+        category=SCHEDULED,
+        notes="SQLite: PRAGMA optimize, then returns free pages past DB_VACUUM_FREELIST_PERCENT.",
+    ),
     TaskSpec(key="prune_webhook_deliveries_periodic", label="Prune webhook deliveries", category=SCHEDULED, notes="Window: WEBHOOK_DELIVERY_RETENTION_DAYS."),
     TaskSpec(key="prune_deleted_comments_periodic", label="Prune comment tombstones", category=SCHEDULED, notes="Removes soft-deleted comments after 180 days."),
     TaskSpec(key="cleanup_job_outputs_periodic", label="Sweep old job outputs", category=SCHEDULED, notes="Window: JOB_OUTPUT_RETENTION_DAYS; 0 disables."),

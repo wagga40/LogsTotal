@@ -231,6 +231,10 @@ class Settings(BaseSettings):
     # evidence a user submitted, and doing that on a schedule must be switched on rather
     # than inherited.
     upload_retention_days: int = 0
+    # The share of the SQLite file in free pages past which the daily optimise task gives
+    # them back to the filesystem: incrementally once the file is in incremental mode, by a
+    # full VACUUM up to 256 MB, or only flagged on /admin/storage above that. 0 disables it.
+    db_vacuum_freelist_percent: int = 25
 
     @model_validator(mode="after")
     def _check_and_derive(self) -> "Settings":

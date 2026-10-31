@@ -2900,6 +2900,10 @@ def vacuum_database(bg_task_id: int | None = None):
         before = on_disk()
         # Its own connection with autocommit: VACUUM cannot run inside a transaction.
         with sync_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            # Takes effect through this VACUUM, which is the only way to change the mode of an
+            # existing file. From then on the daily optimise task reclaims free pages with a
+            # cheap incremental_vacuum instead of another whole-file rewrite.
+            conn.execute(text("PRAGMA auto_vacuum=INCREMENTAL"))
             conn.execute(text("VACUUM"))
             # Returns busy rather than raising when a reader holds the WAL; the next
             # checkpoint then finishes the job, and the figure below says what this one did.
@@ -2915,6 +2919,59 @@ def vacuum_database(bg_task_id: int | None = None):
         _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
     finally:
         db.close()
+
+
+#: Above this, the daily task does not run a full VACUUM itself: it takes an exclusive lock
+#: and rewrites the file, and a web write waiting longer than SQLITE_BUSY_TIMEOUT_MS returns a
+#: 500. A few seconds at this size; the storage page flags anything larger for an admin.
+_AUTO_VACUUM_MAX_BYTES = 256 * 1024 * 1024
+
+
+@huey.periodic_task(crontab(hour="4", minute="10"))
+def optimize_database_periodic():
+    """Daily: refresh SQLite's planner statistics and give free pages back to the filesystem."""
+    with _ScheduledRun("optimize_database_periodic") as run:
+        run.detail = _optimize_database_periodic_body() or ""
+
+
+def _optimize_database_periodic_body() -> str:
+    """`PRAGMA optimize`, then reclaim free pages once they pass DB_VACUUM_FREELIST_PERCENT.
+
+    Deleting rows frees pages inside the file and never shrinks it: the dev database was
+    24.7% free pages and had never been vacuumed. Incremental mode (set by the first full
+    VACUUM) makes later reclaims an incremental_vacuum, which only truncates free pages.
+    PostgreSQL needs none of this: autovacuum and autoanalyze do both.
+    """
+    from sqlalchemy import text
+
+    from app.database import sync_engine
+    from app.storage_usage import sqlite_free_space
+    from app.workers.utils import humanbytes
+
+    if sync_engine.url.get_backend_name() != "sqlite":
+        return "PostgreSQL: autovacuum and autoanalyze handle this"
+    threshold = settings.db_vacuum_freelist_percent
+    with sync_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text("PRAGMA optimize"))
+        space = sqlite_free_space(conn)
+        summary = f"{space['free_percent']:.0f}% of {humanbytes(space['bytes'])} in free pages"
+        if not threshold or threshold <= 0 or space["free_percent"] < threshold:
+            return f"statistics refreshed; {summary}"
+        if space["auto_vacuum"] == "incremental":
+            # Frees one page per step, so it must be stepped to completion: through
+            # SQLAlchemy it returns no rows and the result is closed after the first step,
+            # which freed 1 page of 752 in the test. fetchall() on the DB-API cursor runs it out.
+            conn.connection.driver_connection.execute("PRAGMA incremental_vacuum").fetchall()
+            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+            return f"statistics refreshed; returned {humanbytes(space['free_bytes'])} of free pages ({summary})"
+        if space["bytes"] > _AUTO_VACUUM_MAX_BYTES:
+            _log.warning("optimize_database_periodic: %s; run Vacuum from /admin/storage (over %s, not vacuumed automatically)", summary, humanbytes(_AUTO_VACUUM_MAX_BYTES))
+            return f"statistics refreshed; {summary} — run Vacuum from Storage (file over {humanbytes(_AUTO_VACUUM_MAX_BYTES)})"
+        conn.execute(text("PRAGMA auto_vacuum=INCREMENTAL"))
+        conn.execute(text("VACUUM"))
+        conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        after = sqlite_free_space(conn)
+        return f"statistics refreshed; vacuumed {humanbytes(space['bytes'])} to {humanbytes(after['bytes'])} and switched to incremental auto-vacuum"
 
 
 @huey.periodic_task(crontab(hour="5", minute="30"))

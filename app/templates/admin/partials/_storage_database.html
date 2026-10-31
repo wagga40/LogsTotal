@@ -13,6 +13,41 @@
       <span class="text-sm text-gray-300">Total ({{ footprint.backend }})</span>
       <span class="font-mono text-sm">{{ footprint.total_bytes | humanbytes }}</span>
     </div>
+    {% if footprint.sqlite %}
+    {% set sq = footprint.sqlite %}
+    {# Deleting rows never shrinks a SQLite file, so part of the total is free pages; the WAL
+       can hold as much again until a checkpoint. #}
+    <dl class="px-4 py-3 border-b border-gray-800 grid grid-cols-2 sm:grid-cols-4 gap-3 text-xs">
+      <div>
+        <dt class="text-gray-500">Free pages</dt>
+        <dd class="font-mono text-gray-300">{{ sq.free_bytes | humanbytes }} <span class="text-gray-500">({{ "%.0f" | format(sq.free_percent) }}%)</span></dd>
+      </div>
+      <div>
+        <dt class="text-gray-500">WAL</dt>
+        <dd class="font-mono text-gray-300">{{ sq.wal_bytes | humanbytes }}</dd>
+      </div>
+      <div>
+        <dt class="text-gray-500">Auto-vacuum</dt>
+        <dd class="font-mono text-gray-300">{{ sq.auto_vacuum }}</dd>
+      </div>
+      <div>
+        <dt class="text-gray-500">Last vacuum</dt>
+        <dd class="font-mono text-gray-300">{% if last_vacuum %}{{ last_vacuum.finished_at | time_ago }}{% else %}never{% endif %}</dd>
+      </div>
+    </dl>
+    <p class="px-4 py-2 text-xs text-gray-500 border-b border-gray-800">
+      {% if not auto_vacuum_threshold or auto_vacuum_threshold <= 0 %}
+      Automatic reclaim is off (<code>DB_VACUUM_FREELIST_PERCENT=0</code>); the daily task still refreshes planner statistics.
+      {% elif sq.auto_vacuum == 'incremental' %}
+      Free pages past {{ auto_vacuum_threshold }}% are returned to the filesystem by the daily task at 04:10 UTC.
+      {% elif sq.bytes > 268435456 %}
+      Over 256 MB, so the daily task does not run a full VACUUM itself (it locks the database while it rewrites the file). Run Vacuum once; after it, free pages are reclaimed incrementally.
+      {% else %}
+      The daily task runs a full VACUUM once free pages pass {{ auto_vacuum_threshold }}%, then switches to incremental reclaim.
+      {% endif %}
+      Free pages are whole pages only, so this is a floor on what Vacuum reclaims.
+    </p>
+    {% endif %}
     {% if footprint.tables %}
     <div class="lt-scroll lt-scroll--md">
       <table class="w-full text-sm">

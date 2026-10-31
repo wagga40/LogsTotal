@@ -18,6 +18,13 @@ backup step, migration ordering, and rollback for each deployment path.
 - Per-engine completion diagnostics and partial results. Usable findings survive malformed
   output or interrupted engines; incomplete coverage is explicitly labelled.
 
+- A daily database optimisation (04:10 UTC). On SQLite it refreshes planner statistics and
+  returns free pages to the filesystem once they pass `DB_VACUUM_FREELIST_PERCENT`
+  (default 25). The first reclaim is a full `VACUUM`, run automatically only up to 256 MB,
+  that switches the file to incremental auto-vacuum. The development database was 27% free
+  pages (42.9 MB, 31.4 MB after `VACUUM`). The storage page now shows free pages, WAL size,
+  auto-vacuum mode and the last vacuum.
+
 ### Fixed
 
 - Missing or unreadable engine output no longer becomes a successful zero-match result.
@@ -45,6 +52,13 @@ backup step, migration ordering, and rollback for each deployment path.
   Zircolite image for AMD64 and ARM64.
   Chainsaw 2.17.1 and Hayabusa 4.2.0 have refreshed rule snapshots. ChopChopGo stays at 1.1.0.
 - Tool updates accept exact release tags and rule refs for reproducible maintenance.
+- Job pages poll lighter: the jobs list, the recent-jobs panel and the job status poll no
+  longer load each job's analytics blob (1.3 MB per 20-row page in development) or every
+  tool's full log. A failed tool's log is still shown to admins.
+- Twenty single-column indexes that a composite index already covered are dropped, and
+  lists that relied on their order (findings, tags, case links, rule matches) are now
+  explicitly ordered. SQLite connections use memory-mapped reads, in-memory temp storage
+  and a bounded WAL.
 - Job actions use visible buttons, offer comparisons only when an eligible earlier run
   exists, and group Artifact, Raw and JSON downloads in one menu. Analytics export
   sections start unchecked.
@@ -61,6 +75,8 @@ backup step, migration ordering, and rollback for each deployment path.
 - Migration `b8d46f1e932a` adds the `PARTIAL` task status, which older workers cannot read.
   `./logstotal upgrade` stops every worker before migrating; stop them yourself if you
   upgrade any other way.
+- Migration `e064602640a4` drops the twenty redundant indexes, quickly and without data
+  changes. Its downgrade recreates them.
 - `./logstotal upgrade:rollback` refuses to cross this migration. Restore the pre-upgrade
   backup, or downgrade the schema first to keep newer jobs — see
   [Rolling back the analysis-confidence migration](docs/runbooks/upgrading.md#rolling-back-the-analysis-confidence-migration).
