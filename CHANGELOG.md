@@ -25,6 +25,10 @@ backup step, migration ordering, and rollback for each deployment path.
   Zircolite writes the event time as a root `SystemTime`, which was never read, so every
   match counted as undated. Recalculate analytics, or run the analytics backfill, to
   re-date existing jobs.
+- The storage page no longer counts uploads with no database row as reclaimable. Purge
+  never deletes them, and its finished task now reports only the bytes it deleted.
+- Vacuum checkpoints the SQLite WAL and reports the space freed across the database
+  file and its WAL; it read the main file alone and could report nothing reclaimed.
 - Regex timeouts cannot consume the budget granted to later events.
 - Refreshed Sigma files invalidate cached rule metadata, including `.yaml` files.
 - Zero-match reports describe observed results without declaring an input safe.

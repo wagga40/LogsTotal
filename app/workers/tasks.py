@@ -2822,8 +2822,9 @@ def purge_orphaned_storage(bg_task_id: int | None = None):
             worker_alive_ttl=settings.worker_alive_ttl,
         )
 
-        removed_jobs, removed_files = 0, 0
-        freed = report.reclaimable_bytes
+        # Counted from what is actually deleted below, never from the report's total: the
+        # report also lists groups Purge leaves alone, and a delete can fail.
+        removed_jobs, removed_files, freed = 0, 0, 0
 
         # The snapshot predates the walk, which on S3 can take minutes: a job picked up in
         # the meantime has a directory the snapshot never heard of. Ask again, just before
@@ -2837,14 +2838,16 @@ def purge_orphaned_storage(bg_task_id: int | None = None):
         for jid in sorted(orphan_job_ids):
             if st.delete_job_outputs_sync(jid):
                 removed_jobs += 1
+                freed += report.orphan_job_bytes.get(jid, 0)
             if _bg_cancel_requested(bg_task_id):
                 _finish_cancelled(db, bg_task_id, f"cancelled after {removed_jobs} directories")
                 return
 
-        for key in report.removable_keys:
+        for key, size in report.removable:
             try:
                 st.delete_sync(key)
                 removed_files += 1
+                freed += size
             except Exception:
                 _log.debug("could not remove %s", key, exc_info=True)
 
@@ -2882,12 +2885,23 @@ def vacuum_database(bg_task_id: int | None = None):
             _mark_bg_task(db, bg_task_id, "completed", detail="Not a SQLite database — PostgreSQL reclaims space automatically")
             return
         path = Path(sync_engine.url.database) if sync_engine.url.database else None
-        before = path.stat().st_size if path and path.exists() else 0
+
+        def on_disk() -> int:
+            # Main file plus WAL. In WAL mode VACUUM shrinks the main file at once but leaves
+            # a WAL as large as the new database until a checkpoint, and a WAL left over from
+            # before the run holds space too — the main file alone misreports both ways.
+            if path is None:
+                return 0
+            return sum(p.stat().st_size for p in (path, path.with_name(path.name + "-wal")) if p.exists())
+
+        before = on_disk()
         # Its own connection with autocommit: VACUUM cannot run inside a transaction.
         with sync_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
             conn.execute(text("VACUUM"))
-        after = path.stat().st_size if path and path.exists() else 0
-        freed = max(0, before - after)
+            # Returns busy rather than raising when a reader holds the WAL; the next
+            # checkpoint then finishes the job, and the figure below says what this one did.
+            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        freed = max(0, before - on_disk())
         from app.workers.utils import humanbytes
 
         detail = f"reclaimed {humanbytes(freed)}" if freed else "nothing to reclaim"

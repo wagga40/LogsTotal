@@ -79,8 +79,10 @@ class UsageReport:
     #: because the purge task acts on it. Bounded by the number of orphaned directories,
     #: which is a count of jobs rather than of files.
     orphan_job_ids: set[int] = field(default_factory=set)
-    #: Full keys of the stray non-job files that can be removed (spools, stale cache).
-    removable_keys: list[str] = field(default_factory=list)
+    #: Bytes under each orphaned job directory, so the purge can report what it deleted.
+    orphan_job_bytes: dict[int, int] = field(default_factory=dict)
+    #: `(key, size)` of the stray non-job files that can be removed (spools, stale cache).
+    removable: list[tuple[str, int]] = field(default_factory=list)
     truncated: bool = False
     scanned: int = 0
     free_bytes: int | None = None
@@ -95,6 +97,10 @@ class UsageReport:
     @property
     def reclaimable_bytes(self) -> int:
         return sum(group.bytes for group in self.orphans if group.reclaimable)
+
+    @property
+    def removable_keys(self) -> list[str]:
+        return [key for key, _size in self.removable]
 
 
 def job_id_of(key: str) -> int | None:
@@ -132,10 +138,14 @@ def classify_objects(
     upload_sizes: list[tuple[str, int]] = []
     job_sizes: dict[int, int] = {}
 
+    # Shown, never purged: an upload is stored before its LogFile row commits, so "no row"
+    # also describes an upload in flight, and this is evidence someone submitted. Counting it
+    # as reclaimable made the page promise bytes Purge then left in place.
     missing_owner = OrphanGroup(
         kind="unowned_upload",
         label="Stored files with no database row",
-        detail="Uploaded logs whose LogFile row is gone — normally a job deleted while storage was unreachable.",
+        detail="Uploaded logs whose LogFile row is gone — normally a job deleted while storage was unreachable. Purge leaves these alone; delete them by hand once checked.",
+        reclaimable=False,
     )
     orphan_outputs = OrphanGroup(
         kind="orphan_outputs",
@@ -167,7 +177,7 @@ def classify_objects(
             report.other_count += 1
             if now - obj.mtime > max(worker_alive_ttl, 180) * 4:
                 _add(stale_cache, key, obj.size)
-                report.removable_keys.append(key)
+                report.removable.append((key, obj.size))
             continue
 
         if name.startswith(_HEALTH_PROBE_PREFIX):
@@ -185,6 +195,7 @@ def classify_objects(
             if job_id not in known_job_ids and job_id not in active_job_ids:
                 _add(orphan_outputs, key, obj.size)
                 report.orphan_job_ids.add(job_id)
+                report.orphan_job_bytes[job_id] = report.orphan_job_bytes.get(job_id, 0) + obj.size
             continue
 
         if _TMP_SPOOL_RE.match(name):
@@ -192,7 +203,7 @@ def classify_objects(
             report.other_count += 1
             if now - obj.mtime > TMP_SPOOL_STALE_SECONDS:
                 _add(stale_spools, key, obj.size)
-                report.removable_keys.append(key)
+                report.removable.append((key, obj.size))
             continue
 
         report.uploads_bytes += obj.size
