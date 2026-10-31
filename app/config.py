@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables and .env file."""
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -238,6 +239,10 @@ class Settings(BaseSettings):
     # Compress each job's raw tool outputs (zstd) once its analytics are computed. Readers
     # handle plain and compressed files alike, so turning this off only stops new compression.
     raw_output_compression: bool = True
+    # Store new uploads zstd-compressed (`off` or `zstd`). Readers decompress a private copy
+    # for the length of a job, so tools and downloads see the original bytes.
+    upload_compression: Literal["off", "zstd"] = "off"
+    upload_compression_level: int = 3
 
     # Event stores (app/events/): every event of an upload, as Parquet. A derived cache,
     # rebuildable from the upload, built by a subprocess beside the detection tools.

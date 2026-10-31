@@ -50,6 +50,10 @@ _EVENTS_BUILD_PREFIX = ".events_build"
 #: The web tier's Explore cache (match-sets, S3 store copies, DuckDB spill). It trims itself
 #: and may be in use by a query, so it is reported but never offered for deletion.
 _EVENTS_CACHE_PREFIX = ".events_cache"
+#: Private plaintext copies of compressed uploads, held for the length of a job or download.
+_DECOMPRESSED_PREFIX = ".decompressed"
+#: A copy older than this belongs to no live reader: no analysis or download runs a day.
+DECOMPRESSED_STALE_SECONDS = 86_400
 _TMP_SPOOL_RE = re.compile(r"^tmp\w*\.upload$")
 
 
@@ -212,6 +216,14 @@ def classify_objects(
             if len(parts) >= 4 and prefix not in known_event_stores:
                 _add(orphan_stores, key, obj.size)
                 report.orphan_event_stores[(parts[1], parts[2])] = report.orphan_event_stores.get((parts[1], parts[2]), 0) + obj.size
+            continue
+
+        if key.startswith(_DECOMPRESSED_PREFIX + "/"):
+            report.other_bytes += obj.size
+            report.other_count += 1
+            if now - obj.mtime > DECOMPRESSED_STALE_SECONDS:
+                _add(stale_cache, key, obj.size)
+                report.removable.append((key, obj.size))
             continue
 
         if key.startswith(_EVENTS_CACHE_PREFIX + "/"):

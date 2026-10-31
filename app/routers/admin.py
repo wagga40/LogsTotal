@@ -145,6 +145,19 @@ MAINTENANCE_ACTIONS = [
         "confirm_message": "Re-encode every uncompressed blob row in the database?",
     },
     {
+        "key": "compress-uploads",
+        "url": "/admin/backfill-compress-uploads",
+        "param": "backfill_compress_uploads",
+        "title": "Compress Uploads",
+        "description": "Compress the uploads stored before UPLOAD_COMPRESSION=zstd.",
+        "details": (
+            "Uploaded logs compress about 26x. Analyses, downloads and event indexes read a decompressed "
+            "copy, so nothing else changes. Uploads with a job pending or running are skipped; run it again later."
+        ),
+        "confirm_title": "Compress uploads",
+        "confirm_message": "Compress every stored upload that is not compressed yet?",
+    },
+    {
         "key": "compress-outputs",
         "url": "/admin/backfill-compress-outputs",
         "param": "backfill_compress_outputs",
@@ -722,6 +735,18 @@ async def backfill_compress_db_trigger(
     from app.workers.tasks import backfill_compress_db
 
     return await _queue_background_task(request, db, "Compress Stored Blobs", backfill_compress_db, "backfill_compress_db", user=user)
+
+
+@router.post("/backfill-compress-uploads")
+async def backfill_compress_uploads_trigger(
+    request: Request,
+    db: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_superuser),
+):
+    """Compress uploads stored before UPLOAD_COMPRESSION=zstd. Admin only."""
+    from app.workers.tasks import backfill_compress_uploads
+
+    return await _queue_background_task(request, db, "Compress Uploads", backfill_compress_uploads, "backfill_compress_uploads", user=user)
 
 
 @router.post("/backfill-compress-outputs")

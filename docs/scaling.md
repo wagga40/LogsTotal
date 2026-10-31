@@ -77,7 +77,9 @@ Notes:
 
 ## Storage growth
 
-Each job stores its uploaded log plus each tool's raw output. Stored tool stdout/stderr is
+Each job stores its uploaded log plus each tool's raw output. Raw outputs are stored
+zstd-compressed by default (about 40x); uploads can be too, with `UPLOAD_COMPRESSION=zstd`
+(about 26x on EVTX, at the cost of decompressing a copy for each analysis). Stored tool stdout/stderr is
 capped by `MAX_LOG_OUTPUT_BYTES` (default 50 KB per task). Raw outputs are deleted after
 `JOB_OUTPUT_RETENTION_DAYS` (default 90) by a daily sweep; uploaded files are kept unless
 you set `UPLOAD_RETENTION_DAYS`. Watch usage on `/admin/storage` and the disk gauge on

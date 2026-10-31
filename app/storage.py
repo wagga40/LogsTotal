@@ -54,6 +54,40 @@ class StorageBackend(ABC):
     def load_sync(self, filename: str) -> Path:
         """Sync version of load() for Huey workers."""
 
+    def _materialize(self, path: Path) -> Path:
+        """A plaintext copy of a compressed upload, private to this caller; else *path* itself.
+
+        Under `upload_dir/.decompressed/{pid}-{uuid}/`, never a system temp directory: the
+        Docker-run tool mounts the file's parent and maps only paths under `upload_dir`.
+        The copy is the caller's to release with `release_sync`, like an S3 download.
+        """
+        if not path.name.endswith(COMPRESSED_SUFFIX):
+            return path
+        from app.compression_utils import decompress_file
+
+        dest_dir = Path(settings.upload_dir) / DECOMPRESSED_DIR / f"{os.getpid()}-{uuid.uuid4().hex}"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / path.name[: -len(COMPRESSED_SUFFIX)]
+        try:
+            decompress_file(path, dest)
+        except BaseException:
+            shutil.rmtree(dest_dir, ignore_errors=True)
+            raise
+        return dest
+
+    @staticmethod
+    def _release_decompressed(path: Path) -> bool:
+        """Remove a `_materialize` copy (and its private directory). False if *path* is not one."""
+        try:
+            root = (Path(settings.upload_dir) / DECOMPRESSED_DIR).resolve()
+            resolved = Path(path).resolve()
+            if not resolved.is_relative_to(root) or resolved == root:
+                return False
+            shutil.rmtree(resolved.parent if resolved.parent != root else resolved, ignore_errors=True)
+            return True
+        except OSError:
+            return False
+
     def release_sync(self, path: Path) -> None:
         """Drop a local copy produced by :meth:`load_sync`, if it was a temporary one.
 
@@ -76,6 +110,10 @@ class StorageBackend(ABC):
 
         ``local_path`` must not be used by the caller afterwards.
         """
+
+    @abstractmethod
+    def save_path_sync(self, filename: str, local_path: Path) -> str:
+        """`save_path` for worker code (the upload compression backfill)."""
 
     @abstractmethod
     async def delete(self, filename: str) -> None:
@@ -176,6 +214,10 @@ class StorageBackend(ABC):
 _STORE_SHA = re.compile(r"^[0-9a-f]{64}$")
 _STORE_GEN = re.compile(r"^[a-z_]+-b\d+-[0-9a-f]{8}$")
 EVENT_STORE_PREFIX = "events"
+#: A stored upload whose key ends so is a zstd frame (UPLOAD_COMPRESSION=zstd).
+COMPRESSED_SUFFIX = ".zst"
+#: Where readers get a private plaintext copy of a compressed upload, under upload_dir.
+DECOMPRESSED_DIR = ".decompressed"
 
 
 def event_store_prefix(sha256: str, gen: str) -> str:
@@ -203,6 +245,9 @@ class LocalStorage(StorageBackend):
     async def save_path(self, filename: str, local_path: Path) -> str:
         return await run_in_threadpool(self._move_into_place, filename, local_path)
 
+    def save_path_sync(self, filename: str, local_path: Path) -> str:
+        return self._move_into_place(filename, local_path)
+
     def _move_into_place(self, filename: str, local_path: Path) -> str:
         target = self._dir / filename
         try:
@@ -221,10 +266,16 @@ class LocalStorage(StorageBackend):
         return filename
 
     async def load(self, filename: str) -> Path:
+        if filename.endswith(COMPRESSED_SUFFIX):
+            return await run_in_threadpool(self.load_sync, filename)
         return self._dir / filename
 
     def load_sync(self, filename: str) -> Path:
-        return self._dir / filename
+        return self._materialize(self._dir / filename)
+
+    def release_sync(self, path: Path) -> None:
+        # The stored file itself is never released; a decompressed copy is.
+        self._release_decompressed(path)
 
     async def delete(self, filename: str) -> None:
         (self._dir / filename).unlink(missing_ok=True)
@@ -367,8 +418,11 @@ class S3Storage(StorageBackend):
         return filename
 
     async def save_path(self, filename: str, local_path: Path) -> str:
+        return await run_in_threadpool(self.save_path_sync, filename, local_path)
+
+    def save_path_sync(self, filename: str, local_path: Path) -> str:
         try:
-            await run_in_threadpool(self._s3.upload_file, str(local_path), self._bucket, filename)
+            self._s3.upload_file(str(local_path), self._bucket, filename)
         finally:
             Path(local_path).unlink(missing_ok=True)
         return filename
@@ -382,10 +436,19 @@ class S3Storage(StorageBackend):
     def load_sync(self, filename: str) -> Path:
         return self._download(filename)
 
+    def _download(self, filename: str) -> Path:
+        path = self._download_raw(filename)
+        if not filename.endswith(COMPRESSED_SUFFIX):
+            return path
+        try:
+            return self._materialize(path)
+        finally:
+            self.release_sync(path)  # the compressed download; the caller holds the plain copy
+
     def _cache_dir(self) -> Path:
         return settings.upload_dir / ".s3_cache"
 
-    def _download(self, filename: str) -> Path:
+    def _download_raw(self, filename: str) -> Path:
         """Download to a caller-private directory under the cache.
 
         The per-download prefix matters: every caller pairs `load_sync` with
@@ -410,6 +473,8 @@ class S3Storage(StorageBackend):
         directory so a mistaken call can never remove a real upload (the local backend
         hands back the stored file itself).
         """
+        if self._release_decompressed(path):
+            return
         try:
             cache_dir = self._cache_dir().resolve()
             resolved = Path(path).resolve()

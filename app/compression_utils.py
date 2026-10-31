@@ -48,6 +48,24 @@ def open_read(path: str | Path) -> BinaryIO:
     return open(path, "rb")
 
 
+def compress_file(src: str | Path, dest: str | Path, *, level: int = DEFAULT_LEVEL) -> int:
+    """Stream *src* into a zstd frame at *dest*; returns the bytes written."""
+    import shutil
+
+    with open(src, "rb") as reader, open_write(dest, level=level) as writer:
+        shutil.copyfileobj(reader, writer, _READ_BUFFER)
+    return Path(dest).stat().st_size
+
+
+def decompress_file(src: str | Path, dest: str | Path) -> int:
+    """Stream the content of *src* (compressed or not) into *dest*; returns its size."""
+    import shutil
+
+    with open_read(src) as reader, open(dest, "wb") as writer:
+        shutil.copyfileobj(reader, writer, _READ_BUFFER)
+    return Path(dest).stat().st_size
+
+
 def open_write(path: str | Path, *, level: int = DEFAULT_LEVEL, threads: int = 0) -> BinaryIO:
     """A binary stream that writes a zstd frame. `threads` > 0 compresses on worker threads."""
     options = {zstd.CompressionParameter.compression_level: level}

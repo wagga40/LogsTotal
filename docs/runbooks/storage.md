@@ -34,6 +34,19 @@ The events timeline is built during the analytics step and stored with the job. 
 
 The events timeline shows every timestamp in UTC, while the hourly histogram keeps each tool's own time offset. On a job whose tools disagree about the time zone the two can sit an offset apart; the events timeline is the correct one.
 
+### Compressed uploads
+
+With `UPLOAD_COMPRESSION=zstd`, new uploads are stored as `<key>.zst` (EVTX compresses
+about 26x). Whatever reads an upload — an analysis, a download, a re-run, the event index
+build — gets a private decompressed copy under `.decompressed/` and removes it when done,
+so tools and downloads see the original bytes. **Compress Uploads** on the Maintenance tab
+converts uploads stored before the switch, skipping any with a job still running; run it
+again later for those. A `.decompressed/` copy older than a day belongs to no live reader
+and is offered for removal on `/admin/storage`.
+
+Turning `UPLOAD_COMPRESSION` back off stores new uploads plain; compressed ones keep
+reading as before.
+
 ### Event indexes
 
 Explore's event indexes live under `events/` beside the uploads and are not touched by

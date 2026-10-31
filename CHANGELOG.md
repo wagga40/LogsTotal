@@ -42,6 +42,10 @@ backup step, migration ordering, and rollback for each deployment path.
   tools. An index is built once per file and rebuilt on demand, and can be evicted by
   `EVENTS_RETENTION_DAYS` and `EVENTS_MAX_TOTAL_MB`. A 213 MB EVTX took 6.5 s and became an
   11.5 MB index. Jobs analysed before this get a **Build event index** button.
+- Uploads can be stored compressed (`UPLOAD_COMPRESSION=zstd`, **off by default**). EVTX
+  compresses about 26x. Analyses, downloads, re-runs and event indexes read a private
+  decompressed copy that is removed afterwards, so tools and downloads see the original
+  bytes. **Compress Uploads** on the Maintenance tab converts the uploads already stored.
 - The process tree on the job page, for Explore users, shows every process the log
   started, with the detected ones marked, instead of the matched ones only.
 

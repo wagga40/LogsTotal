@@ -9,6 +9,7 @@ import logging
 import shutil
 import threading
 import time
+import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -1935,6 +1936,73 @@ def build_event_overlay(job_id: int):
     db = get_sync_session()
     try:
         _log.info("Job %d: event overlay: %s", job_id, run_overlay(db, job_id))
+    finally:
+        db.close()
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def backfill_compress_uploads(bg_task_id: int | None = None):
+    """Compress uploads stored before UPLOAD_COMPRESSION=zstd, one at a time.
+
+    An upload with a pending or running job is skipped (its worker may be reading it) and
+    picked up by the next run. For each one: write the `.zst` copy, store it, point the row
+    at it and commit, and only then delete the plain key — so a crash in between leaves an
+    orphan the storage page can purge, never a row naming a file that is gone. One commit
+    per upload, as every expensive backfill here does.
+    """
+    from app.compression_utils import compress_file
+    from app.storage import COMPRESSED_SUFFIX, get_storage
+    from app.workers.utils import humanbytes, plural
+
+    db = get_sync_session()
+    try:
+        _mark_bg_task(db, bg_task_id, "running")
+        st = get_storage()
+        BATCH = 100
+        done, skipped, saved, last_id = 0, 0, 0, 0
+        while True:
+            rows = db.query(LogFile).filter(LogFile.id > last_id).order_by(LogFile.id).limit(BATCH).all()
+            if not rows:
+                break
+            last_id = rows[-1].id
+            for lf in rows:
+                if lf.stored_filename.endswith(COMPRESSED_SUFFIX):
+                    continue
+                active = db.query(AnalysisJob.id).filter(AnalysisJob.file_id == lf.id, AnalysisJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING])).first()
+                if active is not None or not st.exists_sync(lf.stored_filename):
+                    skipped += 1
+                    continue
+                plain_name = lf.stored_filename
+                source = st.load_sync(plain_name)
+                packed = Path(settings.upload_dir) / f".{uuid.uuid4().hex}{COMPRESSED_SUFFIX}"
+                try:
+                    size = compress_file(source, packed, level=settings.upload_compression_level)
+                    before = Path(source).stat().st_size
+                    st.save_path_sync(plain_name + COMPRESSED_SUFFIX, packed)
+                finally:
+                    st.release_sync(source)
+                    packed.unlink(missing_ok=True)
+                lf.stored_filename = plain_name + COMPRESSED_SUFFIX
+                db.commit()
+                try:
+                    st.delete_sync(plain_name)
+                except Exception:
+                    _log.warning("backfill_compress_uploads: could not remove %s; the storage page lists it as an orphan", plain_name, exc_info=True)
+                done += 1
+                saved += max(0, before - size)
+            _bg_task_progress(db, bg_task_id, f"{plural(done, 'upload')} compressed so far…")
+            if _bg_cancel_requested(bg_task_id):
+                _finish_cancelled(db, bg_task_id, f"cancelled after {plural(done, 'upload')}")
+                return
+        detail = f"{plural(done, 'upload')} compressed, {humanbytes(saved)} saved" if done else "nothing to compress"
+        if skipped:
+            detail += f"; {plural(skipped, 'upload')} skipped (in use or missing), run again later"
+        _log.info("backfill_compress_uploads: %s", detail)
+        _mark_bg_task(db, bg_task_id, "completed", detail=detail)
+    except Exception as exc:
+        db.rollback()
+        _log.error("backfill_compress_uploads failed: %s", exc)
+        _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
     finally:
         db.close()
 

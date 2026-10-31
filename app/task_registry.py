@@ -93,6 +93,16 @@ _SPECS: tuple[TaskSpec, ...] = (
         caveat="Batches of 500 — cancelling takes effect at the next batch boundary; rows already encoded stay encoded.",
     ),
     TaskSpec(
+        key="backfill_compress_uploads",
+        label="Compress Uploads",
+        category=MAINTENANCE,
+        args=("bg_task_id",),
+        cancellable=True,
+        retryable=True,
+        url="/admin/backfill-compress-uploads",
+        caveat="Batches of 100 uploads — cancelling takes effect at the next batch; uploads in use are skipped and picked up by the next run.",
+    ),
+    TaskSpec(
         key="backfill_compress_outputs",
         label="Compress Tool Outputs",
         category=MAINTENANCE,
