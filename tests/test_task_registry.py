@@ -53,7 +53,8 @@ def test_the_registry_does_not_generate_the_backfill_routes():
     source = Path("app/routers/admin.py").read_text(encoding="utf-8")
     # Includes `/backfill-builtin-labels`: labels are stored tags, so entities last seen
     # before the built-in rules existed carry none until it runs.
-    assert len(re.findall(r'@router\.post\("(/backfill-[a-z-]+)"\)', source)) == 7
+    # And `/backfill-compress-db`: it re-encodes blob rows written before CompressedText.
+    assert len(re.findall(r'@router\.post\("(/backfill-[a-z-]+)"\)', source)) == 8
 
 
 def test_the_worker_never_imports_the_registry():

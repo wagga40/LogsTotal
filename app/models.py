@@ -400,6 +400,25 @@ class SiteSettings(Base):
 # ── Finding ───────────────────────────────────────────────────────────────────────
 
 
+class RuleText(Base):
+    """A detection rule's source text, stored once however many findings cite it.
+
+    `Finding.rule_content` used to hold the full Sigma YAML on every finding of every job:
+    72.7% of that column was duplicates in the development database. The rule corpus is
+    fixed and small next to the findings it produces, so content-addressing it by SHA-256
+    turns one copy per finding into one per rule version. `app/rule_texts.py` is the writer.
+    """
+
+    __tablename__ = "rule_text"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sha256 = Column(String(64), nullable=False)
+    content = Column(CompressedText, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("sha256", name="uq_rule_text_sha256"),)
+
+
 class Finding(Base):
     """A single detection finding (rule match) produced by a tool."""
 
@@ -428,7 +447,10 @@ class Finding(Base):
     # selects `Finding.details` as a plain column, which mapper-level deferral does not apply
     # to. That is the point: it is visible at the query which callers pay for the blob.
     details = deferred(Column(CompressedText, nullable=True))  # JSON array of matched events (truncated)
-    rule_content = deferred(Column(Text, nullable=True))  # original Sigma rule YAML
+    # The rule's source text, deduplicated in `rule_text`. `rule_content` is declared after
+    # the class as a deferred scalar subquery over it, so every reader (`undefer(...)`, the
+    # attribute) is unchanged; writers go through `app/rule_texts.py`.
+    rule_text_id = Column(Integer, ForeignKey("rule_text.id"), nullable=True, index=True)
 
     __table_args__ = (
         # Both are GROUP BY / WHERE keys in the per-job and per-case roll-ups, which run on
@@ -448,6 +470,13 @@ class Finding(Base):
 # per-finding "Show events" toggle costs nothing and never touches the deferred blob.
 # `routers/intel.py` uses the same mapped property.
 Finding.has_details = column_property(func.coalesce(Finding.__table__.c.details, "") != "")
+
+# The original Sigma rule YAML, read through `rule_text`. Deferred like the column it replaced;
+# the subquery's type is `RuleText.content`'s, so a compressed row decodes on the way out.
+Finding.rule_content = column_property(
+    select(RuleText.content).where(RuleText.id == Finding.__table__.c.rule_text_id).scalar_subquery(),
+    deferred=True,
+)
 
 
 # The tool log's first 2 KB, selected eagerly in place of the deferred log: engine-version

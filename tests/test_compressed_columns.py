@@ -117,3 +117,53 @@ def test_no_sql_reads_a_compressed_column(column):
     which holds for the encoded form too."""
     allowed = {"app/models.py"}  # has_details
     assert [o for o in _sql_reads_of(column) if o.split(":")[0] not in allowed] == []
+
+
+def test_the_backfill_encodes_old_rows_once_and_leaves_the_rest(sync_db, monkeypatch):
+    """Old rows are written here as plain text with raw SQL, the way a database from before
+    the codec holds them. The backfill encodes the large ones, leaves small and already-encoded
+    rows alone, and the ORM reads every one back unchanged."""
+    from sqlalchemy.orm import undefer
+
+    from app.models import AnalysisJob, BackgroundTask, BackgroundTaskStatus, Finding, JobStatus, LogFile, LogType, TaskResult, TaskStatus, WorkflowDef
+    from app.workers import tasks
+
+    monkeypatch.setattr(tasks, "get_sync_session", lambda: sync_db)
+    monkeypatch.setattr(sync_db, "close", lambda: None)
+    wf = WorkflowDef(name="W", description="", log_types='["evtx"]', tasks_yaml="tasks: []")
+    lf = LogFile(original_filename="a.evtx", stored_filename="a.evtx", sha256="a" * 64, size_bytes=1, log_type=LogType.EVTX, detected_type=LogType.EVTX)
+    sync_db.add_all([wf, lf])
+    sync_db.flush()
+    job = AnalysisJob(file_id=lf.id, workflow_id=wf.id, status=JobStatus.COMPLETED)
+    sync_db.add(job)
+    sync_db.flush()
+    tr = TaskResult(job_id=job.id, tool_name="chainsaw", status=TaskStatus.COMPLETED)
+    sync_db.add(tr)
+    sync_db.flush()
+    big = json.dumps([{"CommandLine": "cmd.exe /c whoami " * 30}] * 20)
+    small = json.dumps([{"a": 1}])
+    for i in (1, 2, 3):
+        sync_db.add(Finding(id=i, task_result_id=tr.id, rule_name="r", severity="high", count=1))
+    sync_db.commit()
+    sync_db.execute(text("UPDATE finding SET details = :v WHERE id = 1"), {"v": big})
+    sync_db.execute(text("UPDATE finding SET details = :v WHERE id = 2"), {"v": small})
+    already = CompressedText().process_bind_param(big, None)
+    sync_db.execute(text("UPDATE finding SET details = :v WHERE id = 3"), {"v": already})
+    bt = BackgroundTask(name="Compress Stored Blobs", kind="backfill_compress_db", status=BackgroundTaskStatus.PENDING)
+    sync_db.add(bt)
+    sync_db.commit()
+
+    bt_id = bt.id
+    tasks.backfill_compress_db.call_local(bt_id)
+
+    raw = dict(sync_db.execute(text("SELECT id, details FROM finding ORDER BY id")).all())
+    assert raw[1].startswith(PREFIX) and raw[2] == small and raw[3] == already
+    sync_db.expunge_all()
+    read = {f.id: f.details for f in sync_db.scalars(select(Finding).options(undefer(Finding.details)))}
+    assert read == {1: big, 2: small, 3: big}
+    bt = sync_db.get(BackgroundTask, bt_id)
+    assert bt.status == BackgroundTaskStatus.COMPLETED
+    assert bt.detail.startswith("1 rows encoded"), bt.detail
+
+    tasks.backfill_compress_db.call_local(None)  # a second run finds nothing left to do
+    assert dict(sync_db.execute(text("SELECT id, details FROM finding ORDER BY id")).all()) == raw

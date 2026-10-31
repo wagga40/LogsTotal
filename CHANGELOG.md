@@ -25,6 +25,10 @@ backup step, migration ordering, and rollback for each deployment path.
   pages (42.9 MB, 31.4 MB after `VACUUM`). The storage page now shows free pages, WAL size,
   auto-vacuum mode and the last vacuum.
 
+- **Compress Stored Blobs** on the Maintenance tab (`/admin/backfill-compress-db`) encodes
+  the finding events, evidence samples, analytics and rule texts written before they were
+  stored compressed. Run it once after upgrading, then Vacuum.
+
 ### Fixed
 
 - Missing or unreadable engine output no longer becomes a successful zero-match result.
@@ -58,6 +62,9 @@ backup step, migration ordering, and rollback for each deployment path.
 - Finding sample events, relationship evidence samples and job analytics are stored
   zstd-compressed (4.8x and 20x on the development data). Rows written before this read
   unchanged and are compressed when rewritten.
+- Each rule's source text is stored once in a shared `rule_text` table instead of on every
+  finding (1,705 findings shared 496 texts in development). With the compression
+  backfill and a vacuum, the development database went from 42.9 MB to 14.6 MB.
 - Twenty single-column indexes that a composite index already covered are dropped, and
   lists that relied on their order (findings, tags, case links, rule matches) are now
   explicitly ordered. SQLite connections use memory-mapped reads, in-memory temp storage
@@ -78,6 +85,9 @@ backup step, migration ordering, and rollback for each deployment path.
 - Migration `b8d46f1e932a` adds the `PARTIAL` task status, which older workers cannot read.
   `./logstotal upgrade` stops every worker before migrating; stop them yourself if you
   upgrade any other way.
+- Migration `f3a91c2e7d40` moves every finding's rule text into `rule_text` and drops
+  `finding.rule_content`. It is listed with the rollback-unsafe migrations; its own
+  downgrade writes the text back, so run it from the new code before installing older code.
 - Migration `e064602640a4` drops the twenty redundant indexes, quickly and without data
   changes. Its downgrade recreates them.
 - `./logstotal upgrade:rollback` refuses to cross this migration. Restore the pre-upgrade

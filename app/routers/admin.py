@@ -132,6 +132,19 @@ MAINTENANCE_ACTIONS = [
         "confirm_message": "Label every existing entity from the built-in rules?",
     },
     {
+        "key": "compress-db",
+        "url": "/admin/backfill-compress-db",
+        "param": "backfill_compress_db",
+        "title": "Compress Stored Blobs",
+        "description": "Encode finding events, evidence samples, analytics and rule texts written before compression.",
+        "details": (
+            "New rows are stored compressed; older ones read as they are, so this only reclaims "
+            "space. Run once after upgrading, then Vacuum on the Storage page to return it to disk."
+        ),
+        "confirm_title": "Compress stored blobs",
+        "confirm_message": "Re-encode every uncompressed blob row in the database?",
+    },
+    {
         "key": "entity-attributes",
         "url": "/admin/backfill-entity-attributes",
         "param": "backfill_entity_attributes",
@@ -687,6 +700,18 @@ async def backfill_entities_trigger(
     from app.workers.tasks import backfill_entities
 
     return await _queue_background_task(request, db, "Entity Backfill", backfill_entities, "backfill_entities", user=user)
+
+
+@router.post("/backfill-compress-db")
+async def backfill_compress_db_trigger(
+    request: Request,
+    db: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_superuser),
+):
+    """Encode the large blob rows written before compression existed. Admin only."""
+    from app.workers.tasks import backfill_compress_db
+
+    return await _queue_background_task(request, db, "Compress Stored Blobs", backfill_compress_db, "backfill_compress_db", user=user)
 
 
 @router.post("/backfill-entity-attributes")

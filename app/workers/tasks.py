@@ -1064,6 +1064,11 @@ def _persist_tool_result(db, task_result_id: int, output: ToolOutput) -> tuple[b
         return False, False
 
     if was_success:
+        from app.rule_texts import rule_text_ids_sync, rule_text_sha
+
+        # Rule texts resolved for the whole tool at once: many findings cite the same rule,
+        # and each distinct text is stored once in rule_text however many findings cite it.
+        rule_ids = rule_text_ids_sync(db, (f.rule_content for f in output.findings))
         for f in output.findings:
             finding = Finding(
                 task_result_id=task_result_id,
@@ -1073,7 +1078,7 @@ def _persist_tool_result(db, task_result_id: int, output: ToolOutput) -> tuple[b
                 count=f.count,
                 tags=json_dumps(f.tags),
                 details=json_dumps(f.details),
-                rule_content=f.rule_content or None,
+                rule_text_id=rule_ids.get(rule_text_sha(f.rule_content)) if f.rule_content else None,
             )
             db.add(finding)
 
@@ -1766,6 +1771,83 @@ def backfill_entity_attributes(bg_task_id: int | None = None):
         _mark_bg_task(db, bg_task_id, "completed", detail=f"{total} entities")
     except Exception as exc:
         _log.error("backfill_entity_attributes failed: %s", exc)
+        _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
+    finally:
+        db.close()
+
+
+#: (table, column) pairs stored as CompressedText, rewritten by backfill_compress_db.
+_COMPRESSED_COLUMNS = (
+    ("finding", "details"),
+    ("entity_relationship_evidence", "sample_events_json"),
+    ("analysisjob", "analytics_json"),
+    ("rule_text", "content"),
+)
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def backfill_compress_db(bg_task_id: int | None = None):
+    """Encode the blob rows written before CompressedText existed.
+
+    New rows are written compressed; old ones read unchanged, so nothing breaks without this.
+    It only reclaims the space. It reads and writes the raw stored text with plain SQL, so an
+    encoded row is recognised by its `zs1:` prefix and never encoded twice, and a row the
+    codec cannot shrink is left as it is. Encoding a row takes microseconds, so it commits per
+    batch (the cheap-loop case of the backfill rule). The freed pages go back to the
+    filesystem at the next Vacuum or daily optimise.
+    """
+    from sqlalchemy import bindparam, func, select, update
+    from sqlalchemy import column as sa_column
+    from sqlalchemy import table as sa_table
+
+    from app.db_types import MIN_CHARS, PREFIX, CompressedText
+    from app.workers.utils import humanbytes
+
+    codec = CompressedText()
+    db = get_sync_session()
+    try:
+        _mark_bg_task(db, bg_task_id, "running")
+        BATCH = 500
+        rewritten, before, after = 0, 0, 0
+        for table, column in _COMPRESSED_COLUMNS:
+            last_id = 0
+            # Untyped columns on purpose: the raw stored text, never CompressedText's decoding.
+            t = sa_table(table, sa_column("id"), sa_column(column))
+            blob = t.c[column]
+            select_sql = (
+                select(t.c.id, blob)
+                .where(t.c.id > bindparam("last"), blob.isnot(None), func.length(blob) >= MIN_CHARS, func.substr(blob, 1, len(PREFIX)) != PREFIX)
+                .order_by(t.c.id)
+                .limit(BATCH)
+            )
+            update_sql = update(t).where(t.c.id == bindparam("row_id")).values({column: bindparam("value")})
+            while True:
+                rows = db.execute(select_sql, {"last": last_id}).all()
+                if not rows:
+                    break
+                last_id = rows[-1][0]
+                updates = []
+                for row_id, value in rows:
+                    encoded = codec.process_bind_param(value, None)
+                    if encoded is not value and encoded.startswith(PREFIX):
+                        updates.append({"row_id": row_id, "value": encoded})
+                        before += len(value)
+                        after += len(encoded)
+                if updates:
+                    db.execute(update_sql, updates)
+                db.commit()
+                rewritten += len(updates)
+                _bg_task_progress(db, bg_task_id, f"{table}.{column}: {rewritten} rows encoded…")
+                if _bg_cancel_requested(bg_task_id):
+                    _finish_cancelled(db, bg_task_id, f"cancelled after {rewritten} rows")
+                    return
+        detail = f"{rewritten} rows encoded, {humanbytes(before)} → {humanbytes(after)}" if rewritten else "nothing to encode"
+        if rewritten:
+            detail += "; run Vacuum on Storage to return the space"
+        _log.info("backfill_compress_db: %s", detail)
+        _mark_bg_task(db, bg_task_id, "completed", detail=detail)
+    except Exception as exc:
+        _log.error("backfill_compress_db failed: %s", exc)
         _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
     finally:
         db.close()

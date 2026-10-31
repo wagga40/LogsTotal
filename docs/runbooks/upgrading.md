@@ -167,7 +167,7 @@ On a single host, the upgrade stops `web` and `worker` before migrating, because
 ```
 
 <!-- destructive-migrations -->
-Four migrations rename or remove something, so older code cannot run on the database they leave: `a3c7e2f91d04` renames `workerpolicy.pickup_weight` to `max_concurrent_jobs`, `c9d4e1f7a2b3` drops the threat-landscape tables, `e23ff92ada52` drops the `watchlist_event` table, and `c8f24a1b6d90` drops the `user.theme` column. Rolling back across any of them needs the pre-upgrade database backup, which is one reason `./logstotal upgrade` always takes one.
+Five migrations rename or remove something, so older code cannot run on the database they leave: `a3c7e2f91d04` renames `workerpolicy.pickup_weight` to `max_concurrent_jobs`, `c9d4e1f7a2b3` drops the threat-landscape tables, `e23ff92ada52` drops the `watchlist_event` table, `c8f24a1b6d90` drops the `user.theme` column, and `f3a91c2e7d40` moves each finding's rule text into a shared `rule_text` table and drops `finding.rule_content`. Rolling back across any of them needs the pre-upgrade database backup, which is one reason `./logstotal upgrade` always takes one. The last one's own downgrade is lossless (`pdm run -- alembic downgrade e064602640a4` writes every finding's rule text back, decoding compressed rows), but it runs from the new code, before the old code is installed.
 
 ## Rollback
 

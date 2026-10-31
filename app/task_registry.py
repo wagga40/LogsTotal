@@ -83,6 +83,16 @@ _SPECS: tuple[TaskSpec, ...] = (
         caveat="Entity job counts are rebuilt in one pass at the end; a cancelled run still rebuilds them before stopping.",
     ),
     TaskSpec(
+        key="backfill_compress_db",
+        label="Compress Stored Blobs",
+        category=MAINTENANCE,
+        args=("bg_task_id",),
+        cancellable=True,
+        retryable=True,
+        url="/admin/backfill-compress-db",
+        caveat="Batches of 500 — cancelling takes effect at the next batch boundary; rows already encoded stay encoded.",
+    ),
+    TaskSpec(
         key="backfill_entity_attributes",
         label="Entity Attribute Backfill",
         category=MAINTENANCE,
