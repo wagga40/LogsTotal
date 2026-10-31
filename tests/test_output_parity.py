@@ -57,6 +57,10 @@ def capture_case(case: dict, directory: Path, *, compressed: bool = False) -> di
     markers = MarkerAccumulator()
     buckets, events = parse_single_output_file(output, rt, tt, rule_meta=meta, markers=markers)
     analytics = _compute_analytics_data(job, job_dir=directory)
+    # Persisted as JobArtifact rows, not in analytics_json: checked against the paths they
+    # replace rather than snapshotted, so the recorded expectations stay as they were.
+    assert analytics.pop("timeline_buckets") == buckets, "stored buckets equal a fresh parse"
+    assert analytics.pop("process_forest") == build_process_forest(events), "stored forest equals the materialised build"
     analytics["relationships"] = sorted([[list(key), count] for key, count in analytics["relationships"].items()])
     analytics["relationship_evidence"] = sorted([[list(key), value] for key, value in analytics["relationship_evidence"].items()])
     matches = []

@@ -236,6 +236,15 @@ def _parse_event(event: dict) -> dict | None:
     return node
 
 
+def is_process_event(event: dict) -> bool:
+    """Whether *event* is one ``build_process_forest`` would use (a process creation).
+
+    The only events the forest reads, so a pass can keep these and drop the rest: the
+    analytics pass builds the forest at job time from this subset, not from all events.
+    """
+    return _parse_event(event) is not None
+
+
 def _dedup_key(node: dict) -> tuple:
     if node["guid"]:
         return ("guid", node["guid"])

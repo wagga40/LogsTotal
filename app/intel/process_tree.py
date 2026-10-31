@@ -68,7 +68,18 @@ def invalidate(job_id: int) -> None:
         pass
 
 
-def build_job_forest_sync(job_id: int, *, entity_type: str = "", entity_value: str = "") -> dict:
+def unpack_artifact(payload: bytes) -> dict | None:
+    """The stored forest, or None when the bytes do not decode (then the fallback runs)."""
+    from app.job_artifacts import unpack
+
+    try:
+        forest = unpack(payload)
+    except Exception:
+        return None
+    return forest if isinstance(forest, dict) else None
+
+
+def build_job_forest_sync(job_id: int, *, entity_type: str = "", entity_value: str = "", artifact: bytes | None = None) -> dict:
     """The whole blocking path: cache read, parse, build, cache write, optional prune.
 
     Takes plain values only — an `int` and two `str`s — because this runs in a worker
@@ -79,7 +90,10 @@ def build_job_forest_sync(job_id: int, *, entity_type: str = "", entity_value: s
     `(job, entity)` would multiply entries without bound for no gain: the prune is pure CPU
     over a dict that is already in memory.
     """
-    forest = _read_cache(job_id)
+    # The forest the analytics pass stored (JobArtifact): one compressed row, read by the
+    # async caller before this hop. The Redis cache and the raw parse below are the fallback
+    # for jobs analysed before artifacts existed, until they are recalculated.
+    forest = unpack_artifact(artifact) if artifact is not None else _read_cache(job_id)
     if forest is None:
         from app.intel.event_timeline import extract_all_from_raw_output
 
@@ -100,8 +114,18 @@ def build_job_forest_sync(job_id: int, *, entity_type: str = "", entity_value: s
     return forest
 
 
-async def load_job_forest(job_id: int, *, entity_type: str = "", entity_value: str = "") -> dict:
-    """Async wrapper — one `run_in_threadpool` hop around `build_job_forest_sync`."""
+async def load_job_forest(job_id: int, *, db=None, entity_type: str = "", entity_value: str = "") -> dict:
+    """Async wrapper — one `run_in_threadpool` hop around `build_job_forest_sync`.
+
+    With *db*, the stored forest is fetched on the async session first and handed over as
+    bytes: the threadpool closure must never open a sync session (routes are async-only) or
+    touch an ORM object.
+    """
     from fastapi.concurrency import run_in_threadpool
 
-    return await run_in_threadpool(build_job_forest_sync, job_id, entity_type=entity_type, entity_value=entity_value)
+    artifact = None
+    if db is not None:
+        from app import job_artifacts
+
+        artifact = await job_artifacts.get_payload(db, job_id, job_artifacts.PROC_FOREST)
+    return await run_in_threadpool(build_job_forest_sync, job_id, entity_type=entity_type, entity_value=entity_value, artifact=artifact)

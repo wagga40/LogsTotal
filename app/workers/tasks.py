@@ -1188,6 +1188,19 @@ def _cache_analytics(job: AnalysisJob, data: dict, job_dir: Path | None = None) 
         return False
     job.analytics_json = json_dumps(analytics_json_payload(data))
     job.event_markers = pack_index(data.get("event_markers"))
+    # The case timeline's buckets and the Processes tab's forest, from the same pass, so
+    # neither re-parses the raw outputs again (and both outlive them).
+    from sqlalchemy import inspect as sa_inspect
+
+    from app import job_artifacts
+
+    state = sa_inspect(job, raiseerr=False)  # None for a stand-in that is not a mapped job
+    db = state.session if state is not None else None
+    if db is not None:
+        if "timeline_buckets" in data:
+            job_artifacts.put_sync(db, job.id, job_artifacts.TL_BUCKETS, data["timeline_buckets"])
+        if "process_forest" in data:
+            job_artifacts.put_sync(db, job.id, job_artifacts.PROC_FOREST, data["process_forest"])
     return True
 
 
@@ -3146,7 +3159,7 @@ def _clear_job_references(db, job_id: int) -> None:
 
     from app.ai.case_evidence import invalidate_case_sources
     from app.intel.entities import remove_entity_links_for_job_sync
-    from app.models import CaseJobLink, Comment, IntelRuleMatch, JobAiAnalysis, JobRuleMatch, JobTag, JobWatch, JobWatchEvent, WebhookDelivery
+    from app.models import CaseJobLink, Comment, IntelRuleMatch, JobAiAnalysis, JobArtifact, JobRuleMatch, JobTag, JobWatch, JobWatchEvent, WebhookDelivery
 
     db.execute(invalidate_case_sources(job_id))
     # entity_job_link, entity_relationship_evidence and finding_entity_link.
@@ -3161,6 +3174,7 @@ def _clear_job_references(db, job_id: int) -> None:
     # Events before watches: an event references the watch as well as the job.
     db.execute(delete(JobWatchEvent).where(JobWatchEvent.job_id == job_id))
     db.execute(delete(JobWatch).where(JobWatch.job_id == job_id))
+    db.execute(delete(JobArtifact).where(JobArtifact.job_id == job_id))
 
 
 def _prune_old_uploads_periodic_body():

@@ -62,6 +62,7 @@ from app.models import (
     IntelRuleMatch,
     InvestigationCase,
     JobAiAnalysis,
+    JobArtifact,
     JobRuleMatch,
     JobStatus,
     JobTag,
@@ -1089,7 +1090,7 @@ async def job_process_tree(
     if not site_settings.show_process_tree:
         return HTMLResponse("")
 
-    forest = await load_job_forest(job_id)
+    forest = await load_job_forest(job_id, db=db)
 
     return templates.TemplateResponse(
         request,
@@ -1727,6 +1728,8 @@ async def _delete_job(db: AsyncSession, job: AnalysisJob) -> None:
     # watch, and on PostgreSQL the other order is a ForeignKeyViolation.
     await db.execute(delete(JobWatchEvent).where(JobWatchEvent.job_id == job_id))
     await db.execute(delete(JobWatch).where(JobWatch.job_id == job_id))
+    # Derived results (timeline buckets, process forest): no relationship, so no cascade.
+    await db.execute(delete(JobArtifact).where(JobArtifact.job_id == job_id))
     await db.delete(job)
     await db.commit()
 

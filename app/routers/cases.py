@@ -749,7 +749,7 @@ async def case_process_tree_partial(
     if job and site_settings.show_process_tree:
         if entity:
             # Plain strings resolved before the threadpool hop — never an ORM instance.
-            ctx["forest"] = await load_job_forest(job, entity_type=entity.entity_type, entity_value=entity.value)
+            ctx["forest"] = await load_job_forest(job, db=db, entity_type=entity.entity_type, entity_value=entity.value)
             ctx["scope_label"] = f"job #{job} · {entity.value}"
             # The two halves of one question: the tree says how this binary *ran*, the typed
             # edges say what it touched. Same grouping code as the Intel Relationships tab —
@@ -758,7 +758,7 @@ async def case_process_tree_partial(
             groups, total, capped = await fetch_relationship_groups(db, entity.id, job)
             ctx.update(groups=groups, rel_total=total, rel_capped=capped)
         else:
-            ctx["forest"] = await load_job_forest(job)
+            ctx["forest"] = await load_job_forest(job, db=db)
     return templates.TemplateResponse(request, "intel/partials/_case_processes.html", ctx)
 
 
@@ -1152,6 +1152,14 @@ async def case_timeline_partial(
     # finished and the data existed.
     terminal_job_ids = {j.id for j in filtered_jobs if enum_val(j.status) in TERMINAL_JOB_STATUSES}
 
+    # Buckets the analytics pass stored (JobArtifact), fetched on this async session before
+    # the threadpool hop. They outlive the raw outputs, so a job that has them is covered even
+    # after output retention; the Redis cache and the raw parse are the fallback for jobs
+    # analysed before artifacts existed.
+    from app import job_artifacts
+
+    stored_buckets = await job_artifacts.get_many(db, [jid for jid in filtered_job_ids if jid in terminal_job_ids], job_artifacts.TL_BUCKETS)
+
     def _build_histogram() -> tuple[dict[str, dict[str, int]], int]:
         from app.json_utils import dumps as json_dumps
         from app.redis_client import TIMELINE_BUCKETS_PREFIX
@@ -1159,6 +1167,10 @@ async def case_timeline_partial(
         bucket_dicts: list[dict[str, dict[str, int]]] = []
         covered = 0
         for jid in filtered_job_ids:
+            if isinstance(stored_buckets.get(jid), dict):
+                covered += 1
+                bucket_dicts.append(stored_buckets[jid])
+                continue
             cache_key = f"{TIMELINE_BUCKETS_PREFIX}{jid}"
             cacheable = jid in terminal_job_ids
             buckets: dict | None = None

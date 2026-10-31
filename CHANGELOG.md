@@ -62,6 +62,10 @@ backup step, migration ordering, and rollback for each deployment path.
 - Finding sample events, relationship evidence samples and job analytics are stored
   zstd-compressed (4.8x and 20x on the development data). Rows written before this read
   unchanged and are compressed when rewritten.
+- The case timeline's histogram and the Processes tab read results the analytics pass
+  stored once per job, instead of re-parsing every raw tool output on each cache miss
+  (2.5 s + 0.9 s and about 1 GB of memory for one development job). Both now outlive
+  output retention. Jobs analysed earlier fall back to the old path until recalculated.
 - Raw tool outputs are stored zstd-compressed once a job's analytics are computed
   (`RAW_OUTPUT_COMPRESSION`, default on): one development job went from 276 MB to 7 MB.
   Readers and the raw ZIP export handle plain and compressed outputs alike; **Compress Tool

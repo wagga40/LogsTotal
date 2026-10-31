@@ -296,6 +296,30 @@ class AnalysisJob(Base):
 # ── Task Result ───────────────────────────────────────────────────────────────────
 
 
+class JobArtifact(Base):
+    """A derived, per-job result computed once in the analytics pass and stored compressed.
+
+    Each existed only as a cache over the raw tool outputs, rebuilt on every miss: the case
+    timeline's hourly buckets (TTL 900 s) and the process forest (TTL 300 s), at 2.5 s plus
+    0.9 s and about 1 GB of RSS per miss on one development job. Stored here they are one
+    small row read, and they outlive JOB_OUTPUT_RETENTION_DAYS, which deletes the outputs
+    they came from. No ORM relationship on purpose: readers select the payload explicitly,
+    so a lazy load cannot happen; `app/job_artifacts.py` is the only reader and writer.
+    """
+
+    __tablename__ = "job_artifact"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
+    kind = Column(String(32), nullable=False)
+    # The payload's shape version; a reader expecting another treats the row as absent.
+    version = Column(Integer, nullable=False, default=1)
+    payload = Column(LargeBinary, nullable=False)  # zstd(orjson)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("job_id", "kind", name="uq_job_artifact"),)
+
+
 class TaskResult(Base):
     """Result of running a single detection tool within a job."""
 

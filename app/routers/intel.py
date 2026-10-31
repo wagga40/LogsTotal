@@ -2397,7 +2397,7 @@ async def entity_process_tree_partial(
 
     # Resolved to plain strings *before* the threadpool hop — the closure it hands off must
     # never touch an ORM instance (a deferred/lazy read there raises MissingGreenlet).
-    forest = await load_job_forest(job, entity_type=entity.entity_type, entity_value=entity.value)
+    forest = await load_job_forest(job, db=db, entity_type=entity.entity_type, entity_value=entity.value)
     return templates.TemplateResponse(
         request,
         "partials/_process_tree.html",

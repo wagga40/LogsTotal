@@ -149,7 +149,7 @@ class TestEntityValuesRoundTripToNodes:
         """
         from app import analytics
 
-        def _feed(_job_id, _rule_tactic, _technique_tactic, *, markers=None, rule_meta=None, consumer=None, job_dir=None):
+        def _feed(_job_id, _rule_tactic, _technique_tactic, *, markers=None, rule_meta=None, consumer=None, job_dir=None, process_events=None):
             if consumer is not None:
                 consumer(event)
             return {}, []
@@ -383,7 +383,7 @@ async def test_the_entity_route_renders_a_pruned_tree(member_client, async_db, m
     seeded = await _seed_case_with_job(async_db)
     captured: dict = {}
 
-    def _fake(job_id, *, entity_type="", entity_value=""):
+    def _fake(job_id, *, entity_type="", entity_value="", artifact=None):
         captured.update(job_id=job_id, entity_type=entity_type, entity_value=entity_value)
         return prune_to_entity(
             build_process_forest([_sysmon(100, 4, r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe")]),
