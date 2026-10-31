@@ -12,6 +12,8 @@ env:
 vars:
   LINT_PATHS: 'app/ tests/ scripts/ init_db.py sync_workflows.py sync_rules.py'
   TAILWIND_VERSION: '3.4.19'
+  # Play CDN releases are independent of the standalone CLI's releases.
+  TAILWIND_CDN_VERSION: '3.4.17'
   HTMX_VERSION: '2.0.11'
   ALPINE_VERSION: '3.17.4'
   ALPINE_MORPH_VERSION: '3.17.4'
