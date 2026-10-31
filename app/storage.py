@@ -134,6 +134,18 @@ class StorageBackend(ABC):
         """Remove one store's files. The only delete under `events/`: no general prefix delete."""
 
     @abstractmethod
+    def put_overlay_sync(self, sha256: str, gen: str, job_id: int, local_dir: Path) -> None:
+        """Store a job's detection overlay beside its store (`overlays/job_{id}/`), replacing any."""
+
+    @abstractmethod
+    def delete_overlay_sync(self, sha256: str, gen: str, job_id: int) -> None:
+        """Remove one job's overlay; the store itself is untouched."""
+
+    @abstractmethod
+    def fetch_event_store_file_sync(self, sha256: str, gen: str, name: str, dest: Path) -> Path:
+        """One store file at a local path: the stored file itself (local) or a download into *dest*."""
+
+    @abstractmethod
     def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
         """Compress a finished job's plain tool outputs in place; return (files, bytes saved).
 
@@ -255,6 +267,20 @@ class LocalStorage(StorageBackend):
     def event_store_dir_sync(self, sha256: str, gen: str) -> Path | None:
         target = self._dir / event_store_prefix(sha256, gen)
         return target if target.is_dir() else None
+
+    def put_overlay_sync(self, sha256: str, gen: str, job_id: int, local_dir: Path) -> None:
+        target = self._dir / event_store_prefix(sha256, gen) / "overlays" / f"job_{int(job_id)}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(target, ignore_errors=True)
+        os.replace(local_dir, target)
+
+    def delete_overlay_sync(self, sha256: str, gen: str, job_id: int) -> None:
+        shutil.rmtree(self._dir / event_store_prefix(sha256, gen) / "overlays" / f"job_{int(job_id)}", ignore_errors=True)
+
+    def fetch_event_store_file_sync(self, sha256: str, gen: str, name: str, dest: Path) -> Path:
+        if "/" in name or name.startswith("."):
+            raise ValueError(f"not a store file name: {name!r}")
+        return self._dir / event_store_prefix(sha256, gen) / name
 
     def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
         target = self._dir / event_store_prefix(sha256, gen)
@@ -497,6 +523,29 @@ class S3Storage(StorageBackend):
     def event_store_dir_sync(self, sha256: str, gen: str) -> Path | None:
         event_store_prefix(sha256, gen)  # validates
         return None  # not on this disk; the web tier's store cache fetches it
+
+    def put_overlay_sync(self, sha256: str, gen: str, job_id: int, local_dir: Path) -> None:
+        prefix = f"{event_store_prefix(sha256, gen)}/overlays/job_{int(job_id)}"
+        self.delete_overlay_sync(sha256, gen, job_id)
+        for path in sorted(p for p in local_dir.iterdir() if p.is_file()):
+            self._s3.upload_file(str(path), self._bucket, f"{prefix}/{path.name}")
+        shutil.rmtree(local_dir, ignore_errors=True)
+
+    def delete_overlay_sync(self, sha256: str, gen: str, job_id: int) -> None:
+        prefix = f"{event_store_prefix(sha256, gen)}/overlays/job_{int(job_id)}/"
+        paginator = self._s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            objs = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if objs:
+                self._s3.delete_objects(Bucket=self._bucket, Delete={"Objects": objs})
+
+    def fetch_event_store_file_sync(self, sha256: str, gen: str, name: str, dest: Path) -> Path:
+        if "/" in name or name.startswith("."):
+            raise ValueError(f"not a store file name: {name!r}")
+        dest.mkdir(parents=True, exist_ok=True)
+        local = dest / name
+        self._s3.download_file(self._bucket, f"{event_store_prefix(sha256, gen)}/{name}", str(local))
+        return local
 
     def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
         prefix = event_store_prefix(sha256, gen) + "/"

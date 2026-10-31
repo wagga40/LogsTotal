@@ -24,6 +24,8 @@ TL_BUCKETS = ("tl_buckets", 1)
 PROC_FOREST = ("proc_forest", 4)
 #: Each detection's source-event identity (`app/tools/event_keys.py`), for the event-store overlay.
 EVENT_LINKS = ("event_links", 1)
+#: Which store generation and links a job's overlay was built from, plus its per-tool counts.
+EVENT_OVERLAY = ("event_overlay", 1)
 
 
 def pack(obj: Any) -> bytes:

@@ -312,3 +312,112 @@ def sweep_sync(db) -> tuple[list[int], str]:
     if evicted:
         parts.append(f"{evicted} evicted")
     return sorted(set(requeue)), ", ".join(parts) or "nothing to do"
+
+
+def ready_store_for_job(db, job) -> tuple[EventStore, str] | None:
+    """The job's ready store and its upload's sha256, or None."""
+    from app.models import enum_val
+
+    log_file = db.get(LogFile, job.file_id)
+    log_type = enum_val(job.effective_log_type) if job.effective_log_type else (enum_val(log_file.log_type) if log_file else None)
+    if log_file is None or not log_type:
+        return None
+    row = db.scalar(
+        select(EventStore).where(
+            EventStore.log_file_id == log_file.id, EventStore.log_type == log_type, EventStore.builder_version == BUILDER_VERSION, EventStore.status == EventStoreStatus.READY.value
+        )
+    )
+    return (row, log_file.sha256) if row is not None and row.gen else None
+
+
+def jobs_for_store_sync(db, store_id: int) -> list[int]:
+    """Every job an overlay should exist for once this store is ready."""
+    from app.models import AnalysisJob
+
+    row = db.get(EventStore, store_id)
+    if row is None or row.status != EventStoreStatus.READY.value:
+        return []
+    return list(db.scalars(select(AnalysisJob.id).where(AnalysisJob.file_id == row.log_file_id)).all())
+
+
+def run_overlay(db, job_id: int) -> str:
+    """Join one job's detections onto its upload's store. Idempotent; never raises."""
+    import hashlib
+
+    import orjson
+
+    from app import job_artifacts
+    from app.models import AnalysisJob
+    from app.procutil import run_supervised
+    from app.storage import get_storage
+
+    job = db.get(AnalysisJob, job_id)
+    if job is None:
+        return "job gone"
+    found = ready_store_for_job(db, job)
+    if found is None:
+        return "no ready store yet"
+    row, sha256 = found
+    links = job_artifacts.get_sync(db, job_id, job_artifacts.EVENT_LINKS)
+    if links is None:
+        return "no detection links (analysed before they were captured; recalculate analytics)"
+    links_bytes = orjson.dumps(links)
+    links_sha = hashlib.sha256(links_bytes).hexdigest()[:16]
+    current = job_artifacts.get_sync(db, job_id, job_artifacts.EVENT_OVERLAY)
+    if current and current.get("gen") == row.gen and current.get("links_sha") == links_sha:
+        return "up to date"
+    st = get_storage()
+    staging = Path(settings.upload_dir) / _STAGING / f"overlay-{job_id}-{uuid.uuid4().hex[:8]}"
+    staging.mkdir(parents=True, exist_ok=True)
+    try:
+        events = st.fetch_event_store_file_sync(sha256, row.gen, "events.parquet", staging / "store")
+        (staging / "links.json").write_bytes(links_bytes)
+        out = staging / "out"
+        cmd = [
+            sys.executable,
+            "-m",
+            "app.events.overlay",
+            "--store",
+            str(events.parent),
+            "--links",
+            str(staging / "links.json"),
+            "--out",
+            str(out),
+            "--memory-mb",
+            str(settings.events_build_memory_mb),
+        ]
+        rc, _o, err = run_supervised(cmd, timeout=settings.events_build_timeout_seconds, on_tick=_rss_watchdog(settings.events_build_max_rss_mb * (1 << 20)), cwd=PROJECT_ROOT)
+        if rc != 0:
+            tail = (err or "").strip().splitlines()[-1:] or [f"exit code {rc}"]
+            logger.warning("Job %d: overlay failed: %s", job_id, tail[0])
+            return f"overlay failed: {tail[0]}"
+        import json
+
+        meta = json.loads((out / "overlay.json").read_text())
+        st.put_overlay_sync(sha256, row.gen, job_id, out)
+        job_artifacts.put_sync(db, job_id, job_artifacts.EVENT_OVERLAY, {**meta, "gen": row.gen, "links_sha": links_sha, "store_id": row.id})
+        db.commit()
+        return f"{meta['detected_events']} detected events of {row.event_count}"
+    except Exception as exc:
+        db.rollback()
+        logger.exception("Job %d: overlay failed", job_id)
+        return f"overlay failed: {exc}"
+    finally:
+        shutil.rmtree(staging, ignore_errors=True)
+
+
+def overlay_locations_for_job_sync(db, job) -> list[tuple[str, str]]:
+    """(sha256, gen) of every store of this job's upload, for deleting its overlay with the job."""
+    log_file = db.get(LogFile, job.file_id)
+    if log_file is None:
+        return []
+    return [(log_file.sha256, gen) for gen in db.scalars(select(EventStore.gen).where(EventStore.log_file_id == log_file.id, EventStore.gen.isnot(None))).all()]
+
+
+async def overlay_locations_async(db, log_file_id: int) -> list[tuple[str, str]]:
+    """The async twin of overlay_locations_for_job_sync, for the job-delete route."""
+    log_file = await db.get(LogFile, log_file_id)
+    if log_file is None:
+        return []
+    gens = (await db.scalars(select(EventStore.gen).where(EventStore.log_file_id == log_file_id, EventStore.gen.isnot(None)))).all()
+    return [(log_file.sha256, gen) for gen in gens]

@@ -1245,6 +1245,10 @@ def _run_post_job_processing(
         _cache_analytics(job, analytics_data)
         _finish(analytics_tr_id, an_started, TaskStatus.COMPLETED)
         db.commit()
+        if settings.events_enabled:
+            # The links are stored now; if the upload's store finished first, overlay at once.
+            # The task is a cheap no-op while the store is still building.
+            build_event_overlay(job.id)
 
         from app.intel.entities import persist_entities_from_analytics
 
@@ -1906,13 +1910,31 @@ def _request_event_store(log_file_id: int, log_type: str, job_id: int) -> None:
 
 @huey.task(expires=settings.huey_queue_expiry)
 def build_event_store(store_id: int):
-    """Build one upload's event store in a supervised subprocess (app/events/store.py)."""
-    from app.events.store import run_build
+    """Build one upload's event store in a supervised subprocess (app/events/store.py).
+
+    Once ready, every job on that upload gets its detection overlay: the store and a job's
+    analysis finish in either order, and whichever finishes second asks for the overlay.
+    """
+    from app.events.store import jobs_for_store_sync, run_build
 
     db = get_sync_session()
     try:
         outcome = run_build(db, store_id)
         _log.info("Event store %d: %s", store_id, outcome)
+        for job_id in jobs_for_store_sync(db, store_id):
+            build_event_overlay(job_id)
+    finally:
+        db.close()
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def build_event_overlay(job_id: int):
+    """Mark which of its upload's stored events a job detected (app/events/overlay.py)."""
+    from app.events.store import run_overlay
+
+    db = get_sync_session()
+    try:
+        _log.info("Job %d: event overlay: %s", job_id, run_overlay(db, job_id))
     finally:
         db.close()
 

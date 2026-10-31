@@ -1730,6 +1730,9 @@ async def _delete_job(db: AsyncSession, job: AnalysisJob) -> None:
     await db.execute(delete(JobWatch).where(JobWatch.job_id == job_id))
     # Derived results (timeline buckets, process forest): no relationship, so no cascade.
     await db.execute(delete(JobArtifact).where(JobArtifact.job_id == job_id))
+    from app.events.store import overlay_locations_async
+
+    overlay_locations = await overlay_locations_async(db, job.file_id)
     await db.delete(job)
     await db.commit()
 
@@ -1747,6 +1750,8 @@ async def _delete_job(db: AsyncSession, job: AnalysisJob) -> None:
     # hundreds of them in a single request and stall every other caller, including the
     # 3s job-status polls and /health.
     await run_in_threadpool(st.delete_job_outputs_sync, job_id)
+    for sha256, gen in overlay_locations:
+        await run_in_threadpool(st.delete_overlay_sync, sha256, gen, job_id)
 
     # If no other jobs reference this LogFile, remove the file and DB record
     remaining = await db.scalar(select(AnalysisJob.id).where(AnalysisJob.file_id == file_id).limit(1))

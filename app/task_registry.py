@@ -186,6 +186,7 @@ _SPECS: tuple[TaskSpec, ...] = (
         category=SCHEDULED,
         notes="Every 10 min: re-enqueues dropped builds, fails dead ones, retries, evicts by EVENTS_RETENTION_DAYS and EVENTS_MAX_TOTAL_MB.",
     ),
+    TaskSpec(key="build_event_overlay", label="Build event overlay", category=ANALYSIS, args=("job_id",), notes="Marks which stored events a job detected; app/events/overlay.py."),
     TaskSpec(
         key="build_event_store", label="Build event store", category=ANALYSIS, args=("store_id",), notes="One upload's events as Parquet, beside its analysis; app/events/store.py."
     ),
