@@ -37,7 +37,7 @@ class Settings(BaseSettings):
 
     # App
     app_name: str = "LogsTotal"
-    app_version: str = "1.2.0"
+    app_version: str = "1.2.1"
     secret_key: str = "change-me-in-production"  # noqa: S105  # placeholder; model_validator refuses to boot with it
     debug: bool = False
     # When DEBUG=false, auth cookies are Secure (HTTPS only). Set COOKIE_INSECURE=true for plain
