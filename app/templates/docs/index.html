@@ -205,12 +205,13 @@
           <tr><td>Pending</td><td>Queued, waiting for a worker</td></tr>
           <tr><td>Running</td><td>At least one tool is executing</td></tr>
           <tr><td>Completed</td><td>Every tool ran successfully</td></tr>
-          <tr><td>Partial</td><td>One or more tools failed; others produced results</td></tr>
+          <tr><td>Partial</td><td>At least one tool failed or did not finish its analysis. Findings from the other tools, and whatever the unfinished one found, are kept</td></tr>
           <tr><td>Failed</td><td>Every tool failed, or the job itself crashed</td></tr>
           <tr><td>Cancelled</td><td>Stopped on request. Findings from tools that had already finished are kept</td></tr>
         </tbody>
       </table>
       <p>The page updates itself while analysis runs, and each tool&rsquo;s result lands as soon as that tool finishes — you don&rsquo;t wait for the slowest one. Live refresh stops once the job is terminal.</p>
+      <p>Once a job finishes, every tool that ran has an <strong>Analysis details</strong> panel: the events processed and rules loaded as the engine reported them, any warning that made the run incomplete, and fingerprints of the engine, rules and configuration it ran with. A count the engine never prints shows as <em>unknown</em>, and a run without the engine&rsquo;s end-of-run summary is marked <em>coverage unverified</em>. No matches means the engines that finished matched nothing; it does not establish that the file is safe.</p>
       <p>While a job is pending or running, a <strong>Cancel</strong> button appears in the header for whoever submitted it, and for admins. Each tool also has its own <code>timeout</code> from the workflow, enforced by terminating the tool&rsquo;s whole process tree, so one runaway tool cannot block a job.</p>
 
       <h3>Detection score</h3>
@@ -319,6 +320,8 @@
         <thead><tr><th>Action</th><th>What you get</th><th>Who can do it</th></tr></thead>
         <tbody>
           <tr><td>Export findings (JSON)</td><td>Every finding with tool, rule, severity, count, tags, sampled details, and a stable <code>rule_signature</code> for cross-job pivoting</td><td>Anyone with access to the job</td></tr>
+          <tr><td>Analysis report (JSON)</td><td>Each tool&rsquo;s status, completion diagnostics and engine, rule and configuration fingerprints, with its findings by rule. No raw events, paths or command lines</td><td>Anyone with access to the job</td></tr>
+          <tr><td>Compare runs</td><td>The findings of this job beside an earlier run of the same file content, by engine and rule: added, no longer observed, changed or unchanged. An engine that is missing or did not finish in either run is <em>not comparable</em>. The latest earlier run you can see is chosen; use <strong>Compare with</strong> to select another eligible earlier run</td><td>Anyone with access to both jobs</td></tr>
           <tr><td>Export MITRE layer</td><td>A JSON layer loadable in <a href="https://mitre-attack.github.io/attack-navigator/" target="_blank" rel="noopener">MITRE ATT&amp;CK Navigator</a> — one layer per job</td><td>Anyone with access to the job</td></tr>
           <tr><td>Resubmit</td><td>A fresh job against the same file, with the same or a different workflow — useful when a new workflow has been added since your original run</td><td>Logged-in users, for a file they submitted; admins, any file</td></tr>
         </tbody>

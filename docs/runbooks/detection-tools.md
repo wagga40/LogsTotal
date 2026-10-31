@@ -37,7 +37,7 @@ Exports come in two layouts: a bare sequence of `<Event>` elements (`wevtutil qe
 
 ### RSigma on Windows logs
 
-Windows Full Analysis includes RSigma **0.24.0**, running locally on Linux x86-64,
+Windows Full Analysis includes RSigma **0.25.0**, running locally on Linux x86-64,
 Linux ARM64 or macOS Apple Silicon. Its Linux x86-64 binary requires **glibc 2.39 or
 newer**; the ARM64 binary requires **glibc 2.34 or newer**. Use the LogsTotal worker image
 on older hosts. RSigma batch evaluation is single-threaded: omit `threads` or set it to `1`.
@@ -202,17 +202,19 @@ It only breaks ties. Dropping a file narrows the list to the workflows whose `lo
 
 Ticking it on `/workflows` clears it on every other workflow. Keep `is_default: true` in exactly one file under `workflows/`, because the loader writes the value from each file as it is.
 
----
-
-**Related:** [Scaling](../scaling.md) · [Upgrade and roll back](upgrading.md) · [Troubleshooting](../troubleshooting.md)
-
 ## Analysis confidence and comparisons
 
 A process exiting successfully does not prove that it read every event or loaded every
 rule. Job details show the counts the engine actually reports; absent counters remain
-**unknown**. Known skipped rules, malformed detection records and interrupted engines
-are labelled **incomplete**. A partial task retains usable findings. Missing or wholly
-unusable output fails the task. Zero matches is an observation, not a safety verdict.
+**unknown**. A run is **complete** when the engine prints its end-of-run summary (for
+ChopChopGo, which prints none, when its JSON output parses whole on a zero exit).
+Malformed detection records, engine-reported errors, interrupted engines and an engine
+that loaded no rules make it **incomplete**: the task is partial and keeps its usable
+findings. Missing or wholly unusable output, or an incomplete run that found nothing,
+fails the task. Zero matches is an observation, not a safety verdict.
+
+Chainsaw cannot load a few hundred of the shipped Sigma rules, the same ones on every
+run. Job details count them, but they do not make a run incomplete.
 
 **Analysis report** downloads `/jobs/<id>/analysis.json` with schema version 1, stored
 execution fingerprints, completion diagnostics and normalized rule results. It excludes
@@ -222,8 +224,9 @@ before execution; assets changing during a run make the result incomplete. Engin
 custom paths may have an unverified version. Older jobs show unavailable provenance;
 viewing a report never substitutes today's installation metadata.
 
-**Compare runs** selects the most recent earlier visible terminal run with the same input
-SHA-256. Supply a baseline job ID to choose another run of that file. Both jobs must be
+**Compare runs** appears when an earlier visible terminal run with the same input SHA-256
+is available, and selects the most recent such run. The **Compare with** selector lists
+eligible earlier runs with their job number, workflow, date and status. Both jobs must be
 visible to you. Findings are grouped by engine and rule ID (exact title when no ID exists).
 Counts and severity distributions are compared; a title change preserves an ID's identity.
 Absent or incomplete engines are **not comparable**. A rule no longer observed may reflect
@@ -232,10 +235,16 @@ new rules, configuration or coverage, and does not establish that a threat was r
 For a reproducible single-tool update, use an exact release tag and rules commit:
 
 ```bash
-./logstotal tools:update -- rsigma --version v0.24.0 --rules-ref b7920ed31356fb7f6a9275b34737d8604c65bac3 --allow-major
+./logstotal tools:update -- rsigma --version v0.25.0 --rules-ref 05d1031f537e830b76da53bae2400c5814c89165 --allow-major
 ```
 
 The updater resolves refs to commits and records checksums. `--allow-major` also applies
 to RSigma's pre-1.0 minor releases. Zircolite's container pin is changed separately after
-sample validation. The shipped Zircolite 4.6.0 image is pinned by its multi-platform
-manifest digest for AMD64 and ARM64, with compiled rules pinned to the `v4.6.0` release.
+sample validation. Zircolite's engine and compiled rules are pinned to the `v4.7.0`
+release. Its image uses the multi-platform manifest digest
+`sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f`
+for AMD64 and ARM64.
+
+---
+
+**Related:** [Scaling](../scaling.md) · [Upgrade and roll back](upgrading.md) · [Troubleshooting](../troubleshooting.md)

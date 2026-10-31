@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from app.tools.mapping import file_records
 from app.tools.registry import get_adapter
 
 
@@ -101,8 +102,22 @@ def test_execution_publishes_usable_output(tmp_path, monkeypatch, payload, stder
     out = tmp_path / "events_rsigma.json"
     result = a._execute_and_parse(["unused"], out)
     assert result.success is success
-    assert out.exists() is success
+    # Only the validated output survives: the raw stream would be uploaded and exported too.
+    assert [p.name for p in tmp_path.iterdir()] == (["events_rsigma.json"] if success else [])
     assert result.stdout == ""
+
+
+def test_a_failed_run_names_the_engine_error(tmp_path, monkeypatch):
+    a = adapter()
+
+    def execute(cmd, **kw):
+        kw["stdout_path"].write_text("")
+        return 2, "", "Loaded pipeline: logstotal_windows (priority 10)\nerror: unexpected argument '--bogus' found\n\nUsage: rsigma engine eval\n"
+
+    monkeypatch.setattr(a, "_exec", execute)
+    result = a._execute_and_parse(["unused"], tmp_path / "out_rsigma.json")
+    assert not result.success
+    assert result.error.endswith("RSigma reported: error: unexpected argument '--bogus' found")
 
 
 def test_command_sets_input_and_evidence_without_thread_flag():
@@ -447,7 +462,8 @@ def test_incomplete_execution_retains_valid_records_and_cleans_artifact(tmp_path
     assert result.diagnostics.completion == "incomplete"
     assert result.diagnostics.records_skipped == 1
     assert sum(f.count for f in result.findings) == 1
-    assert len(list(a._records(output))) == 1
+    assert len(list(file_records(output, format="jsonl", strict=True))) == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["out_rsigma.json"]
 
 
 def test_timeout_preserves_valid_rsigma_evidence(tmp_path, monkeypatch):

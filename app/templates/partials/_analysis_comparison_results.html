@@ -1,0 +1,25 @@
+{% from "partials/_pager.html" import pager %}
+<div id="comparison-results" data-comparison-loaded :aria-busy="loading">
+  <div class="flex flex-wrap items-center justify-between gap-2">
+    <p class="text-sm text-gray-400">Counts are matched events, aggregated by engine and rule identity. “Not comparable” means an engine is absent or did not finish completely.</p>
+    {# Compact, so the count shows on a single page too: the full pager below renders only past one. #}
+    {{ pager(page, pages, url='/jobs/' ~ job.id ~ '/compare', target='#comparison-results', swap='outerHTML', qs='baseline=' ~ baseline.id, total=total, per_page=per_page, noun='rule comparisons', noun_one='rule comparison', compact=True) }}
+  </div>
+  <div class="overflow-x-auto border border-gray-800 rounded-lg">
+    <table class="w-full text-sm text-left">
+      <thead class="bg-gray-900 text-gray-400"><tr><th class="p-3">Engine / rule</th><th class="p-3">Change</th><th class="p-3">Baseline</th><th class="p-3">Current</th></tr></thead>
+      <tbody>
+      {% for row in rows %}
+        <tr class="border-t border-gray-800">
+          <td class="p-3"><span class="text-gray-500">{{ row.tool }}</span><p>{{ row.title }}</p><p class="text-xs text-gray-500">{{ row.rule_id or 'Title identity' }}</p></td>
+          <td class="p-3 {% if row.change == 'Not comparable' %}text-amber-400{% endif %}">{{ row.change }}</td>
+          {% for side in [row.before, row.after] %}
+          <td class="p-3">{% if side %}{{ side.count }} match{% if side.count != 1 %}es{% endif %}<p class="text-xs text-gray-500">{% for severity, count in side.severities.items() %}{{ severity }}: {{ count }} {% endfor %}</p>{% else %}—{% endif %}</td>
+          {% endfor %}
+        </tr>
+      {% else %}<tr><td colspan="4" class="p-6 text-gray-400">Neither run has stored findings to compare.</td></tr>{% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {{ pager(page, pages, url='/jobs/' ~ job.id ~ '/compare', target='#comparison-results', swap='outerHTML', qs='baseline=' ~ baseline.id, total=total, per_page=per_page, noun='rule comparisons', noun_one='rule comparison', keys=True) }}
+</div>

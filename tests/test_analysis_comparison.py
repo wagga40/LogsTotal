@@ -35,18 +35,22 @@ async def runs(async_db):
 
 async def test_comparison_matches_rule_identity_across_title_and_severity_changes(test_client, runs):
     jobs, _ = runs
-    response = await test_client.get(f"/jobs/{jobs[1].id}/compare?baseline={jobs[0].id}")
+    url = f"/jobs/{jobs[1].id}/compare?baseline={jobs[0].id}"
+    shell = await test_client.get(url)
+    assert "Provenance unavailable" in shell.text
+    response = await test_client.get(url, headers={"HX-Request": "true"})
     assert response.status_code == 200
     assert "New title" in response.text
     assert "Changed" in response.text
     assert "No longer observed" in response.text
     assert "Added" in response.text
-    assert "Provenance unavailable" in response.text
+    # One page: the full pager renders nothing, so the compact one carries the count.
+    assert "3 rule comparisons" in response.text
 
 
 async def test_comparison_defaults_to_the_previous_visible_run(test_client, async_db, runs):
     jobs, _ = runs
-    response = await test_client.get(f"/jobs/{jobs[1].id}/compare")
+    response = await test_client.get(f"/jobs/{jobs[1].id}/compare", headers={"HX-Request": "true"})
     assert response.status_code == 200
     assert "Previous only" in response.text
     jobs[0].is_private = True
@@ -78,7 +82,10 @@ async def test_comparison_rejects_running_or_different_input(test_client, async_
     await async_db.flush()
     jobs[0].file_id = other.id
     await async_db.commit()
-    assert (await test_client.get(f"/jobs/{jobs[1].id}/compare?baseline={jobs[0].id}")).status_code == 400
+    url = f"/jobs/{jobs[1].id}/compare?baseline={jobs[0].id}"
+    # The client shares this session; a real request's fresh one would not hold the old file.
+    async_db.expire(jobs[0])
+    assert (await test_client.get(url)).status_code == 400
 
 
 async def test_incomplete_engine_does_not_imply_detections_disappeared(test_client, async_db, runs):
@@ -86,7 +93,7 @@ async def test_incomplete_engine_does_not_imply_detections_disappeared(test_clie
     tasks[1].status = TaskStatus.PARTIAL
     jobs[1].status = JobStatus.PARTIAL
     await async_db.commit()
-    response = await test_client.get(f"/jobs/{jobs[1].id}/compare?baseline={jobs[0].id}")
+    response = await test_client.get(f"/jobs/{jobs[1].id}/compare?baseline={jobs[0].id}", headers={"HX-Request": "true"})
     assert response.status_code == 200
     assert "Not comparable" in response.text
     assert "No longer observed" not in response.text
@@ -107,3 +114,38 @@ async def test_analysis_report_preserves_legacy_unknowns_and_filters_internal_me
     jobs[1].is_private = True
     await async_db.commit()
     assert (await test_client.get(f"/jobs/{jobs[1].id}/analysis.json")).status_code == 404
+
+
+async def test_an_unbindable_baseline_is_not_found(test_client, runs):
+    """Past int4 the bind is a 500 on both backends, anonymously; no row can have it."""
+    jobs, _ = runs
+    for baseline in (2**31, 10**20):
+        assert (await test_client.get(f"/jobs/{jobs[1].id}/compare?baseline={baseline}")).status_code == 404
+
+
+async def test_analysis_report_download_is_audited_like_the_findings_export(test_client, async_db, runs):
+    from sqlalchemy import select
+
+    from app.models import ActivityEvent, SiteSettings
+
+    jobs, _ = runs
+    site = await async_db.get(SiteSettings, 1) or SiteSettings(id=1)
+    site.activity_log_enabled = True
+    async_db.add(site)
+    await async_db.commit()
+    assert (await test_client.get(f"/jobs/{jobs[1].id}/analysis.json")).status_code == 200
+    rows = (await async_db.scalars(select(ActivityEvent).where(ActivityEvent.action == "export.job_analysis"))).all()
+    assert [(row.target_type, row.target_id) for row in rows] == [("job", str(jobs[1].id))]
+
+
+async def test_analysis_details_appear_only_for_tools_that_ran(test_client, async_db, runs):
+    jobs, tasks = runs
+    tasks[1].diagnostics_json = json.dumps(
+        {"schema_version": 1, "completion": "complete", "processed_events": 7, "rules_loaded": 9, "rules_skipped": None, "records_skipped": 0, "warnings": []}
+    )
+    async_db.add(TaskResult(job_id=jobs[1].id, tool_name="chainsaw", status=TaskStatus.SKIPPED, error_message="not supported"))
+    await async_db.commit()
+    page = (await test_client.get(f"/jobs/{jobs[1].id}/status-partial")).text
+    assert page.count("Analysis details") == 1
+    assert "Events processed: 7" in page
+    assert "coverage unverified" not in page

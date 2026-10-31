@@ -3,8 +3,82 @@
 from __future__ import annotations
 
 import json
+from dataclasses import replace
+
+import pytest
 
 from app.tools.hayabusa import HayabusaAdapter
+
+
+@pytest.mark.parametrize(
+    "output,expected",
+    [
+        ("-= Standalone Sigma Detection tool for EVTX/Auditd/Sysmon Linux =-\n                              v4.2.0\n", "4.2.0"),
+        ("\x1b[36m-= Standalone Sigma Detection tool for EVTX/Auditd/Sysmon Linux =-\x1b[0m\n\x1b[32m v4.7.0\x1b[0m\n", "4.7.0"),
+        ("Rule title: Zircolite v9.9.9\n v8.8.8\n", None),
+        ("-= Standalone Sigma Detection tool for EVTX/Auditd/Sysmon Linux =-\nv4.7.0 unexpected text\n", None),
+        ("", None),
+    ],
+)
+def test_zircolite_records_version_reported_by_the_engine(tmp_path, output, expected):
+    from app.tools.base import ToolOutput
+    from app.tools.zircolite import ZircoliteAdapter
+
+    adapter = ZircoliteAdapter({"docker_image": "custom/zircolite:latest", "rules_path": str(tmp_path / "missing")})
+    result = adapter._run_recorded(lambda: ToolOutput(success=True, stdout=output))
+
+    assert result.execution_snapshot["engine_version"] == expected
+
+
+@pytest.mark.parametrize("stored_version", [None, "4.1.0"])
+def test_historical_version_uses_only_the_runs_saved_banner(stored_version):
+    from app.analysis_confidence import task_metadata
+    from app.models import TaskResult, TaskStatus
+
+    snapshot = json.dumps({"schema_version": 1, "engine_version": stored_version, "execution_mode": "docker"})
+    task = TaskResult(
+        tool_name="zircolite",
+        status=TaskStatus.COMPLETED,
+        execution_snapshot=snapshot,
+        log_output="=== stdout ===\n-= Standalone Sigma Detection tool for EVTX/Auditd/Sysmon Linux =-\n v4.2.0\nPRIVATE_LOG_DATA",
+    )
+
+    metadata = task_metadata(task)
+
+    assert metadata["provenance"]["engine_version"] == (stored_version or "4.2.0")
+    assert task.execution_snapshot == snapshot
+    assert "PRIVATE_LOG_DATA" not in json.dumps(metadata)
+
+
+@pytest.mark.parametrize("custom_image", [False, True])
+def test_docker_engine_version_is_independent_of_rules_release(tmp_path, monkeypatch, custom_image):
+    import app.analysis_confidence as provenance
+    from app.tools.catalog import TOOLS
+    from app.tools.digests import tree_digest
+    from app.tools.zircolite import ZircoliteAdapter
+
+    tool_dir = tmp_path / "tools" / "zircolite"
+    rules = tool_dir / "rules"
+    rules.mkdir(parents=True)
+    (rules / "rules.json").write_text("[]")
+    (tool_dir / "upstream.json").write_text(
+        json.dumps(
+            {
+                "version": "v4.7.0",
+                "binaries": {},
+                "rules": {"repo": "wagga40/Zircolite", "commit": "new-rules-revision", "trees": {"rules": tree_digest(rules)}},
+            }
+        )
+    )
+    image = "wagga40/zircolite:4.6.0@sha256:" + "a" * 64
+    monkeypatch.setitem(TOOLS, "zircolite", replace(TOOLS["zircolite"], docker_image=image))
+    monkeypatch.setattr(provenance, "_ROOT", tmp_path)
+    adapter = ZircoliteAdapter({"docker_image": "custom/zircolite:latest" if custom_image else image, "rules_path": str(rules / "rules.json")})
+
+    snapshot = provenance.capture_tool_snapshot(adapter)
+
+    assert snapshot["engine_version"] == (None if custom_image else "4.6.0")
+    assert snapshot["rules_revision"] == "new-rules-revision"
 
 
 def test_worker_snapshot_fingerprints_custom_assets_without_exposing_paths(tmp_path):

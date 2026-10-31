@@ -50,16 +50,49 @@ def test_empty_output_does_not_invent_processed_counts(tmp_path, monkeypatch):
     assert result.diagnostics.processed_events is None
 
 
-def test_rule_load_gaps_are_visible_even_with_valid_empty_output(tmp_path, monkeypatch):
+# End-of-run lines exactly as the pinned engines print them (ANSI and Rich borders included).
+_FINISHED = {
+    ChainsawAdapter: "[+] Loading detection rules from: rules/\n\x1b[38;5;11m[!] Loaded 3630 detection rules (296 not loaded)\x1b[0m\n[+] 0 Detections found on 0 documents\n",
+    HayabusaAdapter: "Total detection rules: 4674\nEvents with hits / Total events: 0 / 1 (Data reduction: 1 events (100.00%))\n",
+    ZircoliteAdapter: "[+] 4527 rules loaded\n[+] Total events processed: 1 (0 filtered out by log source)\n│    🎯 Detections       None                                     │\n",
+}
+
+
+@pytest.mark.parametrize("adapter_cls", list(_FINISHED))
+def test_an_engine_that_prints_its_summary_is_complete(tmp_path, monkeypatch, adapter_cls):
+    adapter = adapter_cls({"rules_path": str(tmp_path)})
+    output = tmp_path / "result.json"
+    output.write_text("[]" if adapter_cls is ZircoliteAdapter else "")
+    monkeypatch.setattr(adapter, "_exec", lambda *a, **kw: (0, _FINISHED[adapter_cls], ""))
+    result = adapter._execute_and_parse(["unused"], output)
+    assert result.success
+    assert result.diagnostics.completion == "complete"
+    assert result.diagnostics.warnings == []
+
+
+def test_chainsaw_unloadable_rules_are_counted_not_a_gap(tmp_path, monkeypatch):
+    """The shipped Sigma set always has rules Chainsaw cannot load; every Windows job was PARTIAL."""
     adapter = ChainsawAdapter({"rules_path": str(tmp_path)})
     output = tmp_path / "result.json"
     output.write_text("")
-    monkeypatch.setattr(adapter, "_exec", lambda *a, **kw: (0, "", "[!] Loaded 10 detection rules (2 not loaded)"))
+    monkeypatch.setattr(adapter, "_exec", lambda *a, **kw: (0, _FINISHED[ChainsawAdapter], ""))
     result = adapter._execute_and_parse(["unused"], output)
-    assert result.success
-    assert result.diagnostics.completion == "incomplete"
-    assert result.diagnostics.rules_loaded == 10
-    assert result.diagnostics.rules_skipped == 2
+    assert result.diagnostics.completion == "complete"
+    assert result.diagnostics.rules_loaded == 3630
+    assert result.diagnostics.rules_skipped == 296
+
+
+@pytest.mark.parametrize("adapter_cls", [ChainsawAdapter, HayabusaAdapter])
+def test_an_incomplete_run_that_found_nothing_fails(tmp_path, monkeypatch, adapter_cls):
+    adapter = adapter_cls({"rules_path": str(tmp_path)})
+    output = tmp_path / "result.json"
+    output.write_text("")
+    summary = "Loaded 0 detection rules" if adapter_cls is ChainsawAdapter else "Total detection rules: 0"
+    monkeypatch.setattr(adapter, "_exec", lambda *a, **kw: (0, summary, ""))
+    result = adapter._execute_and_parse(["unused"], output)
+    assert not result.success
+    assert result.error.startswith("Incomplete analysis")
+    assert "no detection rules" in result.error
 
 
 def test_failed_process_preserves_usable_evidence(tmp_path, monkeypatch):

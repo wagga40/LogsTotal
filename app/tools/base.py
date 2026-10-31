@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import hashlib
 import logging
 import os
 import platform
@@ -19,7 +18,8 @@ from typing import Any
 
 from app.json_utils import load_file as json_load_file
 from app.json_utils import loads as json_loads
-from app.tools.diagnostics import CompletionDiagnostics
+from app.tools.diagnostics import CompletionDiagnostics, reported_engine_version
+from app.tools.digests import stat_fingerprint
 from app.tools.mapping import OutputMapping
 from app.tools.output import RawMatch
 
@@ -280,6 +280,8 @@ class ToolAdapter:
         snapshot = capture_tool_snapshot(self)
         self._execution_snapshot = snapshot
         result = run()
+        if not snapshot["engine_version"]:
+            snapshot["engine_version"] = reported_engine_version(self.name, result.stdout) or reported_engine_version(self.name, result.stderr)
         result.execution_snapshot = snapshot
         after = capture_tool_snapshot(self)
         if any(snapshot[key] != after[key] for key in ("runtime_sha256", "rules_sha256", "mapping_sha256")):
@@ -399,7 +401,7 @@ class ToolAdapter:
                     if not cancelled:
                         self._diagnostics.incomplete("The engine exceeded its analysis time limit.")
                         retained = self._parse_output(output_file, stdout, stderr, duration_ms)
-                        if retained.success and retained.findings:
+                        if retained.success:
                             return retained
                     return ToolOutput(
                         success=False,
@@ -424,7 +426,7 @@ class ToolAdapter:
                 duration_ms = int((time.monotonic() - t0) * 1000)
                 self._diagnostics.incomplete("The engine exited before completing its analysis.")
                 retained = self._parse_output(output_file, stdout, stderr, duration_ms)
-                if retained.success and retained.findings:
+                if retained.success:
                     return retained
                 return ToolOutput(success=False, error=stdout or f"Container exited with code {exit_code}", stdout=stdout, duration_ms=duration_ms)
         except Exception as exc:
@@ -512,7 +514,7 @@ class ToolAdapter:
             if not (self._cancel_event is not None and self._cancel_event.is_set()) and output_file.is_file():
                 self._diagnostics.incomplete("The engine exited before completing its analysis.")
                 retained = self._parse_output(output_file, stdout, stderr, duration_ms)
-                if retained.success and retained.findings:
+                if retained.success:
                     return retained
             return ToolOutput(
                 success=False,
@@ -524,23 +526,18 @@ class ToolAdapter:
 
         return self._parse_output(output_file, stdout, stderr, duration_ms)
 
-    def _parse_output(self, output_file: Path, stdout: str, stderr: str, duration_ms: int) -> ToolOutput:
-        self._diagnostics.read_summary(self.name, stdout + "\n" + stderr)
+    def _parse_output(self, output_file: Path, stdout: str, stderr: str, duration_ms: int, *, finished: bool | None = None) -> ToolOutput:
+        """Load and normalize the output; `finished` overrides the engine's printed summary.
+
+        An incomplete run keeps what it found (PARTIAL) but fails when it found nothing:
+        zero matches from an analysis that did not finish is not a result.
+        """
+        summary_seen = self._diagnostics.read_summary(self.name, stdout + "\n" + stderr)
         try:
             if not output_file.is_file():
                 raise ValueError("Expected detection output was not produced")
             raw = self._load_output(output_file)
             findings = self.normalize(raw)
-            if self._diagnostics.records_skipped and not findings:
-                raise ValueError("Detection output contained no usable records")
-            return ToolOutput(
-                success=True,
-                findings=findings,
-                stdout=stdout,
-                stderr=stderr,
-                duration_ms=duration_ms,
-                diagnostics=self._diagnostics,
-            )
         except Exception as exc:
             return ToolOutput(
                 success=False,
@@ -550,6 +547,19 @@ class ToolAdapter:
                 duration_ms=duration_ms,
                 diagnostics=self._diagnostics,
             )
+        if self._diagnostics.completion == "incomplete" and not findings:
+            # The output parsed; the analysis did not finish. Say that, not "failed to parse".
+            return ToolOutput(success=False, error=self._diagnostics.failure(), stdout=stdout, stderr=stderr, duration_ms=duration_ms, diagnostics=self._diagnostics)
+        if (summary_seen if finished is None else finished) and self._diagnostics.completion == "unknown":
+            self._diagnostics.completion = "complete"
+        return ToolOutput(
+            success=True,
+            findings=findings,
+            stdout=stdout,
+            stderr=stderr,
+            duration_ms=duration_ms,
+            diagnostics=self._diagnostics,
+        )
 
     # ── output loading ───────────────────────────────────────────────────
 
@@ -586,8 +596,9 @@ class ToolAdapter:
 
     # ── shared helpers ───────────────────────────────────────────────────
 
-    # Shared across all adapters: {newline-joined resolved rules paths: {rule_id: filepath}}
-    _rule_index_cache: dict[str, tuple[str, dict[str, str]]] = {}
+    # Shared across all adapters:
+    # {newline-joined resolved rules paths: (stat fingerprint, {rule_id: filepath})}
+    _rule_index_cache: dict[str, tuple[tuple, dict[str, str]]] = {}
 
     def _lookup_rule_yaml(self, rule_id: str) -> str:
         """Find a YAML rule file matching rule_id in any of self.rules_paths.
@@ -612,16 +623,9 @@ class ToolAdapter:
         # differing after it would otherwise collide in the cache and one would silently
         # serve the other's index.
         resolved = "\n".join(str(Path(p).resolve()) for p in self.rules_paths)
-        digest = hashlib.sha256()
-        for path in self._rule_files():
-            digest.update(str(path).encode())
-            digest.update(b"\0")
-            try:
-                digest.update(path.read_bytes())
-            except OSError:
-                continue
-            digest.update(b"\0")
-        fingerprint = digest.hexdigest()
+        # Refreshed rules rebuild the index; stat only, as reading every file to find out
+        # cost a tenth to a third of a second per tool per job.
+        fingerprint = tuple(stat_fingerprint(Path(p)) for p in self.rules_paths)
         cached = ToolAdapter._rule_index_cache.get(resolved)
         if cached is None or cached[0] != fingerprint:
             cached = (fingerprint, self._build_rule_index())

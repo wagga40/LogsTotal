@@ -119,7 +119,9 @@ class ChopChopGoAdapter(ToolAdapter):
 
         try:
             output_file.write_text(json_dumps(events), encoding="utf-8")
-            return self._parse_output(output_file, stdout, stderr, duration_ms)
+            # ChopChopGo prints no counters. It writes one JSON array after the last
+            # event, so a whole array on a zero exit is the evidence that it finished.
+            return self._parse_output(output_file, stdout, stderr, duration_ms, finished=rc == 0)
         except Exception as exc:
             return ToolOutput(
                 success=False,

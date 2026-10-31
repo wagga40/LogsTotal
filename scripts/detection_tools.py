@@ -8,7 +8,6 @@ Keep the previous directory under backups/. Container pins are changed separatel
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -28,6 +27,8 @@ from pathlib import Path
 # This script also runs before PDM is installed. The catalog has no app imports.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.tools.catalog import TOOLS
+from app.tools.digests import file_digest as sha256
+from app.tools.digests import tree_digest
 from app.tools.runtime import resolve_task_config
 from scripts.tool_runtime_inventory import workflow_task_scalars
 
@@ -56,22 +57,6 @@ def read_json(path: Path):
 
 def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def sha256(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
-def tree_digest(path: Path) -> str:
-    """Include filenames as well as content, so missing/renamed rules are detected."""
-    digest = hashlib.sha256()
-    for file in sorted(p for p in path.rglob("*") if p.is_file()):
-        digest.update(str(file.relative_to(path)).encode())
-        digest.update(b"\0")
-        digest.update(sha256(file).encode())
-        digest.update(b"\n")
-    return digest.hexdigest()
 
 
 def api(endpoint: str):

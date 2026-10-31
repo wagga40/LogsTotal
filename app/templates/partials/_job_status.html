@@ -118,7 +118,8 @@
   <div class="space-y-2 mb-6">
     {% for tr in job.task_results %}
     {% set ts = tr.status.value if tr.status.value is defined else tr.status %}
-    <div class="bg-gray-900 border border-gray-800 rounded-lg" x-data="{}">
+    {% set show_analysis_details = tr.tool_name not in ['Computing analytics', 'File similarity'] and is_terminal and ts in ('completed', 'partial') %}
+    <div class="bg-gray-900 border border-gray-800 rounded-lg" x-data="{ analysisOpen: false }">
       <!-- Summary row -->
       <div class="flex items-center gap-4 px-4 py-3 flex-wrap">
         <div class="flex-shrink-0 w-5 text-center">
@@ -148,6 +149,18 @@
         {% elif tr.duration_ms is not none and tr.duration_ms > 0 %}
         <span class="text-xs text-gray-500" title="Execution time for this tool">{{ (tr.duration_ms / 1000) | round(2) }}s</span>
         {% endif %}
+        {% if show_analysis_details or (user and user.is_superuser and is_terminal) %}
+        <div class="ml-auto flex items-center gap-2">
+        {% if show_analysis_details %}
+        <button type="button" id="task-analysis-trigger-{{ tr.id }}"
+          @click="analysisOpen = !analysisOpen"
+          :aria-expanded="analysisOpen"
+          aria-controls="task-analysis-{{ tr.id }}"
+          class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
+          :class="analysisOpen ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
+          Analysis details
+        </button>
+        {% endif %}
         {% if user and user.is_superuser and is_terminal %}
         <button type="button"
           @click="$store.openLogs[{{ tr.id }}] = !($store.openLogs[{{ tr.id }}] || false)"
@@ -155,15 +168,20 @@
           hx-trigger="click once"
           hx-target="#task-log-{{ tr.id }}"
           hx-swap="innerHTML"
-          class="ml-auto text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
+          class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
           :class="($store.openLogs[{{ tr.id }}] || false) ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
           <span x-text="($store.openLogs[{{ tr.id }}] || false) ? 'Hide logs' : 'Show logs'"></span>
         </button>
         {% endif %}
+        </div>
+        {% endif %}
       </div>
-      {% if tr.tool_name not in ['Computing analytics', 'File similarity'] and is_terminal %}
+      {# Only a tool that ran has counters and provenance; a skipped or failed row would show a column of unknowns. #}
+      {% if show_analysis_details %}
       {% set metadata = tr | task_metadata %}
+      <div x-show="analysisOpen" x-cloak id="task-analysis-{{ tr.id }}" role="region" aria-labelledby="task-analysis-trigger-{{ tr.id }}">
       {% include "partials/_analysis_metadata.html" %}
+      </div>
       {% endif %}
       {% if ts == 'failed' %}
       {% if user and user.is_superuser %}

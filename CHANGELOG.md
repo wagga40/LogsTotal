@@ -24,24 +24,38 @@ backup step, migration ordering, and rollback for each deployment path.
 - Regex timeouts cannot consume the budget granted to later events.
 - Refreshed Sigma files invalidate cached rule metadata, including `.yaml` files.
 - Zero-match reports describe observed results without declaring an input safe.
+- Rules-only updates no longer change the engine version recorded for a pinned container.
+- Zircolite versions are captured from the engine's startup banner when the image is
+  not catalog-pinned; existing reports can recover missing versions from their saved logs.
+- A fleet `upgrade:rollback` checks the control plane's database before stopping any host,
+  as the single-host rollback always has. It used to restore code that could not start on
+  a database at a newer migration.
 
 ### Updated
 
-- Zircolite 4.6.0 (digest pinned), RSigma 0.24.0, Chainsaw 2.17.1 and Hayabusa 4.2.0;
-  refreshed rule snapshots. ChopChopGo stays at 1.1.0.
+- RSigma 0.25.0 and Zircolite 4.7.0, with refreshed rules and a digest-pinned
+  Zircolite image for AMD64 and ARM64.
+  Chainsaw 2.17.1 and Hayabusa 4.2.0 have refreshed rule snapshots. ChopChopGo stays at 1.1.0.
 - Tool updates accept exact release tags and rule refs for reproducible maintenance.
+- Job actions use visible buttons, offer comparisons only when an eligible earlier run
+  exists, and group Artifact, Raw and JSON downloads in one menu. Analytics export
+  sections start unchecked.
+- Comparison baselines are selected from eligible earlier runs instead of entering
+  a job ID manually.
+- Analysis details expand from a button beside Show logs, keeping tool rows compact.
+- Run comparisons open before results load, then fetch 100 rules per page with database
+  aggregation and asynchronous pagination instead of loading both runs in full.
 - Python dependencies, same-major browser libraries, and the pinned GitHub Actions
   updates proposed in PR #10.
 
 ### Upgrade notes
 
-- Stop all workers before migrating. New tasks can use `PARTIAL`, which older workers
-  cannot deserialize. The migration adds nullable diagnostics and provenance columns.
-- For an application-only downgrade, stop the application and run the new version's
-  `pdm run alembic downgrade a76e3b9c214d` before installing old code. Partial tasks become
-  failed tasks, with findings retained; provenance and diagnostics are removed. Prefer
-  the documented full backup/restore rollback when available.
-
+- Migration `b8d46f1e932a` adds the `PARTIAL` task status, which older workers cannot read.
+  `./logstotal upgrade` stops every worker before migrating; stop them yourself if you
+  upgrade any other way.
+- `./logstotal upgrade:rollback` refuses to cross this migration. Restore the pre-upgrade
+  backup, or downgrade the schema first to keep newer jobs — see
+  [Rolling back the analysis-confidence migration](docs/runbooks/upgrading.md#rolling-back-the-analysis-confidence-migration).
 
 ## [1.1.0] — 2026-10-10
 

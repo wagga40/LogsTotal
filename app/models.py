@@ -413,7 +413,7 @@ class Finding(Base):
     # Deferring means an access on an attached instance issues its own SELECT, which under
     # async SQLAlchemy raises `MissingGreenlet` — so the two loaders that genuinely want them
     # say `undefer()` explicitly: `_load_finding_job` (/jobs/findings/{id}/rule and /events)
-    # and `_load_job_full(with_blobs=True)` (/jobs/{id}/findings.json). The case timeline
+    # and `_load_job_full(blobs=...)` (/jobs/{id}/findings.json, analysis.json). The case timeline
     # selects `Finding.details` as a plain column, which mapper-level deferral does not apply
     # to. That is the point: it is visible at the query which callers pay for the blob.
     details = deferred(Column(Text, nullable=True))  # JSON array of matched events (truncated)

@@ -132,21 +132,26 @@ def file_records(path: Path, *, format: Literal["json", "jsonl"], strict: bool =
                 diagnostics.skip_record()
 
 
-def _decode(record: dict, mapping: OutputMapping, purpose: Literal["finding", "raw"]) -> DecodedDetection:
+def _decode(record: dict, mapping: OutputMapping, purpose: Literal["finding", "raw"], diagnostics: CompletionDiagnostics | None = None) -> DecodedDetection:
     if mapping.validate is not None:
         mapping.validate(record)
     if not isinstance(record, dict):
         raise ValueError("Invalid detection record: expected an object")
-    if mapping.raw_events is not None:
-        evidence = mapping.raw_events.read(record)
-        if not isinstance(evidence, list) or any(not isinstance(event, dict) for event in evidence):
-            raise ValueError("Invalid detection evidence: expected event objects")
+    if mapping.raw_events is not None and not isinstance(mapping.raw_events.read(record), list):
+        raise ValueError("Invalid detection evidence: expected a list of events")
     metadata = {}
     for name in ("rule_name", "rule_id", "severity", "tags", "rule_content"):
         selector = mapping.raw_overrides.get(name, getattr(mapping.finding, name)) if purpose == "raw" else getattr(mapping.finding, name)
         metadata[name] = selector.read(record)
     selector = mapping.raw_events if purpose == "raw" and mapping.raw_events is not None else mapping.events
     events = selector.read(record) if selector is not None else [record]
+    if mapping.raw_events is not None:
+        # A malformed sample costs that sample, not the rule block and its reported count.
+        kept = [event for event in events if isinstance(event, dict)]
+        if diagnostics is not None:
+            for _ in range(len(events) - len(kept)):
+                diagnostics.skip_record()
+        events = kept
     if mapping.event_transform is not None:
         events = [mapping.event_transform(event) for event in events]
     count = mapping.reported_count.read(record) if mapping.reported_count is not None and purpose == "finding" else None
@@ -165,7 +170,7 @@ def decode_records(
                 diagnostics.skip_record()
             continue
         try:
-            detection = _decode(record, mapping, purpose)
+            detection = _decode(record, mapping, purpose, diagnostics)
         except Exception:
             if mapping.strict:
                 raise

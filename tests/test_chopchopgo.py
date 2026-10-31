@@ -251,4 +251,4 @@ def test_live_system_privilege_warning_does_not_mark_uploaded_file_incomplete(ch
     monkeypatch.setattr(a, "_exec", lambda *args, **kw: (0, json.dumps([_event()]), "Warning: not running as superuser - some accesses might fail!"))
     result = a._execute_and_parse(["unused"], tmp_path / "result.json")
     assert result.success
-    assert result.diagnostics.completion == "unknown"
+    assert result.diagnostics.completion == "complete"

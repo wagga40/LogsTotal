@@ -7,16 +7,22 @@
     <a href="/jobs/{{ job.id }}" class="text-blue-400 hover:text-blue-300">Back to job #{{ job.id }}</a>
   </div>
   <p class="text-sm text-gray-400">Compare results for identical file content. Differences can come from rules, engines, configuration, or incomplete analysis; they do not establish that a threat was resolved.</p>
-  <form method="get" class="flex items-end gap-3">
-    <label class="text-sm text-gray-300">Baseline job ID
-      <input type="number" name="baseline" min="1" required value="{{ baseline.id if baseline else '' }}" class="block mt-1 bg-gray-900 border border-gray-700 rounded px-3 py-2">
+  {% if baselines %}
+  <form method="get" class="flex flex-wrap items-end gap-3">
+    <label class="text-sm text-gray-300 min-w-0">Compare with
+      <select name="baseline" class="block mt-1 max-w-full bg-gray-900 border border-gray-700 rounded px-3 py-2">
+        {% for run in baselines %}
+        <option value="{{ run.id }}"{% if baseline and run.id == baseline.id %} selected{% endif %}>#{{ run.id }} · {{ run.workflow_name }} · {{ run.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ run.status.value }}</option>
+        {% endfor %}
+      </select>
     </label>
     <button type="submit" class="lt-btn lt-btn--primary">Compare</button>
   </form>
+  {% endif %}
   {% if not baseline %}
   <p class="bg-gray-900 rounded-lg p-6 text-gray-400">No earlier visible run of this file is available. Reanalyse the file to compare results.</p>
   {% else %}
-  <div class="grid grid-cols-2 gap-4">
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
     {% for label, run, provenance, tasks in [('Baseline', baseline, baseline_provenance, baseline_tasks), ('Current', job, current_provenance, current_tasks)] %}
     <section class="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
       <h2 class="font-semibold">{{ label }}: <a href="/jobs/{{ run.id }}" class="text-blue-400">job #{{ run.id }}</a></h2>
@@ -39,27 +45,20 @@
     </section>
     {% endfor %}
   </div>
-  <p class="text-sm text-gray-400">{{ total }} rule comparisons. Counts are matched events, aggregated by engine and rule identity. “Not comparable” means an engine is absent or did not finish completely.</p>
-  <div class="overflow-x-auto border border-gray-800 rounded-lg">
-    <table class="w-full text-sm text-left">
-      <thead class="bg-gray-900 text-gray-400"><tr><th class="p-3">Engine / rule</th><th class="p-3">Change</th><th class="p-3">Baseline</th><th class="p-3">Current</th></tr></thead>
-      <tbody>
-      {% for row in rows %}
-        <tr class="border-t border-gray-800">
-          <td class="p-3"><span class="text-gray-500">{{ row.tool }}</span><p>{{ row.title }}</p><p class="text-xs text-gray-500">{{ row.rule_id or 'Title identity' }}</p></td>
-          <td class="p-3 {% if row.change == 'Not comparable' %}text-amber-400{% endif %}">{{ row.change }}</td>
-          {% for side in [row.before, row.after] %}
-          <td class="p-3">{% if side %}{{ side.count }} match{% if side.count != 1 %}es{% endif %}<p class="text-xs text-gray-500">{% for severity, count in side.severities.items() %}{{ severity }}: {{ count }} {% endfor %}</p>{% else %}—{% endif %}</td>
-          {% endfor %}
-        </tr>
-      {% else %}<tr><td colspan="4" class="p-6 text-gray-400">Neither run has stored findings to compare.</td></tr>{% endfor %}
-      </tbody>
-    </table>
-  </div>
-  <div class="flex justify-between text-sm">
-    {% if page > 1 %}<a class="text-blue-400" href="?baseline={{ baseline.id }}&amp;page={{ page - 1 }}">Previous</a>{% else %}<span></span>{% endif %}
-    <span class="text-gray-500">Page {{ page }} of {{ pages }}</span>
-    {% if page < pages %}<a class="text-blue-400" href="?baseline={{ baseline.id }}&amp;page={{ page + 1 }}">Next</a>{% endif %}
+  {% set results_url = '/jobs/' ~ job.id ~ '/compare?baseline=' ~ baseline.id ~ '&page=' ~ page %}
+  <div x-data="{ loading: !$el.querySelector('[data-comparison-loaded]'), failed: false, loaded: !!$el.querySelector('[data-comparison-loaded]') }"
+       @htmx:before-request="loading = true; failed = false"
+       @htmx:after-request="loading = false; failed = !$event.detail.successful; loaded = loaded || $event.detail.successful"
+       hx-sync="#comparison-results:replace">
+    <p x-show="loading" class="text-sm text-gray-400 mb-3" role="status">Loading comparison…</p>
+    <div x-show="failed" x-cloak class="text-sm text-amber-400 mb-3" role="alert">
+      Could not load the comparison. Try again.
+      <button type="button" id="comparison-retry" x-show="!loaded" class="lt-btn lt-btn--sm ml-2"
+              hx-get="{{ results_url }}" hx-target="#comparison-results" hx-swap="outerHTML">Retry</button>
+    </div>
+    <div id="comparison-results" :aria-busy="loading"
+         hx-get="{{ results_url }}" hx-trigger="load" hx-swap="outerHTML">
+    </div>
   </div>
   {% endif %}
 </div>

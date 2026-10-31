@@ -192,7 +192,10 @@ class RsigmaAdapter(ToolAdapter):
         start = time.monotonic()
         deadline = self._deadline if self._deadline is not None else start + self._timeout_seconds
         partial = output_file.with_suffix(output_file.suffix + ".partial")
-        stderr = ""
+        # Publish only validated NDJSON. Analytics must see exactly the usable
+        # evidence retained here, even when the original stream is truncated.
+        clean = partial.with_suffix(".validated")
+        rc, stderr = 0, ""
         try:
             self._check_budget(deadline)
             rc, _, stderr = self._exec(
@@ -212,10 +215,6 @@ class RsigmaAdapter(ToolAdapter):
                 self._diagnostics.incomplete("The engine exited before completing its analysis.")
             if _ERRORS.search(stderr):
                 self._diagnostics.incomplete("The engine reported skipped or invalid input or rules.")
-
-            # Publish only validated NDJSON. Analytics must see exactly the usable
-            # evidence retained here, even when the original stream is truncated.
-            clean = partial.with_suffix(".validated")
 
             def checked_records():
                 with clean.open("w", encoding="utf-8") as stream:
@@ -247,7 +246,7 @@ class RsigmaAdapter(ToolAdapter):
                 if int(loaded[1]) == 0:
                     self._diagnostics.incomplete("The engine loaded no detection rules.")
             if self._diagnostics.completion == "incomplete" and not findings:
-                raise ValueError("RSigma did not complete its analysis and returned no usable detections")
+                raise ValueError(self._failure(rc, stderr))
             if self._diagnostics.completion != "incomplete":
                 self._diagnostics.completion = "complete"
             if self._cancel_event is not None and self._cancel_event.is_set():
@@ -256,10 +255,18 @@ class RsigmaAdapter(ToolAdapter):
             return ToolOutput(success=True, findings=findings, stderr=stderr, duration_ms=int((time.monotonic() - start) * 1000), diagnostics=self._diagnostics)
         except (OSError, ValueError) as exc:
             return ToolOutput(success=False, error=str(exc), stderr=stderr, duration_ms=int((time.monotonic() - start) * 1000), diagnostics=self._diagnostics)
+        finally:
+            # The raw stream holds every event unvalidated; left beside the output it would
+            # be uploaded and exported as a second copy of the evidence.
+            partial.unlink(missing_ok=True)
+            clean.unlink(missing_ok=True)
 
-    @staticmethod
-    def _records(path: Path) -> Iterator[dict]:
-        return file_records(path, format="jsonl", strict=True)
+    def _failure(self, rc: int, stderr: str) -> str:
+        """Name the engine's own last error line: the cause an administrator acts on."""
+        reported = [line.strip() for line in stderr.splitlines() if _ERRORS.match(line)]
+        if reported:
+            return f"{self._diagnostics.failure()} RSigma reported: {reported[-1]}"
+        return f"{self._diagnostics.failure()} Exit code {rc}." if rc > 0 else self._diagnostics.failure()
 
     @staticmethod
     def _match(record: Any) -> RawMatch:

@@ -1,10 +1,10 @@
-<details class="border-t border-gray-800 px-4 py-3 text-xs text-gray-400">
-  <summary class="cursor-pointer">Analysis details{% if not metadata.diagnostics or metadata.diagnostics.completion == 'unknown' %} — coverage unverified{% endif %}</summary>
+<div class="border-t border-gray-800 px-4 py-3 text-xs text-gray-400">
+  {% if not metadata.diagnostics or metadata.diagnostics.completion == 'unknown' %}<p>coverage unverified</p>{% endif %}
   {% set diagnostic = metadata.diagnostics %}
   {% if diagnostic %}
   <dl class="mt-2 space-y-1">
     <div>Events processed: {{ diagnostic.processed_events if diagnostic.processed_events is not none else 'unknown' }}</div>
-    <div>Rules loaded: {{ diagnostic.rules_loaded if diagnostic.rules_loaded is not none else 'unknown' }}; skipped: {{ diagnostic.rules_skipped if diagnostic.rules_skipped is not none else 'unknown' }}</div>
+    <div>Rules loaded: {{ diagnostic.rules_loaded if diagnostic.rules_loaded is not none else 'unknown' }}{% if diagnostic.rules_skipped %} ({{ diagnostic.rules_skipped }} not loadable by this engine){% endif %}</div>
     {% for warning in diagnostic.warnings or [] %}<div class="text-amber-400">{{ warning }}</div>{% endfor %}
   </dl>
   {% else %}<p class="mt-2">Completion diagnostics unavailable for this run.</p>{% endif %}
@@ -17,4 +17,4 @@
     <div>Configuration SHA-256: {{ provenance.configuration_sha256 or 'unavailable' }}</div>
   </dl>
   {% else %}<p class="mt-2">Provenance unavailable for this run.</p>{% endif %}
-</details>
+</div>
