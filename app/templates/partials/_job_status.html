@@ -188,10 +188,12 @@
       <div class="border-t border-gray-800 px-4 py-3 bg-red-950/20">
         <p class="text-sm font-medium text-red-300 mb-1">Error</p>
         <p class="text-sm text-red-200 font-mono whitespace-pre-wrap break-words">{{ tr.error_message | e }}</p>
-        {% if tr.log_output %}
+        {# `log_output` is deferred; the status routes fetch failed tasks' logs into failed_logs. #}
+        {% set failed_log = (failed_logs or {}).get(tr.id) %}
+        {% if failed_log %}
         <details class="mt-3">
           <summary class="text-xs text-gray-400 cursor-pointer hover:text-gray-300">Tool output (stdout/stderr)</summary>
-          <pre class="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words bg-gray-950 rounded p-3 mt-2 max-h-64 overflow-y-auto">{{ tr.log_output | e }}</pre>
+          <pre class="text-xs text-gray-400 font-mono whitespace-pre-wrap break-words bg-gray-950 rounded p-3 mt-2 max-h-64 overflow-y-auto">{{ failed_log | e }}</pre>
         </details>
         {% endif %}
       </div>

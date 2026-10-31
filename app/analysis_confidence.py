@@ -162,7 +162,7 @@ def task_metadata(task) -> dict:
     if provenance and not provenance.get("engine_version"):
         # Recover only evidence saved with this run; never consult today's assets
         # or change the original snapshot when rendering a historical report.
-        provenance["engine_version"] = reported_engine_version(task.tool_name, task.log_output or "")
+        provenance["engine_version"] = reported_engine_version(task.tool_name, _log_head(task))
     return {
         "task_id": task.id,
         "tool": task.tool_name,
@@ -170,6 +170,20 @@ def task_metadata(task) -> dict:
         "provenance": provenance,
         "diagnostics": _public(task.diagnostics_json, _DIAGNOSTIC_FIELDS),
     }
+
+
+def _log_head(task) -> str:
+    """The log's startup banner, without ever loading the deferred `log_output`.
+
+    A loaded TaskResult and the comparison rows carry `log_head` (the first 2 KB, selected in
+    SQL). An object built in memory has only the `log_output` it was given; it is read from
+    the instance dict, because the attribute itself would issue a deferred load, which on an
+    async session is a MissingGreenlet.
+    """
+    head = getattr(task, "log_head", None)
+    if head is None:
+        head = (getattr(task, "__dict__", {}).get("log_output") or "")[:2048]
+    return head
 
 
 def _public(value: str | None, fields: frozenset[str]) -> dict | None:

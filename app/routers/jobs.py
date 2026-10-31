@@ -674,6 +674,7 @@ async def job_detail(
             "is_duplicate": bool(request.query_params.get("dup")),
             "can_resubmit": await _can_resubmit(db, job.file_id, user),
             "comparison_baseline_id": await comparison_baseline_id(db, job, user),
+            "failed_logs": await _failed_task_logs(db, job, user),
             "tlsh_hash": tlsh_hash,
             "site_settings": site_settings,
             "member_cases": member_cases,
@@ -744,6 +745,23 @@ def _build_job_tabs(user: User | None, comment_count: int, *, show_ai: bool = Fa
     if user is not None:
         tabs.append({"key": "discussion", "label": "Discussions", "badge": comment_count or None, "lazy_event": "loadComments", "icon": "chat"})
     return tabs
+
+
+async def _failed_task_logs(db: AsyncSession, job: AnalysisJob, user: User | None) -> dict[int, str]:
+    """Logs of this job's failed tasks, for the admin-only error panel; `{}` for anyone else.
+
+    `TaskResult.log_output` is deferred, so the poll no longer carries every task's log.
+    A failed tool's log is still shown inline while the rest of the job runs, which the lazy
+    "Show logs" pane cannot do (the 3 s morph would wipe content loaded into it), so its
+    text comes from one query over the failed tasks only.
+    """
+    if user is None or not user.is_superuser:
+        return {}
+    failed = [tr.id for tr in job.task_results if enum_val(tr.status) == "failed"]
+    if not failed:
+        return {}
+    rows = await db.execute(select(TaskResult.id, TaskResult.log_output).where(TaskResult.id.in_(failed), TaskResult.log_output.isnot(None)))
+    return {task_id: log for task_id, log in rows.all() if log}
 
 
 async def _member_case_backlinks(db: AsyncSession, job_id: int, user: User | None) -> list:
@@ -828,6 +846,7 @@ async def job_status_partial(
             "estimated_remaining": estimated_remaining,
             "can_resubmit": await _can_resubmit(db, job.file_id, user),
             "comparison_baseline_id": await comparison_baseline_id(db, job, user),
+            "failed_logs": await _failed_task_logs(db, job, user),
         },
         status_code=286 if is_terminal else 200,
     )
@@ -1091,7 +1110,7 @@ async def get_task_log(
     _: User = Depends(current_superuser),
 ):
     """HTMX partial — lazy-load task log output. Admin only."""
-    tr = await db.get(TaskResult, task_result_id)
+    tr = await db.get(TaskResult, task_result_id, options=[undefer(TaskResult.log_output)])
     if not tr:
         raise HTTPException(404)
 

@@ -307,7 +307,10 @@ class TaskResult(Base):
     findings_count = Column(Integer, nullable=False, default=0)
     duration_ms = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
-    log_output = Column(Text, nullable=True)  # combined stdout + stderr from tool
+    # Combined stdout + stderr, up to MAX_LOG_OUTPUT_BYTES per task. Deferred: the 3 s status
+    # poll loads every task of the job and shows a log only on demand (/jobs/task-results/{id}/log)
+    # or for a failed task's admin panel, which the status routes fetch with one narrow query.
+    log_output = deferred(Column(Text, nullable=True))
     diagnostics_json = Column(Text, nullable=True)  # versioned completion diagnostics; null for historical tasks
     execution_snapshot = Column(Text, nullable=True)  # worker-observed engine/rules/configuration provenance
     started_at = Column(DateTime, nullable=True)
@@ -441,6 +444,12 @@ class Finding(Base):
 # per-finding "Show events" toggle costs nothing and never touches the deferred blob.
 # `routers/intel.py` uses the same mapped property.
 Finding.has_details = column_property(func.coalesce(Finding.__table__.c.details, "") != "")
+
+
+# The tool log's first 2 KB, selected eagerly in place of the deferred log: engine-version
+# recovery (`analysis_confidence.task_metadata`) reads only the startup banner, and it runs
+# inside the status poll for every task. Same out-of-class declaration as `has_details`.
+TaskResult.log_head = column_property(func.substr(TaskResult.__table__.c.log_output, 1, 2048))
 
 
 # ── Intel Entities ────────────────────────────────────────────────────────────
