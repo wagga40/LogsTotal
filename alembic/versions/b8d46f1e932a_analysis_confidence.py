@@ -5,6 +5,7 @@ Revises: a76e3b9c214d
 """
 
 import sqlalchemy as sa
+
 from alembic import op
 
 revision = "b8d46f1e932a"
@@ -14,12 +15,17 @@ depends_on = None
 
 
 def upgrade() -> None:
-    if op.get_bind().dialect.name == "postgresql":
+    conn = op.get_bind()
+    if conn.dialect.name == "postgresql":
         with op.get_context().autocommit_block():
             op.execute("ALTER TYPE taskstatus ADD VALUE IF NOT EXISTS 'PARTIAL'")
-    op.add_column("analysisjob", sa.Column("execution_snapshot", sa.Text(), nullable=True))
-    op.add_column("taskresult", sa.Column("diagnostics_json", sa.Text(), nullable=True))
-    op.add_column("taskresult", sa.Column("execution_snapshot", sa.Text(), nullable=True))
+    # A start with AUTO_MIGRATE=false adds these through the legacy column patcher
+    # (database._migrate_analysis_confidence); the next migrating start must not then
+    # refuse to boot on a duplicate column.
+    inspector = sa.inspect(conn)
+    for table, column in (("analysisjob", "execution_snapshot"), ("taskresult", "diagnostics_json"), ("taskresult", "execution_snapshot")):
+        if column not in {c["name"] for c in inspector.get_columns(table)}:
+            op.add_column(table, sa.Column(column, sa.Text(), nullable=True))
 
 
 def downgrade() -> None:

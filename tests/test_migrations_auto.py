@@ -556,3 +556,18 @@ def test_analysis_confidence_downgrade_preserves_partial_findings(tmp_db):
     command.upgrade(cfg, "head")
     with _connect(tmp_db) as conn:
         assert conn.scalar(text("SELECT diagnostics_json FROM taskresult WHERE id=1")) is None
+
+
+def test_analysis_confidence_migration_tolerates_columns_the_legacy_patcher_added(tmp_db, monkeypatch):
+    """A start with AUTO_MIGRATE=false patches the columns in; turning it back on must still boot."""
+    from alembic import command
+    from app.config import settings
+    from app.migrations import _alembic_config, get_head_revision, run_auto_migrate
+
+    command.upgrade(_alembic_config(), "a76e3b9c214d")
+    monkeypatch.setattr(settings, "auto_migrate", False)
+    run_auto_migrate()
+    monkeypatch.setattr(settings, "auto_migrate", True)
+    run_auto_migrate()
+    with _connect(tmp_db) as conn:
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == get_head_revision()
