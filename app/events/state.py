@@ -19,6 +19,9 @@ from app.events.timeparse import parse_time
 PER_PAGE = 100
 PAGE_MAX = 1_000_000
 MAX_COLUMNS = 30
+#: Fields a stack groups by: beyond three, nearly every combination is unique and the
+#: "rarest first" view stops singling anything out.
+MAX_STACK = 3
 FIXED_LABELS = {"_lt_time": "Time (UTC)", "_lt_host": "Host", "_lt_channel": "Channel", "_lt_eid": "Event ID", "_lt_rid": "Record ID", "_lt_seq": "Sequence", "_lt_line": "Line"}
 DEFAULT_COLUMNS = ("_lt_time", "_lt_host", "_lt_channel", "_lt_eid")
 #: After the fixed columns, the first two of these the store has, as the summary columns.
@@ -36,6 +39,7 @@ class ExploreState:
     ev: int | None = None
     start: datetime | None = None
     end: datetime | None = None
+    stack: tuple[str, ...] = ()
 
     @classmethod
     def from_params(cls, params: Mapping[str, str], columns: set[str]) -> ExploreState:
@@ -52,6 +56,7 @@ class ExploreState:
             ev=_int(params.get("ev"), None, 0, 1 << 62),
             start=parse_time(params.get("from")),
             end=parse_time(params.get("to")),
+            stack=tuple(dict.fromkeys(c for c in (params.get("stack") or "").split(",") if c in columns))[:MAX_STACK],
         )
 
     def columns_or(self, defaults: tuple[str, ...]) -> tuple[str, ...]:
@@ -96,6 +101,8 @@ class ExploreState:
             out.append(("from", state.start.isoformat()))
         if state.end is not None:
             out.append(("to", state.end.isoformat()))
+        if state.stack:
+            out.append(("stack", ",".join(state.stack)))
         return out
 
     def qs(self, **override) -> str:

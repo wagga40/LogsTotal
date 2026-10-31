@@ -20,6 +20,41 @@
 {% elif error %}
 <div class="bg-gray-900 border border-red-900/60 rounded-xl p-4 text-sm text-red-300" role="alert">{{ error }}</div>
 {% else %}
+{% if stack %}
+{#
+  Stacking: every combination of the stacked fields among the matches, rarest first. The
+  long tail is the point: one host where everyone else has fifty, one parent process seen
+  once. A row's Filter narrows the search to that combination.
+#}
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden mb-4">
+  <div class="flex flex-wrap items-center justify-between gap-2 px-3 py-2 border-b border-gray-800 text-xs">
+    <span class="text-gray-300">Stacking
+      {% for f in stack.fields %}<button type="button" class="lt-chip lt-chip--btn ml-1" data-column="{{ f }}" @click="toggleStack($el.dataset.column)" title="Remove {{ column_label(f) }} from the stack">{{ column_label(f) }} ×</button>{% endfor %}
+    </span>
+    <span class="text-gray-500">{{ '{:,}'.format(stack.groups) }} combinations{% if stack.groups > stack.shown %}, the {{ '{:,}'.format(stack.shown) }} rarest shown{% endif %}</span>
+  </div>
+  <div class="lt-scroll lt-scroll--sm overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead class="sticky top-0 bg-gray-900"><tr class="text-gray-400">
+        <th class="text-right font-medium px-2 py-1.5 w-20">Events</th>
+        {% for f in stack.fields %}<th class="text-left font-medium px-2 py-1.5">{{ column_label(f) }}</th>{% endfor %}
+        <th class="w-16"></th>
+      </tr></thead>
+      <tbody>
+        {% for row in stack.rows %}
+        <tr class="border-t border-gray-800/70">
+          <td class="px-2 py-1 text-right tabular-nums text-gray-300">{{ '{:,}'.format(row.n) }}</td>
+          {% for value in row.cells %}<td class="px-2 py-1 font-mono text-gray-300 max-w-[24rem] truncate" title="{{ value }}">{% if value == '' %}<span class="text-gray-600">(none)</span>{% else %}{{ value }}{% endif %}</td>{% endfor %}
+          <td class="px-2 py-1 text-right"><button type="button" class="lt-btn lt-btn--xs" data-term="{{ row.term }}" @click="addTerm($el.dataset.term)" title="Search for this combination">Filter</button></td>
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ stack.fields | length + 2 }}" class="px-4 py-6 text-center text-gray-500">No matching event has these fields.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+{% endif %}
 <div class="flex flex-wrap items-center justify-between gap-2 mb-2 text-xs text-gray-400">
   <span><strong class="text-gray-200 tabular-nums">{{ '{:,}'.format(total) }}</strong> of {{ '{:,}'.format(store.events) }} events{% if store.truncated %} (the index stops at its event cap){% endif %}</span>
   <span class="flex items-center gap-1">

@@ -276,3 +276,17 @@ def test_filter_row_cells_on_fixed_columns_use_the_shortcuts():
     assert filter_term("_lt_time", "<2026-01-02") == "before:2026-01-02"
     assert filter_term("_lt_time", "monday") == "" and filter_term("_lt_rid", "5") == ""
     assert filter_term("Image", "cmd") == "Image:*cmd*"
+
+
+async def test_stacking_lists_combinations_rarest_first(member_client, async_db, events_env):
+    upload_dir, _ = events_env
+    job = await _indexed(async_db, upload_dir)
+    r = await member_client.get(f"/jobs/{job.id}/explore/results", params={"stack": "EventID,User"})
+    assert "Stacking" in r.text and "3 combinations" in r.text
+    # `User` shares its name with the user: shortcut, so its terms use the `.User:` escape.
+    assert 'data-term="EventID:=3 -.User:*"' in r.text, "an event without the field narrows with a negated presence term"
+    assert json.loads(r.headers["HX-Trigger"])["exploreResults"]["qs"] == "stack=EventID%2CUser"
+    narrowed = await member_client.get(f"/jobs/{job.id}/explore/results", params={"q": "EventID:=3 -.User:*"})
+    assert "1</strong> of 4 events" in narrowed.text, "the term finds exactly that combination"
+    capped = await member_client.get(f"/jobs/{job.id}/explore/results", params={"stack": "EventID,Image,User,CommandLine"})
+    assert capped.text.count('title="Remove ') == 3, "three fields at most"

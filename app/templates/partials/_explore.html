@@ -37,6 +37,7 @@
     <input type="hidden" name="dir" value="{{ 'desc' if state.desc else '' }}" x-ref="dir">
     <input type="hidden" name="from" value="{{ state.start.isoformat() if state.start else '' }}" x-ref="from">
     <input type="hidden" name="to" value="{{ state.end.isoformat() if state.end else '' }}" x-ref="to">
+    <input type="hidden" name="stack" value="{{ state.stack | join(',') }}" x-ref="stack">
     {% if store.warnings %}
     <p class="text-xs text-amber-300">{{ store.warnings | join('; ') }}.</p>
     {% endif %}

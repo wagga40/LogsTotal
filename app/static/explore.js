@@ -132,6 +132,17 @@
         submitExplore();
       },
 
+      toggleStack(name) {
+        const input = this.$refs.stack;
+        const fields = input.value ? input.value.split(',') : [];
+        const at = fields.indexOf(name);
+        if (at >= 0) fields.splice(at, 1);
+        else if (fields.length < 3) fields.push(name);
+        else return;
+        input.value = fields.join(',');
+        submitExplore();
+      },
+
       sortBy(name) {
         const sort = this.$refs.sort;
         const dir = this.$refs.dir;

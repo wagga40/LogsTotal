@@ -31,8 +31,8 @@ backup step, migration ordering, and rollback for each deployment path.
 
 - **Explore**: a new tab on the job page that lists every event of the upload, not only
   the matched ones. It has free-text and field search with a documented syntax, a
-  histogram you can drag to zoom, field values with +/- filters, sortable and filterable
-  columns, an event panel with the rules that matched, and CSV/NDJSON export. It is for
+  histogram you can drag to zoom, field values with +/- filters, stacking (combinations of
+  up to three fields, rarest first), sortable and filterable columns, an event panel with the rules that matched, and CSV/NDJSON export. It is for
   members, admins and a job's own submitter. Exports are audited and rate limited. See
   [Explore and event indexes](docs/reference/explore.md).
 - Event indexes, which Explore runs on, **on by default** (`EVENTS_ENABLED`). Every

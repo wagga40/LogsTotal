@@ -9,7 +9,11 @@
   {% else %}
   <div class="flex items-center justify-between text-[10px] text-gray-500 pb-1">
     <span>{{ '{:,}'.format(facet.present) }} of {{ '{:,}'.format(facet.matched) }} matches · ~{{ '{:,}'.format(facet.distinct) }} values</span>
-    <button type="button" class="hover:text-gray-300" @click="open = false" aria-label="Close {{ label }} values">×</button>
+    <span class="flex items-center gap-2">
+      <button type="button" class="hover:text-gray-300 underline decoration-dotted" data-column="{{ field }}" @click="toggleStack($el.dataset.column)"
+              title="Count every combination of this field (and up to two more), rarest first">Stack</button>
+      <button type="button" class="hover:text-gray-300" @click="open = false" aria-label="Close {{ label }} values">×</button>
+    </span>
   </div>
   {% for r in rows %}
   <div class="flex items-center gap-1 text-[11px]">

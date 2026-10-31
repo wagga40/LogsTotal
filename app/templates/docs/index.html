@@ -354,6 +354,7 @@
       <ul>
         <li><strong>Histogram</strong>: events per time slot above the line, detected events below. Drag across it to zoom into that range; <strong>Reset zoom</strong> returns to the whole log.</li>
         <li><strong>Fields</strong> lists every field with the share of events that have it. Click a name for its most frequent values among the current results, then <strong>+</strong> to keep only a value or <strong>-</strong> to exclude it. The checkbox shows the field as a column.</li>
+        <li><strong>Stack</strong>, in a field&rsquo;s values, counts every combination of up to three fields among the results, rarest first: the one host where every other has fifty, the parent process seen once. <strong>Filter</strong> on a row searches for that combination.</li>
         <li><strong>Table</strong>: click a header to sort, type in the cell under it and press Enter to filter that column (the filter becomes a term in the search box). Click a row for the whole event: the rules that matched it, every field grouped by where it came from, its JSON, and a button for everything within five minutes on the same host.</li>
         <li><strong>Keys</strong>: <kbd>/</kbd> focuses the search, <kbd>j</kbd> and <kbd>k</kbd> move between rows, <kbd>Enter</kbd> opens one, <kbd>Esc</kbd> closes it, <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn the page.</li>
         <li><strong>CSV</strong> exports the visible columns of every matching event (up to 500,000); <strong>NDJSON</strong> every field (up to 100,000). Exports are recorded in the activity log.</li>

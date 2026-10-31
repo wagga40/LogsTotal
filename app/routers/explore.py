@@ -51,6 +51,7 @@ logger = logging.getLogger(__name__)
 
 NOT_FOUND = "Job not found."
 CSV_MAX_ROWS = 500_000
+STACK_ROWS = 1000
 NDJSON_MAX_ROWS = 100_000
 FIELDS_SHOWN = 60
 _TECHNIQUE = re.compile(r"^t\d{4}(?:\.\d{3})?$")
@@ -191,13 +192,28 @@ def _results_context(view: StoreView, schema: Schema, state: ExploreState) -> di
         if state.page > pages:
             state = replace(state, page=pages)
         page = engine.page(view, compiled, offset=state.offset, limit=PER_PAGE, columns=columns, sort=state.sort, desc=state.desc)
+        stack = _stack(engine, view, compiled, state) if state.stack else None
     except EngineBusy:
         return {"busy": True, "columns": columns}
     except EngineTimeout:
         return {"error": f"That search took longer than {settings.events_query_timeout_seconds} s. Narrow it with a field or a time range.", "columns": columns}
     except EngineError as exc:
         return {"error": str(exc), "columns": columns}
-    return {"rows": page.rows, "total": total, "pages": pages, "state": state, "columns": columns}
+    return {"rows": page.rows, "total": total, "pages": pages, "state": state, "columns": columns, "stack": stack}
+
+
+def _stack(engine, view: StoreView, compiled, state: ExploreState) -> dict:
+    """Value combinations of the stacked fields among the matches, rarest first, each with the
+    terms that narrow the search to it (built here, carried in data-term)."""
+    result = engine.stack(view, compiled, list(state.stack), limit=STACK_ROWS)
+    rows = []
+    for values, n in result["rows"]:
+        terms = [
+            filter_term(field, "=" + _cell(v)) if v is not None else ("" if field.startswith("_lt_") else f"-{column_filter_to_terms(field, '*')}")
+            for field, v in zip(state.stack, values, strict=True)
+        ]
+        rows.append({"cells": [_cell(v) for v in values], "n": n, "term": " ".join(t for t in terms if t)})
+    return {"fields": list(state.stack), "rows": rows, "groups": result["groups"], "shown": len(rows)}
 
 
 def _render(request: Request, template: str, context: dict, *, headers: dict | None = None) -> HTMLResponse:

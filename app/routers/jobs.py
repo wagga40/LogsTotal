@@ -691,7 +691,7 @@ async def job_detail(
     )
 
 
-_EXPLORE_PARAMS = frozenset({"q", "det", "cols", "sort", "dir", "page", "ev", "from", "to"})
+_EXPLORE_PARAMS = frozenset({"q", "det", "cols", "sort", "dir", "page", "ev", "from", "to", "stack"})
 
 
 def _compact_count(n: int) -> str:
