@@ -54,11 +54,14 @@ async def _known_sets(db: AsyncSession) -> tuple[set[str], set[int], set[int]]:
 
 
 async def _usage(db: AsyncSession, *, force: bool) -> storage_usage.UsageReport:
+    from app.events.store import known_store_prefixes_async
+
     filenames, job_ids, active = await _known_sets(db)
+    stores = await known_store_prefixes_async(db)
 
     def _run() -> storage_usage.UsageReport:
         return storage_usage.cached_usage(
-            gather=lambda: storage_usage.gather_usage_sync(known_filenames=filenames, known_job_ids=job_ids, active_job_ids=active),
+            gather=lambda: storage_usage.gather_usage_sync(known_filenames=filenames, known_job_ids=job_ids, active_job_ids=active, known_event_stores=stores),
             force=force,
         )
 

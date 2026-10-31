@@ -45,6 +45,8 @@ _JOB_DIR_RE = re.compile(r"^job_(\d+)[/\\]")
 #: Per-download private copies made by the S3 backend, named `{pid}-{uuid}`.
 _S3_CACHE_PREFIX = ".s3_cache"
 _HEALTH_PROBE_PREFIX = ".health-probe-"
+_EVENT_STORE_PREFIX = "events"
+_EVENTS_BUILD_PREFIX = ".events_build"
 _TMP_SPOOL_RE = re.compile(r"^tmp\w*\.upload$")
 
 
@@ -83,6 +85,11 @@ class UsageReport:
     orphan_job_bytes: dict[int, int] = field(default_factory=dict)
     #: `(key, size)` of the stray non-job files that can be removed (spools, stale cache).
     removable: list[tuple[str, int]] = field(default_factory=list)
+    #: Event stores (`events/{sha256}/{gen}/`): derived copies of uploads, counted apart.
+    event_store_bytes: int = 0
+    event_store_count: int = 0
+    #: `(sha256, gen)` of store directories no EventStore row names; the purge removes them.
+    orphan_event_stores: dict[tuple[str, str], int] = field(default_factory=dict)  # -> bytes
     truncated: bool = False
     scanned: int = 0
     free_bytes: int | None = None
@@ -118,6 +125,8 @@ def classify_objects(
     now: float,
     top_n: int = 10,
     worker_alive_ttl: int = 180,
+    known_event_stores: frozenset[str] | set[str] = frozenset(),
+    build_stale_seconds: float = 2 * 3600,
 ) -> UsageReport:
     """Split the stored objects into uploads, outputs and leftovers. Pure.
 
@@ -157,6 +166,16 @@ def classify_objects(
         label="Abandoned upload spools",
         detail="Partial uploads whose request died before the file was moved into place.",
     )
+    orphan_stores = OrphanGroup(
+        kind="orphan_event_store",
+        label="Event stores no upload owns",
+        detail="Explore's copies of uploads whose database row is gone. Derived data: rebuilt from the upload whenever it is needed.",
+    )
+    stale_builds = OrphanGroup(
+        kind="events_build",
+        label="Abandoned event-store builds",
+        detail="Staging files of a store build whose worker died before it finished.",
+    )
     stale_cache = OrphanGroup(
         kind="s3_cache",
         label="Stale worker download cache",
@@ -177,6 +196,26 @@ def classify_objects(
             report.other_count += 1
             if now - obj.mtime > max(worker_alive_ttl, 180) * 4:
                 _add(stale_cache, key, obj.size)
+                report.removable.append((key, obj.size))
+            continue
+
+        if key.startswith(_EVENT_STORE_PREFIX + "/"):
+            # Counted apart from uploads: without this branch every store file would be an
+            # "uploaded log with no row" — and offered for deletion as one.
+            report.event_store_bytes += obj.size
+            report.event_store_count += 1
+            parts = key.split("/")
+            prefix = "/".join(parts[:3])
+            if len(parts) >= 4 and prefix not in known_event_stores:
+                _add(orphan_stores, key, obj.size)
+                report.orphan_event_stores[(parts[1], parts[2])] = report.orphan_event_stores.get((parts[1], parts[2]), 0) + obj.size
+            continue
+
+        if key.startswith(_EVENTS_BUILD_PREFIX + "/"):
+            report.other_bytes += obj.size
+            report.other_count += 1
+            if now - obj.mtime > build_stale_seconds:
+                _add(stale_builds, key, obj.size)
                 report.removable.append((key, obj.size))
             continue
 
@@ -215,7 +254,7 @@ def classify_objects(
     report.largest_uploads = sorted(upload_sizes, key=lambda pair: pair[1], reverse=True)[:top_n]
     report.largest_jobs = sorted(job_sizes.items(), key=lambda pair: pair[1], reverse=True)[:top_n]
 
-    report.orphans = [group for group in (orphan_outputs, missing_owner, stale_spools, stale_cache) if group.count]
+    report.orphans = [group for group in (orphan_outputs, missing_owner, orphan_stores, stale_builds, stale_spools, stale_cache) if group.count]
     return report
 
 
@@ -232,7 +271,7 @@ _lock = threading.Lock()
 _cached: UsageReport | None = None
 
 
-def gather_usage_sync(*, known_filenames: set[str], known_job_ids: set[int], active_job_ids: set[int]) -> UsageReport:
+def gather_usage_sync(*, known_filenames: set[str], known_job_ids: set[int], active_job_ids: set[int], known_event_stores: set[str] | None = None) -> UsageReport:
     """Walk the backend and classify. Blocking — call through a threadpool."""
     report = UsageReport(backend=settings.storage_backend, ran_at=time.time())
     try:
@@ -244,6 +283,8 @@ def gather_usage_sync(*, known_filenames: set[str], known_job_ids: set[int], act
             active_job_ids=active_job_ids,
             now=time.time(),
             worker_alive_ttl=settings.worker_alive_ttl,
+            known_event_stores=known_event_stores or set(),
+            build_stale_seconds=2 * settings.events_build_timeout_seconds,
         )
     except Exception as exc:
         report.error = str(exc)

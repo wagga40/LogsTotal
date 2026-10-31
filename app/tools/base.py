@@ -6,7 +6,6 @@ import contextlib
 import logging
 import os
 import platform
-import signal
 import subprocess
 import threading
 import time
@@ -88,17 +87,10 @@ CANCELLED_ERROR = "cancelled"
 
 
 def _kill_process_group(proc: subprocess.Popen) -> None:
-    """SIGKILL the child's whole process group.
+    """SIGKILL the child's whole process group; see app/procutil.py."""
+    from app.procutil import kill_process_group
 
-    ``start_new_session=True`` makes the child a session/group leader
-    (pgid == pid), so this also kills grandchildren that would otherwise
-    survive and keep the output pipes open."""
-    try:
-        os.killpg(proc.pid, signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    except PermissionError:
-        proc.kill()
+    kill_process_group(proc)
 
 
 @lru_cache(maxsize=1)
@@ -695,61 +687,13 @@ class ToolAdapter:
     ) -> tuple[int, str, str]:
         """Run a subprocess and return (returncode, stdout, stderr).
 
-        The child runs in its own process group so the timeout (or a job
-        cancellation) kills the whole tree — ``subprocess.run(timeout=...)``
-        only kills the direct child, and a grandchild inheriting the output
-        pipes then blocks the drain indefinitely.
+        The child runs in its own process group so the timeout (or a job cancellation) kills
+        the whole tree. The loop itself lives in `app/procutil.py::run_supervised`, shared
+        with the event-store build.
         """
-        if cancel_event is not None and cancel_event.is_set():
-            return -1, "", CANCELLED_ERROR
-        with contextlib.ExitStack() as stack:
-            stdout_file = stack.enter_context(stdout_path.open("wb")) if stdout_path is not None else subprocess.PIPE
-            try:
-                proc = subprocess.Popen(
-                    cmd,
-                    stdout=stdout_file,
-                    env=env,
-                    stderr=subprocess.PIPE,
-                    text=True,
-                    shell=False,  # Security invariant: never execute tool commands via a shell.
-                    start_new_session=True,
-                )
-            except FileNotFoundError as exc:
-                return -1, "", f"Executable not found: {exc}"
-            except PermissionError:
-                binary_path = cmd[0] if cmd else "?"
-                return (
-                    -1,
-                    "",
-                    f"Binary is not executable: {binary_path}. Try: chmod +x {binary_path}",
-                )
+        from app.procutil import run_supervised
 
-            deadline = time.monotonic() + timeout
-            while True:
-                # communicate(timeout=tick), never wait(): wait() with full pipe
-                # buffers deadlocks; communicate() is safely re-callable after
-                # TimeoutExpired and keeps draining in reader threads.
-                tick = max(0.05, min(1.0, deadline - time.monotonic()))
-                try:
-                    stdout, stderr = proc.communicate(timeout=tick)
-                    return proc.returncode, stdout or "", stderr
-                except subprocess.TimeoutExpired:
-                    cancelled = cancel_event is not None and cancel_event.is_set()
-                    if not cancelled and time.monotonic() < deadline:
-                        continue
-                    _kill_process_group(proc)
-                    try:
-                        proc.communicate(timeout=5)  # group is dead → pipes close → fast drain
-                    except subprocess.TimeoutExpired:
-                        # A double-forked daemon escaped the group and still holds
-                        # the pipes — give up on output rather than block the worker.
-                        for stream in (proc.stdout, proc.stderr):
-                            if stream is not None:
-                                with contextlib.suppress(Exception):
-                                    stream.close()
-                    if cancelled:
-                        return -1, "", CANCELLED_ERROR
-                    return -1, "", f"Command timed out after {timeout}s"
+        return run_supervised(cmd, timeout=timeout, cancel_event=cancel_event, stdout_path=stdout_path, env=env)
 
     @staticmethod
     def _normalize_severity(raw: Any) -> str:

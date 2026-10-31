@@ -1753,9 +1753,14 @@ async def _delete_job(db: AsyncSession, job: AnalysisJob) -> None:
     if remaining is None:
         log_file = await db.get(LogFile, file_id)
         if log_file:
+            from app.events.store import delete_store_files, stores_for_file_async
+
+            # The upload's event stores go with it: rows before the commit, files after.
+            doomed_stores = await stores_for_file_async(db, file_id)
             await run_in_threadpool(st.delete_sync, log_file.stored_filename)
             await db.delete(log_file)
             await db.commit()
+            await run_in_threadpool(delete_store_files, doomed_stores)
 
 
 # ── Analyst tags ─────────────────────────────────────────────────────────────

@@ -181,6 +181,15 @@ _SPECS: tuple[TaskSpec, ...] = (
         notes="Hourly; re-fetches each list whose own interval has elapsed. A failed fetch keeps the values it has.",
     ),
     TaskSpec(
+        key="event_store_sweep_periodic",
+        label="Event store sweep",
+        category=SCHEDULED,
+        notes="Every 10 min: re-enqueues dropped builds, fails dead ones, retries, evicts by EVENTS_RETENTION_DAYS and EVENTS_MAX_TOTAL_MB.",
+    ),
+    TaskSpec(
+        key="build_event_store", label="Build event store", category=ANALYSIS, args=("store_id",), notes="One upload's events as Parquet, beside its analysis; app/events/store.py."
+    ),
+    TaskSpec(
         key="optimize_database_periodic",
         label="Optimise the database",
         category=SCHEDULED,

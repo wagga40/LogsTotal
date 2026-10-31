@@ -239,6 +239,21 @@ class Settings(BaseSettings):
     # handle plain and compressed files alike, so turning this off only stops new compression.
     raw_output_compression: bool = True
 
+    # Event stores (app/events/): every event of an upload, as Parquet. A derived cache,
+    # rebuildable from the upload, built by a subprocess beside the detection tools.
+    events_enabled: bool = False
+    events_build_timeout_seconds: int = 3600
+    events_build_memory_mb: int = 1024
+    events_build_max_rss_mb: int = 2048
+    events_build_threads: int = 2
+    events_build_max_concurrent: int = 1
+    events_min_free_disk_mb: int = 2048
+    events_max_events: int = 5_000_000
+    events_max_columns: int = 4096
+    events_text_index: bool = True
+    events_retention_days: int = 0
+    events_max_total_mb: int = 0
+
     @model_validator(mode="after")
     def _check_and_derive(self) -> "Settings":
         if not self.secret_key or len(self.secret_key) < 8:

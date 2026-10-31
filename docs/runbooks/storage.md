@@ -58,6 +58,7 @@ Workers run these tasks on a fixed schedule. They run only while at least one wo
 | 05:15 | Finished background task records | 30 days | `BACKGROUND_TASK_RETENTION_DAYS` |
 | 05:30 | Uploaded log files **and their jobs** | never (off) | `UPLOAD_RETENTION_DAYS` |
 | every hour at :20 | — refreshes rule lists that have a source URL | | per list |
+| every 10 minutes | Event stores idle past the window, or the least recently opened past the size cap (rebuilt from the upload on demand); also retries failed builds | never (off) | `EVENTS_RETENTION_DAYS`, `EVENTS_MAX_TOTAL_MB` |
 
 For each setting, `0` turns that task off and keeps the data forever. `UPLOAD_RETENTION_DAYS` is `0` by default: the other tasks remove derived data, while this one deletes the logs users submitted, so it must be switched on deliberately. The windows marked *fixed* cannot be changed.
 

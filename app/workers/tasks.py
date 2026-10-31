@@ -746,6 +746,10 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
         # on local disk it is the stored file itself and release_sync is a no-op.
         loaded_path = file_path
 
+        # The event store builds beside the tools, on any free worker thread, once per file
+        # and log type however many jobs run on it. Never fails the job.
+        _request_event_store(log_file.id, enum_val(job.effective_log_type) if job.effective_log_type else enum_val(log_file.log_type), job_id)
+
         task_configs = parse_workflow_yaml(workflow.tasks_yaml)
         if not task_configs:
             _fail_job(db, job, "Workflow has no tasks defined.")
@@ -1877,6 +1881,42 @@ def backfill_compress_db(bg_task_id: int | None = None):
         db.close()
 
 
+def _request_event_store(log_file_id: int, log_type: str, job_id: int) -> None:
+    """Ask for this upload's event store; on a session of its own, so it cannot touch the job's.
+
+    Never raises: the store is an optional, derived view, and a failure here must cost the
+    analysis nothing. Committed before the enqueue so the task always finds its row.
+    """
+    if not settings.events_enabled:
+        return
+    from app.events.store import request_build_sync
+
+    db = get_sync_session()
+    try:
+        store_id = request_build_sync(db, log_file_id=log_file_id, log_type=log_type, job_id=job_id)
+        db.commit()
+        if store_id is not None:
+            build_event_store(store_id)
+    except Exception:
+        _log.warning("Job %d: could not request the event store", job_id, exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def build_event_store(store_id: int):
+    """Build one upload's event store in a supervised subprocess (app/events/store.py)."""
+    from app.events.store import run_build
+
+    db = get_sync_session()
+    try:
+        outcome = run_build(db, store_id)
+        _log.info("Event store %d: %s", store_id, outcome)
+    finally:
+        db.close()
+
+
 @huey.task(expires=settings.huey_queue_expiry)
 def backfill_compress_outputs(bg_task_id: int | None = None):
     """Compress the raw tool outputs of jobs that finished before RAW_OUTPUT_COMPRESSION.
@@ -2960,6 +3000,7 @@ def purge_orphaned_storage(bg_task_id: int | None = None):
     and between rendering it and pressing the button a job can finish and legitimately
     claim a directory. Jobs still `pending` or `running` are excluded for that reason.
     """
+    from app.events.store import known_store_prefixes_sync
     from app.models import LogFile
     from app.storage import get_storage
     from app.storage_usage import classify_objects
@@ -2979,6 +3020,8 @@ def purge_orphaned_storage(bg_task_id: int | None = None):
             active_job_ids=active_jobs,
             now=time.time(),
             worker_alive_ttl=settings.worker_alive_ttl,
+            known_event_stores=known_store_prefixes_sync(db),
+            build_stale_seconds=2 * settings.events_build_timeout_seconds,
         )
 
         # Counted from what is actually deleted below, never from the report's total: the
@@ -3002,6 +3045,17 @@ def purge_orphaned_storage(bg_task_id: int | None = None):
                 _finish_cancelled(db, bg_task_id, f"cancelled after {removed_jobs} directories")
                 return
 
+        # Event stores: re-checked against the rows just before deleting, like job directories.
+        still_owned = known_store_prefixes_sync(db)
+        for sha256, gen in sorted(report.orphan_event_stores):
+            if f"events/{sha256}/{gen}" in still_owned:
+                continue
+            try:
+                if st.delete_event_store_sync(sha256, gen):
+                    removed_files += 1
+                    freed += report.orphan_event_stores[(sha256, gen)]
+            except ValueError:
+                continue  # not a store-shaped path; never delete what the regex refuses
         for key, size in report.removable:
             try:
                 st.delete_sync(key)
@@ -3081,6 +3135,29 @@ def vacuum_database(bg_task_id: int | None = None):
 #: and rewrites the file, and a web write waiting longer than SQLITE_BUSY_TIMEOUT_MS returns a
 #: 500. A few seconds at this size; the storage page flags anything larger for an admin.
 _AUTO_VACUUM_MAX_BYTES = 256 * 1024 * 1024
+
+
+@huey.periodic_task(crontab(minute="*/10"))
+def event_store_sweep_periodic():
+    """Every 10 minutes: re-enqueue dropped builds, fail dead ones, retry, evict (app/events/store.py)."""
+    with _ScheduledRun("event_store_sweep_periodic") as run:
+        run.detail = _event_store_sweep_body() or ""
+
+
+def _event_store_sweep_body() -> str:
+    from app.events.store import sweep_sync
+
+    db = get_sync_session()
+    try:
+        requeue, summary = sweep_sync(db)
+        for store_id in requeue:
+            build_event_store(store_id)
+        return summary
+    except Exception:
+        db.rollback()
+        raise  # so _ScheduledRun records it as failed rather than "ok"
+    finally:
+        db.close()
 
 
 @huey.periodic_task(crontab(hour="4", minute="10"))
@@ -3182,6 +3259,7 @@ def _clear_job_references(db, job_id: int) -> None:
 def _prune_old_uploads_periodic_body():
     from datetime import timedelta
 
+    from app.events.store import delete_store_files, stores_for_file_sync
     from app.models import LogFile
     from app.storage import get_storage
 
@@ -3206,6 +3284,7 @@ def _prune_old_uploads_periodic_body():
             # while leaving its row pointing at nothing, retried every night, forever.
             doomed_jobs: list[int] = []
             doomed_uploads: list[str] = []
+            doomed_stores: list[tuple[str, str]] = []
             for lf in batch:
                 jobs = db.query(AnalysisJob).filter(AnalysisJob.file_id == lf.id).all()
                 # A job still running owns its file; leave the pair for the next sweep
@@ -3221,10 +3300,12 @@ def _prune_old_uploads_periodic_body():
                     _clear_job_references(db, job.id)
                     db.delete(job)
                     doomed_jobs.append(job.id)
+                doomed_stores.extend(stores_for_file_sync(db, lf.id))
                 db.delete(lf)
                 doomed_uploads.append(lf.stored_filename)
                 removed += 1
             db.commit()
+            delete_store_files(doomed_stores)
             for job_id in doomed_jobs:
                 st.delete_job_outputs_sync(job_id)
                 forget_job_keys(job_id)

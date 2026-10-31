@@ -29,6 +29,13 @@ backup step, migration ordering, and rollback for each deployment path.
   the finding events, evidence samples, analytics and rule texts written before they were
   stored compressed. Run it once after upgrading, then Vacuum.
 
+- Event stores, the groundwork for Explore, **off by default** (`EVENTS_ENABLED`). With it
+  on, every upload's events are parsed by LogsTotal itself (EVTX, JSON, winlogbeat,
+  EVTX-XML, Sysmon for Linux, auditd, journald, syslog) into Parquet, in a subprocess
+  beside the detection tools. It is built once per file, rebuilt on demand, and evicted
+  by `EVENTS_RETENTION_DAYS` and `EVENTS_MAX_TOTAL_MB`. A 213 MB EVTX took 6.5 s and
+  became an 11.5 MB store.
+
 ### Fixed
 
 - Missing or unreadable engine output no longer becomes a successful zero-match result.

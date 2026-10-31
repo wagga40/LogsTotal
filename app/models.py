@@ -6,6 +6,7 @@ from datetime import datetime
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -294,6 +295,51 @@ class AnalysisJob(Base):
 
 
 # ── Task Result ───────────────────────────────────────────────────────────────────
+
+
+class EventStoreStatus(str, enum.Enum):
+    PENDING = "pending"
+    BUILDING = "building"
+    READY = "ready"
+    FAILED = "failed"
+    EVICTED = "evicted"
+
+
+class EventStore(Base):
+    """Every event of one upload, as Parquet (`app/events/`), built once per file and log type.
+
+    A derived cache: it can be rebuilt from the upload at any time, so eviction loses nothing
+    and a job's detections are joined onto it from its `event_links` artifact. Keyed by the
+    *job's* effective log type, never `LogFile.log_type`, which a re-upload overwrites. Status
+    is a plain string, not an Enum column, so PostgreSQL needs no ALTER TYPE when it grows.
+    """
+
+    __tablename__ = "event_store"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    log_file_id = Column(Integer, ForeignKey("logfile.id"), nullable=False)
+    log_type = Column(String(32), nullable=False)
+    builder_version = Column(Integer, nullable=False)
+    status = Column(String(16), nullable=False, default=EventStoreStatus.PENDING.value)
+    #: Names the published directory (`events/{sha256}/{gen}/`); a rebuild gets a new one.
+    gen = Column(String(64), nullable=True)
+    event_count = Column(BigInteger, nullable=True)
+    column_count = Column(Integer, nullable=True)
+    bytes = Column(BigInteger, nullable=True)
+    time_min = Column(DateTime, nullable=True)
+    time_max = Column(DateTime, nullable=True)
+    truncated = Column(Boolean, nullable=False, default=False)
+    warnings_json = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    #: The job whose claim asked for it — a plain int, not a key: the job may be deleted.
+    requested_by_job_id = Column(Integer, nullable=True)
+    requested_at = Column(DateTime, nullable=False, server_default=func.now())
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    last_accessed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint("log_file_id", "log_type", "builder_version", name="uq_event_store_file_type_version"),)
 
 
 class JobArtifact(Base):

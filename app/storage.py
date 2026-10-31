@@ -6,9 +6,11 @@ S3Storage: uses boto3 to PUT/GET from any S3-compatible endpoint (Garage, Seawee
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import logging
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -117,6 +119,21 @@ class StorageBackend(ABC):
         """Remove stored tool outputs for a job. Returns True if anything was removed."""
 
     @abstractmethod
+    def publish_event_store_sync(self, sha256: str, gen: str, local_dir: Path) -> int:
+        """Move a validated store into place under `events/{sha256}/{gen}/`; return its bytes.
+
+        The manifest goes last, so a reader never sees one before every file it lists.
+        """
+
+    @abstractmethod
+    def event_store_dir_sync(self, sha256: str, gen: str) -> Path | None:
+        """The store's local directory (local backend), or None where it is not on this disk."""
+
+    @abstractmethod
+    def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
+        """Remove one store's files. The only delete under `events/`: no general prefix delete."""
+
+    @abstractmethod
     def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
         """Compress a finished job's plain tool outputs in place; return (files, bytes saved).
 
@@ -138,6 +155,18 @@ class StorageBackend(ABC):
         Blocking on both backends: a local walk, and one S3 round trip per 1,000 keys.
         Callers in the web tier must go through `run_in_threadpool`.
         """
+
+
+_STORE_SHA = re.compile(r"^[0-9a-f]{64}$")
+_STORE_GEN = re.compile(r"^[a-z_]+-b\d+-[0-9a-f]{8}$")
+EVENT_STORE_PREFIX = "events"
+
+
+def event_store_prefix(sha256: str, gen: str) -> str:
+    """`events/{sha256}/{gen}` after checking both parts: this names what a delete removes."""
+    if not _STORE_SHA.match(sha256 or "") or not _STORE_GEN.match(gen or ""):
+        raise ValueError(f"not an event store location: {sha256!r}/{gen!r}")
+    return f"{EVENT_STORE_PREFIX}/{sha256}/{gen}"
 
 
 class LocalStorage(StorageBackend):
@@ -214,6 +243,26 @@ class LocalStorage(StorageBackend):
         from app.tools.output_files import compress_job_outputs
 
         return compress_job_outputs(self._dir / f"job_{job_id}")
+
+    def publish_event_store_sync(self, sha256: str, gen: str, local_dir: Path) -> int:
+        target = self._dir / event_store_prefix(sha256, gen)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Staging lives under upload_dir too, so this is a rename on one filesystem: the store
+        # appears whole or not at all.
+        os.replace(local_dir, target)
+        return sum(p.stat().st_size for p in target.iterdir() if p.is_file())
+
+    def event_store_dir_sync(self, sha256: str, gen: str) -> Path | None:
+        target = self._dir / event_store_prefix(sha256, gen)
+        return target if target.is_dir() else None
+
+    def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
+        target = self._dir / event_store_prefix(sha256, gen)
+        existed = target.is_dir()
+        shutil.rmtree(target, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            target.parent.rmdir()  # the sha256 directory, once its last gen is gone
+        return existed
 
     def iter_objects_sync(self, prefix: str | None = None) -> Iterator[StoredObject]:
         root = self._dir / prefix if prefix else self._dir
@@ -431,6 +480,33 @@ class S3Storage(StorageBackend):
                 continue
             removed = True
             self._s3.delete_objects(Bucket=self._bucket, Delete={"Objects": objs})
+        return removed
+
+    def publish_event_store_sync(self, sha256: str, gen: str, local_dir: Path) -> int:
+        from app.events.manifest import MANIFEST
+
+        prefix = event_store_prefix(sha256, gen)
+        files = sorted((p for p in local_dir.iterdir() if p.is_file()), key=lambda p: p.name == MANIFEST)
+        total = 0
+        for path in files:  # the manifest sorts last
+            self._s3.upload_file(str(path), self._bucket, f"{prefix}/{path.name}")
+            total += path.stat().st_size
+        shutil.rmtree(local_dir, ignore_errors=True)
+        return total
+
+    def event_store_dir_sync(self, sha256: str, gen: str) -> Path | None:
+        event_store_prefix(sha256, gen)  # validates
+        return None  # not on this disk; the web tier's store cache fetches it
+
+    def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
+        prefix = event_store_prefix(sha256, gen) + "/"
+        paginator = self._s3.get_paginator("list_objects_v2")
+        removed = False
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            objs = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if objs:
+                removed = True
+                self._s3.delete_objects(Bucket=self._bucket, Delete={"Objects": objs})
         return removed
 
     def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
