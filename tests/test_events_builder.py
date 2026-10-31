@@ -193,3 +193,22 @@ def test_every_log_type_has_its_own_parser():
     stats: dict = {}
     events = list(parsers.iter_events(ROOT / "samples/windows/security_events.xml", LogType.XML_EVTX.value, stats=stats, spellings={}))
     assert events and events[0][1]["eid"] is not None, "parsed as events, not as lines"
+
+
+def test_a_journald_binary_length_never_sizes_an_allocation(tmp_path, monkeypatch):
+    """The 64-bit length of a binary field comes from the upload: a crafted one claiming
+    exabytes is counted as an error, never read; a long one is cut, and parsing goes on."""
+    import struct
+
+    from app.events import parsers
+
+    crafted = tmp_path / "crafted.export"
+    crafted.write_bytes(b"__CURSOR=s=1\nMESSAGE\n" + struct.pack("<Q", 1 << 62) + b"x\n\n")
+    stats = {"errors": 0}  # iter_events seeds the counter; this calls the parser directly
+    assert list(parsers._journald_export(crafted, stats, {})) == [] and stats["errors"] == 1
+    monkeypatch.setattr(parsers, "_MAX_BINARY_FIELD", 4)
+    long = tmp_path / "long.export"
+    long.write_bytes(b"__CURSOR=s=1\nMESSAGE\n" + struct.pack("<Q", 10) + b"0123456789\nAFTER=kept\n\n")
+    stats = {"errors": 0}
+    ((flat, _fixed),) = list(parsers._journald_export(long, stats, {}))
+    assert stats["errors"] == 0 and "0123" in flat.values() and "kept" in flat.values()

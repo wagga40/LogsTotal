@@ -10,6 +10,7 @@ A malformed record is counted in `stats["errors"]` and skipped; it never stops t
 
 from __future__ import annotations
 
+import os
 import re
 import xml.etree.ElementTree as ET
 from collections.abc import Iterator
@@ -360,11 +361,22 @@ def _journald(path: Path, stats: dict, spellings: dict) -> Iterator[Parsed]:
         yield flatten(fields, root=None, spellings=spellings), _journald_fixed(fields, None)
 
 
+#: The most of one binary journald field kept. The text index keeps 4 KB of a value anyway,
+#: and the declared length comes from the upload: it must never size an allocation.
+_MAX_BINARY_FIELD = 1 << 20
+
+
 def _journald_export(path: Path, stats: dict, spellings: dict) -> Iterator[Parsed]:
     """`journalctl -o export`: KEY=value lines, a blank line between entries; a binary field
-    is its name alone on a line, then a little-endian 64-bit length, the bytes and a newline."""
+    is its name alone on a line, then a little-endian 64-bit length, the bytes and a newline.
+
+    The length is the upload's word, so it is checked against the bytes the file actually
+    has (past them: a truncated or crafted file, counted and abandoned) and at most
+    `_MAX_BINARY_FIELD` of it is read, the rest skipped.
+    """
     fields: dict = {}
     with path.open("rb") as stream:
+        file_size = os.fstat(stream.fileno()).st_size
         while True:
             raw = stream.readline()
             if not raw or raw == b"\n":
@@ -383,7 +395,13 @@ def _journald_export(path: Path, stats: dict, spellings: dict) -> Iterator[Parse
             if len(size_bytes) < 8:
                 stats["errors"] += 1
                 return
-            data = stream.read(int.from_bytes(size_bytes, "little"))
+            size = int.from_bytes(size_bytes, "little")
+            if size > file_size - stream.tell():
+                stats["errors"] += 1
+                return
+            data = stream.read(min(size, _MAX_BINARY_FIELD))
+            if size > _MAX_BINARY_FIELD:
+                stream.seek(size - _MAX_BINARY_FIELD, os.SEEK_CUR)
             stream.read(1)
             fields[line.decode("utf-8", "replace")] = data.decode("utf-8", "replace")
 
