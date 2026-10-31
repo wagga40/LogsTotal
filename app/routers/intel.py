@@ -2297,7 +2297,8 @@ async def entity_ioc_pack(
         .all()
     )
 
-    tags = (await db.execute(select(EntityTag).where(EntityTag.entity_id == entity_id))).scalars().all()
+    # Explicit order: SQLite used to return insertion order via an index now dropped (e064602640a4).
+    tags = (await db.execute(select(EntityTag).where(EntityTag.entity_id == entity_id).order_by(EntityTag.id))).scalars().all()
 
     threat_context = await _compute_entity_threat_context(db, [row[0] for row in (await db.execute(all_job_ids_q)).all()])
     focal_categories = [c["key"] for c in threat_context.get("categories", [])]
@@ -2396,7 +2397,8 @@ async def entity_process_tree_partial(
 
     # Resolved to plain strings *before* the threadpool hop — the closure it hands off must
     # never touch an ORM instance (a deferred/lazy read there raises MissingGreenlet).
-    forest = await load_job_forest(job, entity_type=entity.entity_type, entity_value=entity.value)
+    # Member-gated, and the job scope was validated above: the full forest when one exists.
+    forest = await load_job_forest(job, db=db, entity_type=entity.entity_type, entity_value=entity.value, full=True)
     return templates.TemplateResponse(
         request,
         "partials/_process_tree.html",

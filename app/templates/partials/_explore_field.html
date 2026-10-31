@@ -1,0 +1,29 @@
+{#
+  One field's most frequent values among the current matches, under its name in the Fields
+  panel. + narrows the search to a value, - excludes it; both terms are built server-side
+  and carried in `data-term`, so a value never becomes part of an Alpine expression.
+#}
+<div class="px-2 pb-2 pt-1 space-y-0.5 bg-gray-950/40 border-y border-gray-800/60">
+  {% if error %}
+  <p class="text-[11px] text-red-300">{{ error }}</p>
+  {% else %}
+  <div class="flex items-center justify-between text-[10px] text-gray-500 pb-1">
+    <span>{{ '{:,}'.format(facet.present) }} of {{ '{:,}'.format(facet.matched) }} matches · ~{{ '{:,}'.format(facet.distinct) }} values</span>
+    <span class="flex items-center gap-2">
+      <button type="button" class="hover:text-gray-300 underline decoration-dotted" data-column="{{ field }}" @click="toggleStack($el.dataset.column)"
+              title="Count every combination of this field (and up to two more), rarest first">Stack</button>
+      <button type="button" class="hover:text-gray-300" @click="open = false" aria-label="Close {{ label }} values">×</button>
+    </span>
+  </div>
+  {% for r in rows %}
+  <div class="flex items-center gap-1 text-[11px]">
+    <span class="flex-1 min-w-0 truncate font-mono text-gray-300" title="{{ r.value }}">{{ r.value }}</span>
+    <span class="tabular-nums text-gray-500" title="{{ r.pct }}% of matches">{{ '{:,}'.format(r.n) }}</span>
+    <button type="button" class="lt-btn lt-btn--xs" title="Only this value" data-term="{{ r.plus }}" @click="addTerm($el.dataset.term)">+</button>
+    <button type="button" class="lt-btn lt-btn--xs" title="Exclude this value" data-term="{{ r.minus }}" @click="addTerm($el.dataset.term)">-</button>
+  </div>
+  {% else %}
+  <p class="text-[11px] text-gray-500">No matching event has this field.</p>
+  {% endfor %}
+  {% endif %}
+</div>

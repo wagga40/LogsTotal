@@ -189,3 +189,39 @@ def test_paginated_routes_clamp_before_computing_offset():
             fn = getattr(module, name)  # not getattr(..., None): a renamed route must fail here
             src = inspect.getsource(fn)
             assert "page = max(1, page)" in src, f"{name} computes an offset from an unclamped page"
+
+
+async def test_status_poll_never_selects_a_full_tool_log(admin_client, async_db, failed_job_with_error_details):
+    """`TaskResult.log_output` is deferred: the 3 s poll reads the 2 KB head (`substr`) for
+    version recovery and, for an admin, one narrow query over the failed tasks. A completed
+    task's log must never be selected whole."""
+    from sqlalchemy import event
+
+    job = failed_job_with_error_details
+    ok = TaskResult(job_id=job.id, tool_name="hayabusa", status=TaskStatus.COMPLETED, findings_count=0, log_output="BIG_COMPLETED_LOG " * 5000)
+    async_db.add(ok)
+    await async_db.commit()
+    async_db.expunge_all()
+
+    engine = async_db.bind.sync_engine
+    statements: list[str] = []
+
+    def record(conn, cursor, statement, *args):
+        statements.append(statement.lower())
+
+    event.listen(engine, "before_cursor_execute", record)
+    try:
+        resp = await admin_client.get(f"/jobs/{job.id}/status-partial", headers={"HX-Request": "true"})
+    finally:
+        event.remove(engine, "before_cursor_execute", record)
+
+    assert resp.status_code in (200, 286)
+    assert "LEAK_STDERR_XYZ" in resp.text, "the failed task's log still reaches the admin panel"
+    assert "BIG_COMPLETED_LOG" not in resp.text
+    # The 2 KB head shares a SELECT with every other column, so strip it before looking for
+    # the full column: filtering whole statements on "substr(" hid an eager full select.
+    import re
+
+    whole = [s for s in statements if "taskresult.log_output" in re.sub(r"substr\(taskresult\.log_output[^)]*\)", "", s)]
+    assert len(whole) == 1, whole  # the failed-tasks query, and nothing else
+    assert "taskresult.id in" in whole[0]

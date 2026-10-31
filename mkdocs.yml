@@ -94,6 +94,7 @@ nav:
       - reference/commands.md
       - configuration.md
       - reference/admin-ui.md
+      - reference/explore.md
       - reference/fleet.md
       - reference/ingestion-api.md
       - security.md

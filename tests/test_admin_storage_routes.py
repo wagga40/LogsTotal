@@ -39,6 +39,27 @@ async def test_the_page_names_what_the_dashboard_total_leaves_out(admin_client):
     assert "not counted by the dashboard total" in resp.text
 
 
+async def test_unowned_uploads_alone_offer_no_purge(admin_client, monkeypatch):
+    """Purge never deletes an upload, so a page listing only unowned uploads must not offer
+    a Purge button for "0 B" — the click would queue a task that removes nothing."""
+    from app import storage_usage
+    from app.storage import StoredObject
+
+    report = storage_usage.classify_objects(
+        [StoredObject(key="ghost.evtx", size=5000, mtime=0.0)],
+        known_filenames=set(),
+        known_job_ids=set(),
+        active_job_ids=set(),
+        now=0.0,
+    )
+    monkeypatch.setattr(storage_usage, "gather_usage_sync", lambda **kw: report)
+    resp = await admin_client.get("/admin/storage")
+    assert "Stored files with no database row" in resp.text
+    assert "not purged" in resp.text
+    assert "/admin/storage/purge-orphans" not in resp.text
+    assert "Nothing listed here can be purged automatically." in resp.text
+
+
 async def test_the_database_footprint_loads_separately(admin_client):
     """Lazy because on SQLite it opens a connection and reads dbstat, which does not belong
     on the critical path of a page opened to check free space."""

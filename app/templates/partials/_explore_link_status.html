@@ -1,0 +1,23 @@
+{#
+  A job's detections are not linked to its events yet. Linking runs on a worker (for a job
+  analysed before links were recorded, it first re-reads the raw tool outputs), so this
+  notice polls until it is done, then offers to reload the pane. It never reloads the pane
+  by itself: someone may be typing a search.
+
+  `hx-target="this"` is load-bearing: the notice sits inside #explore-form, whose
+  hx-target is #explore-results, and an inherited target swapped the "linked" notice in
+  place of the whole results table.
+#}
+{% if linked %}
+<p id="explore-link-status" class="text-xs text-green-300">
+  This job's detections are now linked to its events.
+  <button type="button" class="lt-btn lt-btn--xs ml-1" hx-get="{{ base_url }}-partial" hx-include="#explore-form" hx-target="#explore-region" hx-swap="outerHTML">Show detections</button>
+</p>
+{% elif link_failure %}
+<p id="explore-link-status" class="text-xs text-amber-300">{{ link_failure }} Detection terms (det:, level:, rule:) and "Detections only" are unavailable for it.</p>
+{% else %}
+<p id="explore-link-status" class="text-xs text-gray-400"
+   hx-get="{{ link_status_url }}" hx-trigger="every 4s" hx-target="this" hx-swap="outerHTML">
+  Linking this job's detections to its events… Detection terms (det:, level:, rule:) and "Detections only" work once that is done; this updates by itself.
+</p>
+{% endif %}

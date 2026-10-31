@@ -6,6 +6,7 @@ from datetime import datetime
 from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
 from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy import (
+    BigInteger,
     Boolean,
     CheckConstraint,
     Column,
@@ -26,6 +27,7 @@ from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import column_property, deferred, relationship
 
 from app.database import Base
+from app.db_types import CompressedText
 
 
 def enum_val(e) -> str:
@@ -93,6 +95,18 @@ def has_intel_access(user) -> bool:
     if user is None or not getattr(user, "is_active", False):
         return False
     return bool(getattr(user, "is_superuser", False)) or getattr(user, "role", "") in ("admin", "member")
+
+
+def can_explore_job(job, user) -> bool:
+    """Whether *user* may read every event of *job*, not only what its tools matched.
+
+    Explore and the full process forest show events no rule fired on, so they are narrower
+    than the job page: admins and members, or the job's own signed-in submitter, always
+    after `can_view_job`. Anonymous viewers of a public job see its findings, never its log.
+    """
+    if job is None or user is None or not getattr(user, "is_active", False) or not can_view_job(job, user):
+        return False
+    return has_intel_access(user) or (job.submitted_by_user_id is not None and job.submitted_by_user_id == user.id)
 
 
 def severity_rank_sql():
@@ -265,7 +279,11 @@ class AnalysisJob(Base):
     created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
     finished_at = Column(DateTime, nullable=True)
     error_message = Column(Text, nullable=True)
-    analytics_json = Column(Text, nullable=True)  # JSON: analytics_json_payload(_compute_analytics_data(job))
+    # JSON: analytics_json_payload(_compute_analytics_data(job)), up to hundreds of KB per job.
+    # Deferred: the jobs list, the home panel and the status poll load AnalysisJob wholesale
+    # every few seconds and never read it (1.3 MB per 20-row page in dev). Its readers ask with
+    # undefer() — an un-asked read on an async session is a MissingGreenlet, not a query.
+    analytics_json = deferred(Column(CompressedText, nullable=True))
     execution_snapshot = Column(Text, nullable=True)  # versioned provenance captured when execution starts
     # Indexed as the leading column of visible_job_filter's predicate — it appears in
     # essentially every job query the application makes.
@@ -283,12 +301,81 @@ class AnalysisJob(Base):
     submitter = relationship("User", foreign_keys=[submitted_by_user_id])
     task_results = relationship("TaskResult", back_populates="job", cascade="all, delete-orphan")
     comments = relationship("Comment", cascade="all, delete-orphan", foreign_keys="Comment.job_id")
-    ai_analyses = relationship("JobAiAnalysis", cascade="all, delete-orphan", foreign_keys="JobAiAnalysis.job_id")
+    ai_analyses = relationship("JobAiAnalysis", cascade="all, delete-orphan", foreign_keys="JobAiAnalysis.job_id", order_by="JobAiAnalysis.id")
     # Analyst tags. NOT `Finding.tags`, which is a JSON string of SIGMA rule tags — see JobTag.
-    tags = relationship("JobTag", back_populates="job", cascade="all, delete-orphan")
+    tags = relationship("JobTag", back_populates="job", cascade="all, delete-orphan", order_by="JobTag.id")
 
 
 # ── Task Result ───────────────────────────────────────────────────────────────────
+
+
+class EventStoreStatus(str, enum.Enum):
+    PENDING = "pending"
+    BUILDING = "building"
+    READY = "ready"
+    FAILED = "failed"
+    EVICTED = "evicted"
+
+
+class EventStore(Base):
+    """Every event of one upload, as Parquet (`app/events/`), built once per file and log type.
+
+    A derived cache: it can be rebuilt from the upload at any time, so eviction loses nothing
+    and a job's detections are joined onto it from its `event_links` artifact. Keyed by the
+    *job's* effective log type, never `LogFile.log_type`, which a re-upload overwrites. Status
+    is a plain string, not an Enum column, so PostgreSQL needs no ALTER TYPE when it grows.
+    """
+
+    __tablename__ = "event_store"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    log_file_id = Column(Integer, ForeignKey("logfile.id"), nullable=False)
+    log_type = Column(String(32), nullable=False)
+    builder_version = Column(Integer, nullable=False)
+    status = Column(String(16), nullable=False, default=EventStoreStatus.PENDING.value)
+    #: Names the published directory (`events/{sha256}/{gen}/`); a rebuild gets a new one.
+    gen = Column(String(64), nullable=True)
+    event_count = Column(BigInteger, nullable=True)
+    column_count = Column(Integer, nullable=True)
+    bytes = Column(BigInteger, nullable=True)
+    time_min = Column(DateTime, nullable=True)
+    time_max = Column(DateTime, nullable=True)
+    truncated = Column(Boolean, nullable=False, default=False)
+    warnings_json = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    attempts = Column(Integer, nullable=False, default=0)
+    #: The job whose claim asked for it — a plain int, not a key: the job may be deleted.
+    requested_by_job_id = Column(Integer, nullable=True)
+    requested_at = Column(DateTime, nullable=False, server_default=func.now())
+    started_at = Column(DateTime, nullable=True)
+    finished_at = Column(DateTime, nullable=True)
+    last_accessed_at = Column(DateTime, nullable=True)
+
+    __table_args__ = (UniqueConstraint("log_file_id", "log_type", "builder_version", name="uq_event_store_file_type_version"),)
+
+
+class JobArtifact(Base):
+    """A derived, per-job result computed once in the analytics pass and stored compressed.
+
+    Each existed only as a cache over the raw tool outputs, rebuilt on every miss: the case
+    timeline's hourly buckets (TTL 900 s) and the process forest (TTL 300 s), at 2.5 s plus
+    0.9 s and about 1 GB of RSS per miss on one development job. Stored here they are one
+    small row read, and they outlive JOB_OUTPUT_RETENTION_DAYS, which deletes the outputs
+    they came from. No ORM relationship on purpose: readers select the payload explicitly,
+    so a lazy load cannot happen; `app/job_artifacts.py` is the only reader and writer.
+    """
+
+    __tablename__ = "job_artifact"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
+    kind = Column(String(32), nullable=False)
+    # The payload's shape version; a reader expecting another treats the row as absent.
+    version = Column(Integer, nullable=False, default=1)
+    payload = Column(LargeBinary, nullable=False)  # zstd(orjson)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("job_id", "kind", name="uq_job_artifact"),)
 
 
 class TaskResult(Base):
@@ -303,14 +390,20 @@ class TaskResult(Base):
     findings_count = Column(Integer, nullable=False, default=0)
     duration_ms = Column(Integer, nullable=True)
     error_message = Column(Text, nullable=True)
-    log_output = Column(Text, nullable=True)  # combined stdout + stderr from tool
+    # Combined stdout + stderr, up to MAX_LOG_OUTPUT_BYTES per task. Deferred: the 3 s status
+    # poll loads every task of the job and shows a log only on demand (/jobs/task-results/{id}/log)
+    # or for a failed task's admin panel, which the status routes fetch with one narrow query.
+    log_output = deferred(Column(Text, nullable=True))
     diagnostics_json = Column(Text, nullable=True)  # versioned completion diagnostics; null for historical tasks
     execution_snapshot = Column(Text, nullable=True)  # worker-observed engine/rules/configuration provenance
     started_at = Column(DateTime, nullable=True)
     finished_at = Column(DateTime, nullable=True)
 
     job = relationship("AnalysisJob", back_populates="task_results")
-    findings = relationship("Finding", back_populates="task_result", cascade="all, delete-orphan")
+    # order_by on every collection whose parent column lost its own index (e064602640a4):
+    # SQLite returned these in that index's order — insertion order — and the composite now
+    # chosen instead sorts by its second column, which reordered findings.json.
+    findings = relationship("Finding", back_populates="task_result", cascade="all, delete-orphan", order_by="Finding.id")
 
 
 # ── Site Settings ─────────────────────────────────────────────────────────────────
@@ -335,6 +428,12 @@ class SiteSettings(Base):
     show_entities = Column(Boolean, nullable=False, default=True)
     show_threat_detection = Column(Boolean, nullable=False, default=True)
     show_process_tree = Column(Boolean, nullable=False, default=True)
+    # Explore: every event of an upload, not only what the tools matched. `show_explore`
+    # hides the tab from everyone; `explore_build_enabled` is the "Build event index" button
+    # for uploads analysed before stores existed (new uploads are built automatically while
+    # EVENTS_ENABLED is on). Both default on, like the other job-page panels.
+    show_explore = Column(Boolean, nullable=False, default=True)
+    explore_build_enabled = Column(Boolean, nullable=False, default=True)
     # The shipped label vocabulary — `lolbin`, `privileged`, `rfc1918` and the rest —
     # evaluated as rules and applied as tags. On by default: the labels are part of what an
     # instance shows out of the box.
@@ -389,13 +488,32 @@ class SiteSettings(Base):
 # ── Finding ───────────────────────────────────────────────────────────────────────
 
 
+class RuleText(Base):
+    """A detection rule's source text, stored once however many findings cite it.
+
+    `Finding.rule_content` used to hold the full Sigma YAML on every finding of every job:
+    72.7% of that column was duplicates in the development database. The rule corpus is
+    fixed and small next to the findings it produces, so content-addressing it by SHA-256
+    turns one copy per finding into one per rule version. `app/rule_texts.py` is the writer.
+    """
+
+    __tablename__ = "rule_text"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    sha256 = Column(String(64), nullable=False)
+    content = Column(CompressedText, nullable=False)
+    created_at = Column(DateTime, nullable=False, server_default=func.now())
+
+    __table_args__ = (UniqueConstraint("sha256", name="uq_rule_text_sha256"),)
+
+
 class Finding(Base):
     """A single detection finding (rule match) produced by a tool."""
 
     __tablename__ = "finding"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    task_result_id = Column(Integer, ForeignKey("taskresult.id"), nullable=False, index=True)
+    task_result_id = Column(Integer, ForeignKey("taskresult.id"), nullable=False)
     rule_id = Column(String(100), nullable=True)
     rule_name = Column(String(500), nullable=False)
     severity = Column(Enum(Severity), nullable=False, default=Severity.INFORMATIONAL)
@@ -416,8 +534,11 @@ class Finding(Base):
     # and `_load_job_full(blobs=...)` (/jobs/{id}/findings.json, analysis.json). The case timeline
     # selects `Finding.details` as a plain column, which mapper-level deferral does not apply
     # to. That is the point: it is visible at the query which callers pay for the blob.
-    details = deferred(Column(Text, nullable=True))  # JSON array of matched events (truncated)
-    rule_content = deferred(Column(Text, nullable=True))  # original Sigma rule YAML
+    details = deferred(Column(CompressedText, nullable=True))  # JSON array of matched events (truncated)
+    # The rule's source text, deduplicated in `rule_text`. `rule_content` is declared after
+    # the class as a deferred scalar subquery over it, so every reader (`undefer(...)`, the
+    # attribute) is unchanged; writers go through `app/rule_texts.py`.
+    rule_text_id = Column(Integer, ForeignKey("rule_text.id"), nullable=True, index=True)
 
     __table_args__ = (
         # Both are GROUP BY / WHERE keys in the per-job and per-case roll-ups, which run on
@@ -437,6 +558,19 @@ class Finding(Base):
 # per-finding "Show events" toggle costs nothing and never touches the deferred blob.
 # `routers/intel.py` uses the same mapped property.
 Finding.has_details = column_property(func.coalesce(Finding.__table__.c.details, "") != "")
+
+# The original Sigma rule YAML, read through `rule_text`. Deferred like the column it replaced;
+# the subquery's type is `RuleText.content`'s, so a compressed row decodes on the way out.
+Finding.rule_content = column_property(
+    select(RuleText.content).where(RuleText.id == Finding.__table__.c.rule_text_id).scalar_subquery(),
+    deferred=True,
+)
+
+
+# The tool log's first 2 KB, selected eagerly in place of the deferred log: engine-version
+# recovery (`analysis_confidence.task_metadata`) reads only the startup banner, and it runs
+# inside the status poll for every task. Same out-of-class declaration as `has_details`.
+TaskResult.log_head = column_property(func.substr(TaskResult.__table__.c.log_output, 1, 2048))
 
 
 # ── Intel Entities ────────────────────────────────────────────────────────────
@@ -466,8 +600,8 @@ class Entity(Base):
         Index("ix_entity_last_seen", "last_seen_at"),
     )
 
-    job_links = relationship("EntityJobLink", back_populates="entity", cascade="all, delete-orphan")
-    tags = relationship("EntityTag", back_populates="entity", cascade="all, delete-orphan")
+    job_links = relationship("EntityJobLink", back_populates="entity", cascade="all, delete-orphan", order_by="EntityJobLink.id")
+    tags = relationship("EntityTag", back_populates="entity", cascade="all, delete-orphan", order_by="EntityTag.id")
     finding_links = relationship("FindingEntityLink", back_populates="entity", cascade="all, delete-orphan")
     case_links = relationship("CaseEntityLink", back_populates="entity", cascade="all, delete-orphan")
     comments = relationship("Comment", cascade="all, delete-orphan", foreign_keys="Comment.entity_id")
@@ -479,8 +613,8 @@ class EntityJobLink(Base):
     __tablename__ = "entity_job_link"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
-    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
+    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
     occurrence_count = Column(Integer, nullable=False, default=1)
 
     __table_args__ = (
@@ -503,7 +637,7 @@ class EntityTag(Base):
     __tablename__ = "entity_tag"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
+    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False)
     # Indexed on its own: the uq_entity_tag composite leads with entity_id, so a
     # dashboard `WHERE tag IN (...)` pivot would otherwise be a full scan.
     tag = Column(String(50), nullable=False, index=True)
@@ -536,7 +670,7 @@ class JobTag(Base):
     __tablename__ = "job_tag"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
     # Indexed on its own, for the same reason as EntityTag.tag: the uq_job_tag composite
     # leads with job_id, so a `WHERE tag IN (...)` filter on the jobs list would otherwise
     # be a full scan.
@@ -568,13 +702,13 @@ class JobWatch(Base):
     __tablename__ = "job_watch"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
     user_id = Column(GUID(), ForeignKey("user.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now())
 
     __table_args__ = (UniqueConstraint("job_id", "user_id", name="uq_job_watch"),)
 
-    events = relationship("JobWatchEvent", cascade="all, delete-orphan")
+    events = relationship("JobWatchEvent", cascade="all, delete-orphan", order_by="JobWatchEvent.id")
     # Eager-loaded by the fan-out, which needs the User to run `can_view_job` — a lazy read
     # there is a MissingGreenlet on the async side and an extra query per watcher on both.
     user = relationship("User", foreign_keys=[user_id])
@@ -600,7 +734,7 @@ class JobWatchEvent(Base):
     __tablename__ = "job_watch_event"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    watch_id = Column(Integer, ForeignKey("job_watch.id"), nullable=False, index=True)
+    watch_id = Column(Integer, ForeignKey("job_watch.id"), nullable=False)
     # Denormalised from the watch so the bell can filter by job visibility without a
     # second join, and so cleanup on job deletion is one statement.
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
@@ -624,7 +758,7 @@ class FindingEntityLink(Base):
     __tablename__ = "finding_entity_link"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    finding_id = Column(Integer, ForeignKey("finding.id"), nullable=False, index=True)
+    finding_id = Column(Integer, ForeignKey("finding.id"), nullable=False)
     entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
 
     __table_args__ = (UniqueConstraint("finding_id", "entity_id", name="uq_finding_entity"),)
@@ -646,7 +780,7 @@ class EntityRelationship(Base):
     __tablename__ = "entity_relationship"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    source_entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
+    source_entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False)
     target_entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
     relationship_type = Column(String(40), nullable=False, index=True)
     first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -676,12 +810,12 @@ class EntityRelationshipEvidence(Base):
     __tablename__ = "entity_relationship_evidence"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    relationship_id = Column(Integer, ForeignKey("entity_relationship.id"), nullable=False, index=True)
+    relationship_id = Column(Integer, ForeignKey("entity_relationship.id"), nullable=False)
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
     occurrence_count = Column(Integer, nullable=False, default=1)
     first_seen_at = Column(DateTime, nullable=False, server_default=func.now())
     last_seen_at = Column(DateTime, nullable=False, server_default=func.now())
-    sample_events_json = Column(Text, nullable=True)  # capped JSON list of trimmed events
+    sample_events_json = Column(CompressedText, nullable=True)  # capped JSON list of trimmed events
 
     __table_args__ = (UniqueConstraint("relationship_id", "job_id", name="uq_relationship_evidence"),)
 
@@ -780,9 +914,9 @@ class InvestigationCase(Base):
     closed_at = Column(DateTime, nullable=True)
     notes = Column(Text, nullable=True)  # running investigation narrative, 8000-char cap enforced in the route
 
-    ai_analyses = relationship("CaseAiAnalysis", cascade="all, delete-orphan", foreign_keys="CaseAiAnalysis.case_id")
-    entity_links = relationship("CaseEntityLink", back_populates="case", cascade="all, delete-orphan")
-    job_links = relationship("CaseJobLink", back_populates="case", cascade="all, delete-orphan")
+    ai_analyses = relationship("CaseAiAnalysis", cascade="all, delete-orphan", foreign_keys="CaseAiAnalysis.case_id", order_by="CaseAiAnalysis.id")
+    entity_links = relationship("CaseEntityLink", back_populates="case", cascade="all, delete-orphan", order_by="CaseEntityLink.id")
+    job_links = relationship("CaseJobLink", back_populates="case", cascade="all, delete-orphan", order_by="CaseJobLink.id")
     comments = relationship("Comment", cascade="all, delete-orphan", foreign_keys="Comment.case_id")
     created_by = relationship("User", foreign_keys=[created_by_user_id])
 
@@ -793,7 +927,7 @@ class CaseEntityLink(Base):
     __tablename__ = "case_entity_link"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False)
     entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
     added_by_user_id = Column(GUID(), ForeignKey("user.id"), nullable=True)
     added_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -817,7 +951,7 @@ class CaseJobLink(Base):
     __tablename__ = "case_job_link"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False)
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
     added_by_user_id = Column(GUID(), ForeignKey("user.id"), nullable=True)
     added_at = Column(DateTime, nullable=False, server_default=func.now())
@@ -937,7 +1071,7 @@ class EntityEnrichmentResult(Base):
     __tablename__ = "entity_enrichment_result"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
+    entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False)
     service_id = Column(Integer, ForeignKey("enrichment_service.id"), nullable=False, index=True)
     response_json = Column(Text, nullable=True)  # raw API body, truncated to a cap
     summary_json = Column(Text, nullable=True)  # post-extracted dict shown on the entity page
@@ -1020,8 +1154,8 @@ class IntelRule(Base):
     id = Column(Integer, primary_key=True, autoincrement=True)
     name = Column(String(120), nullable=False)
     description = Column(String(500), nullable=True)
-    owner_user_id = Column(GUID(), ForeignKey("user.id"), nullable=True, index=True)
-    enabled = Column(Boolean, nullable=False, default=True, server_default="1", index=True)
+    owner_user_id = Column(GUID(), ForeignKey("user.id"), nullable=True)
+    enabled = Column(Boolean, nullable=False, default=True, server_default="1")
 
     # What the criteria are written against: `entity` (the Intel dashboard grammar, matched
     # per entity in the job) or `job` (the jobs-list grammar, matched against the job itself).
@@ -1108,8 +1242,8 @@ class IntelRule(Base):
     )
 
     owner = relationship("User", foreign_keys=[owner_user_id])
-    matches = relationship("IntelRuleMatch", back_populates="rule", cascade="all, delete-orphan")
-    job_matches = relationship("JobRuleMatch", back_populates="rule", cascade="all, delete-orphan")
+    matches = relationship("IntelRuleMatch", back_populates="rule", cascade="all, delete-orphan", order_by="IntelRuleMatch.id")
+    job_matches = relationship("JobRuleMatch", back_populates="rule", cascade="all, delete-orphan", order_by="JobRuleMatch.id")
 
 
 class RuleList(Base):
@@ -1197,7 +1331,7 @@ class IntelRuleMatch(Base):
     __tablename__ = "intel_rule_match"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    rule_id = Column(Integer, ForeignKey("intel_rule.id"), nullable=False, index=True)
+    rule_id = Column(Integer, ForeignKey("intel_rule.id"), nullable=False)
     entity_id = Column(Integer, ForeignKey("entity.id"), nullable=False, index=True)
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
@@ -1237,7 +1371,7 @@ class JobRuleMatch(Base):
     __tablename__ = "job_rule_match"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    rule_id = Column(Integer, ForeignKey("intel_rule.id"), nullable=False, index=True)
+    rule_id = Column(Integer, ForeignKey("intel_rule.id"), nullable=False)
     job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
     created_at = Column(DateTime, nullable=False, server_default=func.now(), index=True)
     acknowledged_at = Column(DateTime, nullable=True)
@@ -1372,7 +1506,7 @@ class JobAiAnalysis(Base):
     __tablename__ = "job_ai_analysis"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False, index=True)
+    job_id = Column(Integer, ForeignKey("analysisjob.id"), nullable=False)
     provider_id = Column(Integer, ForeignKey("ai_provider.id"), nullable=True, index=True)
     provider_name = Column(String(80), nullable=False)
     model = Column(String(200), nullable=False)
@@ -1411,7 +1545,7 @@ class CaseAiAnalysis(Base):
     __tablename__ = "case_ai_analysis"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False, index=True)
+    case_id = Column(Integer, ForeignKey("investigation_case.id"), nullable=False)
     provider_id = Column(Integer, ForeignKey("ai_provider.id"), nullable=True, index=True)
     provider_name = Column(String(80), nullable=False)
     model = Column(String(200), nullable=False)
@@ -1489,7 +1623,7 @@ class ActivityEvent(Base):
     # A key from `app.activity.ACTIONS` — a registry, so the filter list, the docs table
     # and the call sites cannot drift apart.
     action = Column(String(80), nullable=False, index=True)
-    category = Column(String(30), nullable=False, index=True)
+    category = Column(String(30), nullable=False)
     target_type = Column(String(40), nullable=True)
     target_id = Column(String(64), nullable=True)
     summary = Column(String(500), nullable=True)

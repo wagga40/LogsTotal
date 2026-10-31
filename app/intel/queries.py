@@ -348,7 +348,7 @@ MAX_GROUP_DEPTH = 8
 _POST_FILTERED_KINDS = ("regex", "cidr")
 
 
-def scan_query(raw: str, *, split_groups: bool = False) -> list[tuple[int, int, str]]:
+def scan_query(raw: str, *, split_groups: bool = False, quoted_values: bool = False) -> list[tuple[int, int, str]]:
     """Scan a query into `(start, end, token)` spans over the *original* string.
 
     The single scanner. `tokenize_query` is the text-only view of it and `caret_token` is
@@ -366,6 +366,11 @@ def scan_query(raw: str, *, split_groups: bool = False) -> list[tuple[int, int, 
     They are split *after* the quoted and `re:/…/` passes, so `re:/(a|b)/` and `"(literal)"`
     keep their parentheses — a regex full of grouping parens must not be shredded into
     grammar.
+
+    With `quoted_values` (the Explore grammar), a quote *inside* a term after its `field:`
+    also runs to the closing quote, so `CommandLine:"a b (c)"` is one span whose token has
+    the quotes stripped. Off by default: the jobs and entity grammars never quote a value
+    mid-term, and turning it on there would change what their saved queries mean.
     """
     spans: list[tuple[int, int, str]] = []
     i, n = 0, len(raw)
@@ -418,9 +423,27 @@ def scan_query(raw: str, *, split_groups: bool = False) -> list[tuple[int, int, 
             i = end
             continue
         j = i
+        if not quoted_values:
+            while j < n and not raw[j].isspace() and not (split_groups and raw[j] in "()"):
+                j += 1
+            spans.append((start, j, raw[start:j]))
+            i = j
+            continue
+        pieces, seg = [], i
         while j < n and not raw[j].isspace() and not (split_groups and raw[j] in "()"):
+            if raw[j] == '"' and ":" in raw[i:j]:
+                close = raw.find('"', j + 1)
+                pieces.append(raw[seg:j])
+                if close == -1:  # unterminated: the rest of the query is the value
+                    pieces.append(raw[j + 1 :])
+                    j = seg = n
+                    break
+                pieces.append(raw[j + 1 : close])
+                j = seg = close + 1
+                continue
             j += 1
-        spans.append((start, j, raw[start:j]))
+        pieces.append(raw[seg:j])
+        spans.append((start, j, "".join(pieces)))
         i = j
     return spans
 
@@ -435,7 +458,7 @@ def tokenize_query(raw: str, *, split_groups: bool = False) -> list[str]:
 _COMPLETABLE = ("label:", "tag:", "attr:", "list:", "cidr:", "job:", "type:", "re:/")
 
 
-def caret_token(raw: str, pos: int, prefixes: tuple[str, ...] = _COMPLETABLE) -> dict[str, Any]:
+def caret_token(raw: str, pos: int, prefixes: tuple[str, ...] = _COMPLETABLE, *, quoted_values: bool = False) -> dict[str, Any]:
     """What the caret is sitting in, and the span a completion would replace.
 
     Returns ``{"start", "end", "text", "prefix", "fragment"}``. ``prefix`` is the
@@ -455,7 +478,7 @@ def caret_token(raw: str, pos: int, prefixes: tuple[str, ...] = _COMPLETABLE) ->
     """
     raw = raw or ""
     pos = max(0, min(int(pos), len(raw)))
-    for start, end, _text in scan_query(raw, split_groups=True):
+    for start, end, _text in scan_query(raw, split_groups=True, quoted_values=quoted_values):
         if start <= pos <= end and raw[start:end] not in ("(", ")"):
             typed = raw[start:end]
             body = typed[1:] if typed.startswith("-") else typed

@@ -328,6 +328,7 @@ def main() -> int:
             if optional_check is not None:
                 report.add_results([optional_check])
         report.add_results([system_checks.check_backup_receipt()])
+        report.add_results([system_checks.check_event_store()])
         report.add_results([system_checks.check_host_os(in_container=args.in_container)])
         report.add_results(system_checks.check_disk())
         if not args.in_container:

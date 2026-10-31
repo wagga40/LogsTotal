@@ -31,7 +31,10 @@ with a typed output mapping, for a binary or a Docker image — see
   type determine which engines run. The log type is detected on drop.
 - **MITRE ATT&CK context** — a tactic heat-map per job.
 - **Two timelines** — an hourly activity histogram by tactic, and a zoomable per-alert timeline.
-- **Process trees** rebuilt from rule-matched process-creation events.
+- **Explore every event**, not only the matched ones: search, a zoomable histogram, field
+  values, stacking (rarest combinations first) and CSV/NDJSON export over an index
+  LogsTotal builds from each upload.
+- **Process trees** from every process creation in the log, detections marked.
 - **Entity extraction and pivoting**, and **investigation cases**.
 - **A relationship graph** with community detection, pathfinding, threat colouring and GraphML export.
 - **Rules** — your own detection layer over what an analysis produces, with auto-tagging,
@@ -46,6 +49,7 @@ with a typed output mapping, for a binary or a Docker image — see
 |---------|-------|--------|------|-----------|
 | Upload and jobs | yes | yes | yes | yes |
 | Private submissions | yes | yes | yes | no |
+| Explore every event of a job | yes | yes | own jobs | no |
 | Intel (entities, cases, rules) | yes | yes | no | no |
 | Admin pages and workflows | yes | no | no | no |
 

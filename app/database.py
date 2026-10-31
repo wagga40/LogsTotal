@@ -22,6 +22,9 @@ _is_sqlite = "sqlite" in settings.database_url
 # CHECK_CACHE_TTL_SECONDS argument — a knob here would owe .env.example a line and
 # docs/configuration.md a row for something no operator should ever need to tune.
 SQLITE_BUSY_TIMEOUT_MS = 15000
+# Module constants, not settings, on the same argument: tuning values no operator should touch.
+SQLITE_MMAP_BYTES = 256 * 1024 * 1024
+SQLITE_JOURNAL_SIZE_LIMIT_BYTES = 64 * 1024 * 1024
 
 
 def _set_sqlite_pragmas(dbapi_conn, connection_record):
@@ -31,6 +34,14 @@ def _set_sqlite_pragmas(dbapi_conn, connection_record):
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA cache_size=-64000")  # 64 MB cache
     cursor.execute(f"PRAGMA busy_timeout={SQLITE_BUSY_TIMEOUT_MS}")
+    # Reads through the OS page cache instead of copying pages into SQLite's own buffers.
+    # Safe with WAL; a virtual-address reservation, not resident memory.
+    cursor.execute(f"PRAGMA mmap_size={SQLITE_MMAP_BYTES}")
+    # Sorts and temp indexes in memory, not in a temp file next to the database.
+    cursor.execute("PRAGMA temp_store=MEMORY")
+    # After a checkpoint the WAL is truncated back to this size, so one large write (a
+    # backfill, a VACUUM) does not leave a WAL as large as the database behind for good.
+    cursor.execute(f"PRAGMA journal_size_limit={SQLITE_JOURNAL_SIZE_LIMIT_BYTES}")
     # Off by default in SQLite, so without this the default backend would not enforce the
     # constraints its own schema declares: a delete that missed a child table would leave
     # dangling rows here — a nav-bell count over an empty dropdown, links to jobs that no
@@ -154,6 +165,46 @@ def _migrate_analysis_confidence(conn):
         conn.execute(text("ALTER TYPE taskstatus ADD VALUE IF NOT EXISTS 'PARTIAL'"))
 
 
+def _move_rule_content_to_rule_text(conn) -> None:
+    """The legacy-path twin of migration f3a91c2e7d40: dedupe `finding.rule_content` into
+    `rule_text` by SHA-256, point each finding at its row, then drop the old column.
+
+    A copy rather than a shared function because migrations never import app code here.
+    `tests/test_migrations_auto.py` runs both paths on the same data.
+    """
+    import hashlib
+    import logging
+    import sqlite3
+
+    from sqlalchemy import bindparam, text
+    from sqlalchemy import column as sa_column
+    from sqlalchemy import table as sa_table
+    from sqlalchemy.dialects.postgresql import insert as pg_insert
+    from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+
+    logger = logging.getLogger(__name__)
+
+    rule_text = sa_table("rule_text", sa_column("id"), sa_column("sha256"), sa_column("content"))
+    insert = pg_insert if conn.dialect.name == "postgresql" else sqlite_insert
+    last = 0
+    while True:
+        rows = conn.execute(
+            text("SELECT id, rule_content FROM finding WHERE id > :last AND rule_content IS NOT NULL AND rule_content != '' ORDER BY id LIMIT 2000"), {"last": last}
+        ).all()
+        if not rows:
+            break
+        last = rows[-1][0]
+        shas = {fid: hashlib.sha256(content.encode("utf-8")).hexdigest() for fid, content in rows}
+        contents = {shas[fid]: content for fid, content in rows}
+        conn.execute(insert(rule_text).values([{"sha256": s, "content": c} for s, c in contents.items()]).on_conflict_do_nothing(index_elements=["sha256"]))
+        ids = dict(conn.execute(text("SELECT sha256, id FROM rule_text WHERE sha256 IN :shas").bindparams(bindparam("shas", expanding=True)), {"shas": list(contents)}).all())
+        conn.execute(text("UPDATE finding SET rule_text_id = :rid WHERE id = :fid"), [{"fid": fid, "rid": ids[sha]} for fid, sha in shas.items()])
+    if conn.dialect.name != "sqlite" or sqlite3.sqlite_version_info >= (3, 35, 0):
+        conn.execute(text("ALTER TABLE finding DROP COLUMN rule_content"))
+    else:
+        logger.warning("SQLite %s cannot DROP COLUMN; finding.rule_content is left in place, unread", sqlite3.sqlite_version)
+
+
 def _migrate_add_missing_columns(conn):
     """Add post-bootstrap columns plus a hand-listed set of indexes (idempotent).
 
@@ -181,8 +232,17 @@ def _migrate_add_missing_columns(conn):
         conn.execute(text("ALTER TABLE finding ADD COLUMN rule_signature VARCHAR(200)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_finding_rule_signature ON finding (rule_signature)"))
 
-    if "rule_content" not in existing_finding:
-        conn.execute(text("ALTER TABLE finding ADD COLUMN rule_content TEXT"))
+    # The ORM selects rule_text_id on every Finding load, so it belongs here too (the
+    # _migrate_analysis_confidence precedent). create_all has already made rule_text. The old
+    # rule_content column is not read any more; only migration f3a91c2e7d40 moves its text.
+    if "rule_text_id" not in existing_finding:
+        conn.execute(text("ALTER TABLE finding ADD COLUMN rule_text_id INTEGER REFERENCES rule_text (id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_finding_rule_text_id ON finding (rule_text_id)"))
+    if "rule_content" in existing_finding:
+        # A legacy database is stamped at head after this pass and never runs f3a91c2e7d40,
+        # so the move happens here too: compare_metadata would otherwise report the column
+        # as drift and refuse to stamp.
+        _move_rule_content_to_rule_text(conn)
 
     existing_job = {c["name"] for c in inspector.get_columns("analysisjob")}
     if "submitted_filename" not in existing_job:
@@ -206,6 +266,9 @@ def _migrate_add_missing_columns(conn):
         "max_finding_details": "INTEGER NOT NULL DEFAULT 10",
         "demo_mode": f"BOOLEAN NOT NULL DEFAULT {_false}",
         "max_upload_files": "INTEGER NOT NULL DEFAULT 50",
+        # Selected on every page load, so a legacy start dies without them (9d2e6b1f4c58).
+        "show_explore": f"BOOLEAN NOT NULL DEFAULT {_true}",
+        "explore_build_enabled": f"BOOLEAN NOT NULL DEFAULT {_true}",
     }.items():
         if column not in existing_site:
             conn.execute(text(f"ALTER TABLE sitesettings ADD COLUMN {column} {definition}"))
@@ -216,7 +279,9 @@ def _migrate_add_missing_columns(conn):
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_workflow_id ON analysisjob (workflow_id)",
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_created_at ON analysisjob (created_at)",
         "CREATE INDEX IF NOT EXISTS ix_taskresult_job_id ON taskresult (job_id)",
-        "CREATE INDEX IF NOT EXISTS ix_finding_task_result_id ON finding (task_result_id)",
+        # The composite, not a task_result_id index of its own: it covers that column too
+        # (migration e064602640a4 dropped the redundant single-column one).
+        "CREATE INDEX IF NOT EXISTS ix_finding_task_severity ON finding (task_result_id, severity)",
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_status ON analysisjob (status)",
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_finished_at ON analysisjob (finished_at)",
         "CREATE INDEX IF NOT EXISTS ix_analysisjob_file_wf_created ON analysisjob (file_id, workflow_id, created_at DESC)",
@@ -258,7 +323,7 @@ def _migrate_add_missing_columns(conn):
             conn.execute(text(idx_sql))
     if "entity_job_link" in all_tables:
         for idx_sql in [
-            "CREATE INDEX IF NOT EXISTS ix_entity_job_link_entity_id ON entity_job_link (entity_id)",
-            "CREATE INDEX IF NOT EXISTS ix_entity_job_link_job_id ON entity_job_link (job_id)",
+            # entity_id is covered by the table's own uq_entity_job (entity_id, job_id).
+            "CREATE INDEX IF NOT EXISTS ix_entity_job_link_job_entity ON entity_job_link (job_id, entity_id)",
         ]:
             conn.execute(text(idx_sql))

@@ -1,7 +1,7 @@
 """Case evidence selection and saved-report access, shared by routes and workers."""
 
 from sqlalchemy import func, or_, select, update
-from sqlalchemy.orm import load_only
+from sqlalchemy.orm import load_only, undefer
 
 from app.ai.case_digest import MAX_CASE_LINKS, build_case_digest, render_case_prompt
 from app.ai.digest import MAX_FINDINGS, build_job_digest
@@ -147,7 +147,11 @@ def prepare_case_evidence(db, case, user, *, max_chars: int | None = None):
     """
     # Keep source rows alive until the worker commits their provenance. PostgreSQL
     # takes shared row locks; SQLite protects the subsequent write with its transaction.
-    all_jobs = list(db.scalars(eligible_jobs(case.id, user).order_by(AnalysisJob.id).limit(MAX_CASE_LINKS + 1).with_for_update(read=True, of=AnalysisJob)))
+    all_jobs = list(
+        db.scalars(
+            eligible_jobs(case.id, user).options(undefer(AnalysisJob.analytics_json)).order_by(AnalysisJob.id).limit(MAX_CASE_LINKS + 1).with_for_update(read=True, of=AnalysisJob)
+        )
+    )
     jobs = all_jobs[:MAX_CASE_LINKS]
     entity_rows = db.execute(
         select(Entity.id, Entity.entity_type, Entity.value, CaseEntityLink.note)

@@ -298,4 +298,17 @@ async def test_jobs_list_does_not_load_the_marker_blob(test_client, async_db):
 
     loaded = (await async_db.execute(select(AnalysisJob).where(AnalysisJob.id == job.id))).scalar_one()
     assert "event_markers" in sa_inspect(loaded).unloaded, "event_markers must not be eagerly loaded"
-    assert "analytics_json" not in sa_inspect(loaded).unloaded, "sanity: ordinary columns still load"
+    # analytics_json is the same kind of blob (up to hundreds of KB), deferred for the same reason.
+    assert "analytics_json" in sa_inspect(loaded).unloaded, "analytics_json must not be eagerly loaded"
+    assert "severity_summary" not in sa_inspect(loaded).unloaded, "sanity: ordinary columns still load"
+
+
+def test_no_template_reads_the_deferred_analytics_blob():
+    """`analytics_json` is deferred, so a template touching `job.analytics_json` on an
+    async-loaded job raises MissingGreenlet mid-render. The two routes that need it load it
+    with `_load_job_full(..., analytics=True)` and pass the parsed dict instead."""
+    from pathlib import Path
+
+    templates = Path(__file__).resolve().parents[1] / "app" / "templates"
+    offenders = [str(p.relative_to(templates)) for p in templates.rglob("*.html") if "analytics_json" in p.read_text()]
+    assert offenders == []

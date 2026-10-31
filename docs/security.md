@@ -538,6 +538,36 @@ Job-watch webhooks add no new outbound surface: they reuse an existing rule's UR
 SSRF guard and rate limit, and are therefore member-only for the same reason rules are. See
 [Rule webhooks](#rule-webhooks) above for that posture.
 
+## Explore
+
+Explore shows **every event of an upload**, not only what a rule matched: command lines,
+user names, network destinations that no detection ever surfaced. So it is narrower than the
+job page. It needs a signed-in account that is a member or admin, or the job's own
+submitter, on top of the job's normal visibility; anonymous visitors of a public job see its
+findings and never its events. Every refusal is the same 404 a missing job returns, so the
+routes cannot be used to probe which jobs exist. The full process tree on the job page
+follows the same rule; everyone else keeps the tree of matched processes only.
+
+- **On a case**, Explore is member+ like every case page, and reads only the case's jobs the
+  viewer may see (`visible_job_filter`): a private job another member linked into a shared
+  case contributes nothing.
+- **Exports are audited** (`export.job_events`, `export.case_events`, with the search that produced them) and rate
+  limited per user (`EVENTS_EXPORT_RATE_LIMIT_PER_MINUTE`). CSV cells are defused against
+  spreadsheet formula injection.
+- **Indexes are copies of the uploads.** They sit beside the uploads in the same storage
+  backend and are deleted with them. Restrict and back up `events/` as you would the
+  uploads; retention settings apply to indexes separately (`EVENTS_RETENTION_DAYS`).
+- **Searches cannot reach outside the index.** No text from the search box reaches the
+  SQL: values are bound parameters and field names are taken from the index's own column
+  list, checked by a fuzz test. The query engine in the web process is locked to the index
+  and cache directories, with external access and configuration changes disabled before its
+  first query.
+- **Nothing from an index is cached in the browser's storage**: htmx's history snapshots
+  are off for the Explore pane.
+
+Turning Explore off: `EVENTS_ENABLED=false` (no new indexes, tab hidden everywhere) or
+**Explore** on `/admin/settings` (tab hidden, builds continue).
+
 ## Activity log
 
 Off by default (`activity_log_enabled` on `/admin/settings`), because turning it on means

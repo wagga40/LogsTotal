@@ -179,6 +179,28 @@ Used with `COMPOSE_PROFILES=proxy`. The four `PROXY_TLS` modes, what each needs,
 | `REQUEST_LOG_ENABLED` | Log one line per request with status and duration (default: `false`). `/static/` and `/health` are never logged; the request id is set either way |
 | `ACTIVITY_RETENTION_DAYS` | How long activity-log rows are kept, in days; `0` keeps forever (default: `90`). Capture itself is the `activity_log_enabled` site setting, not an environment variable |
 | `BACKGROUND_TASK_RETENTION_DAYS` | How long finished background-task rows are kept, in days; `0` keeps forever (default: `30`). Only finished rows are pruned |
+| `EVENTS_ENABLED` | Build an event index (every event of each upload, as Parquet) beside every analysis, and offer the Explore tab. The indexes are a derived cache, rebuildable from the upload at any time; `false` stops new builds and hides Explore, and leaves existing indexes on disk (default: `true`) |
+| `EVENTS_BUILD_TIMEOUT_SECONDS` | Wall-clock limit for one store build; past it the build's whole process group is killed and the store marked failed (default: `3600`) |
+| `EVENTS_BUILD_MEMORY_MB` | DuckDB's memory limit inside the store build. Measured: 724 MB peak for a 184k-event, 89-column EVTX at the default (default: `1024`) |
+| `EVENTS_BUILD_MAX_RSS_MB` | Resident memory past which the store build is killed (Linux; read from /proc). DuckDB's own limit does not cap the process (default: `2048`) |
+| `EVENTS_BUILD_THREADS` | Threads for the store build's text index and EVTX parsing. The build runs beside the detection tools, niced (default: `2`) |
+| `EVENTS_BUILD_MAX_CONCURRENT` | Store builds running at once per worker host; another waits and retries (default: `1`) |
+| `EVENTS_MIN_FREE_DISK_MB` | Free disk the store build needs beyond twice the upload's size, or it fails without starting (default: `2048`) |
+| `EVENTS_MAX_EVENTS` | Events stored per upload; past it the store is marked truncated and says so (default: `5000000`) |
+| `EVENTS_MAX_COLUMNS` | Distinct fields stored as columns per upload; fields past it are kept in one JSON column, `_lt_extra` (default: `4096`) |
+| `EVENTS_TEXT_INDEX` | Build the lowercase full-text index that bare-word search reads. About as large again as the events (default: `true`) |
+| `EVENTS_RETENTION_DAYS` | Evict a store not opened for this many days (`0` keeps them). An evicted store is rebuilt from the upload on demand (default: `0`) |
+| `EVENTS_MAX_TOTAL_MB` | Total size of all stores; past it the least recently opened are evicted first (`0`: no cap) (default: `0`) |
+| `EVENTS_DUCKDB_THREADS` | Threads each Explore query may use in the web process (default: `2`) |
+| `EVENTS_DUCKDB_MEMORY_MB` | DuckDB's memory limit in the web process, shared by every Explore query; past it a query spills to disk under `.events_cache/tmp`. Measured: 696 MB peak for two heavy queries and three exports on a 2M-event store (default: `768`) |
+| `EVENTS_MAX_CONCURRENT_QUERIES` | Explore queries running at once per web process; another waits up to two seconds, then the page retries (default: `2`) |
+| `EVENTS_QUERY_TIMEOUT_SECONDS` | An Explore query running longer is interrupted and the page says so (default: `10`) |
+| `EVENTS_CACHE_MAX_MB` | With S3 storage, the local copy of recently opened stores the web tier keeps; least recently opened out first (default: `4096`) |
+| `EVENTS_EXPORT_RATE_LIMIT_PER_MINUTE` | Explore exports (CSV or NDJSON) one user may start per minute; each is audited as `export.job_events` (`0`: unlimited) (default: `5`) |
+| `RAW_OUTPUT_COMPRESSION` | Compress each job's raw tool outputs with zstd once its analytics are computed (default: `true`). Measured on real outputs: 276 MB → 7 MB for one job. Every reader handles plain and compressed outputs alike, so `false` only stops new compression; the raw ZIP export always contains the tools' original files. Existing outputs are compressed by **Compress Tool Outputs** on the Maintenance tab |
+| `UPLOAD_COMPRESSION` | `zstd` stores new uploads compressed (about 26x on EVTX); `off` stores them as uploaded. Analyses, downloads and event indexes read a private decompressed copy under `.decompressed/`, so tools and downloads see the original bytes. **Compress Uploads** on the Maintenance tab converts existing ones (default: `off`) |
+| `UPLOAD_COMPRESSION_LEVEL` | zstd level for compressed uploads; higher levels cost time for a few percent (default: `3`) |
+| `DB_VACUUM_FREELIST_PERCENT` | SQLite only. The share of the database file held in free pages, as a percentage, past which the daily optimise task (04:10 UTC) gives them back to the filesystem (default: `25`; `0` disables the reclaim, `PRAGMA optimize` still runs). The first reclaim is a full `VACUUM`, which also switches the file to incremental auto-vacuum so later ones are cheap; above 256 MB the task only flags the file on `/admin/storage` and leaves the full `VACUUM` to you. See [Storage and retention](runbooks/storage.md) |
 | `UPLOAD_RETENTION_DAYS` | Age at which an uploaded log file **and its jobs** are deleted, in days (default: `0` = never). The age counts from the newer of the upload and the most recent job on that file, so re-uploading identical content as a new job or resubmitting it keeps the file. Off by default because this removes submitted evidence, not derived data. `/admin/storage` shows the effective value; the sweep schedule is in [Storage and retention](runbooks/storage.md) |
 | `UPLOAD_DIR` | Local upload directory (default: `uploads`) |
 | `MAX_UPLOAD_SIZE_MB` | Maximum upload file size in MB (default: `500`) |

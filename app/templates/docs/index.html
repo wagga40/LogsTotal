@@ -7,6 +7,7 @@
   ('what-is',    'What is LogsTotal?'),
   ('submitting', 'Submitting a log'),
   ('reading',    'Reading a job'),
+  ('explore',    'Explore every event'),
   ('similarity', 'Similarity &amp; correlation'),
   ('intel',      'Intel: entities'),
   ('cases',      'Cases'),
@@ -328,6 +329,40 @@
       </table>
     </section>
 
+    <!-- ── Explore ───────────────────────────────────── -->
+    <section id="explore">
+      <h2>Explore every event</h2>
+      <p>A job&rsquo;s findings are what the rules matched. The <strong>Explore</strong> tab is the rest of the log: every event of the upload, searchable, charted and exportable, with the detected ones marked. LogsTotal builds this <em>event index</em> itself, beside the detection tools, whichever tools the workflow ran. Uploads analysed before indexes existed show a <strong>Build event index</strong> button instead.</p>
+      <p>Explore is for members, admins and the person who submitted the job (signed in). Anonymous visitors and other users see the findings but never the log itself.</p>
+
+      <h3>Searching</h3>
+      <p>Type in the search box and press Enter. The <strong>?</strong> beside it lists the full syntax; the essentials:</p>
+      <table>
+        <thead><tr><th>You type</th><th>It finds events where</th></tr></thead>
+        <tbody>
+          <tr><td><code>mimikatz</code></td><td>the text contains <em>mimikatz</em>, in any field, any case</td></tr>
+          <tr><td><code>Image:*powershell*</code></td><td>the field contains it (<code>x*</code> starts with, <code>*x</code> ends with, no star is an exact match)</td></tr>
+          <tr><td><code>EventID:4624,4625</code> &nbsp; <code>LogonType:&gt;=3</code></td><td>a number is one of a list, or compares</td></tr>
+          <tr><td><code>-User:*</code> &nbsp; <code>-svchost</code></td><td>a field is absent, or a word is not there</td></tr>
+          <tr><td><code>a OR b</code> &nbsp; <code>(a OR b) c</code></td><td>either; terms side by side must all match</td></tr>
+          <tr><td><code>det:yes</code> &nbsp; <code>level:&gt;=high</code> &nbsp; <code>rule:*mimikatz*</code></td><td>a rule matched it, at a level, or a particular rule did</td></tr>
+          <tr><td><code>host:</code> <code>user:</code> <code>after:2026-01-31</code> <code>hour:22-6</code></td><td>shortcuts for the host, any user field, a time range (UTC), the hour of day</td></tr>
+        </tbody>
+      </table>
+
+      <h3>The rest of the pane</h3>
+      <ul>
+        <li><strong>Histogram</strong>: events per time slot above the line, detected events below. Drag across it to zoom into that range; <strong>Reset zoom</strong> returns to the whole log.</li>
+        <li><strong>Fields</strong> lists every field with the share of events that have it. Click a name for its most frequent values among the current results, then <strong>+</strong> to keep only a value or <strong>-</strong> to exclude it. The checkbox shows the field as a column.</li>
+        <li><strong>Stack</strong>, in a field&rsquo;s values, counts every combination of up to three fields among the results, rarest first: the one host where every other has fifty, the parent process seen once. <strong>Filter</strong> on a row searches for that combination.</li>
+        <li><strong>Table</strong>: click a header to sort, type in the cell under it and press Enter to filter that column (the filter becomes a term in the search box). Click a row for the whole event: the rules that matched it, every field grouped by where it came from, its JSON, and a button for everything within five minutes on the same host.</li>
+        <li><strong>Keys</strong>: <kbd>/</kbd> focuses the search, <kbd>j</kbd> and <kbd>k</kbd> move between rows, <kbd>Enter</kbd> opens one, <kbd>Esc</kbd> closes it, <kbd>&larr;</kbd> <kbd>&rarr;</kbd> turn the page.</li>
+        <li><strong>CSV</strong> exports the visible columns of every matching event (up to 500,000); <strong>NDJSON</strong> every field (up to 100,000). Exports are recorded in the activity log.</li>
+      </ul>
+      <p><strong>On a case</strong> <span class="lt-doc-badge">member+</span>, the Explore tab searches every event of every job in the case you can see, as one table with a <strong>Source</strong> column naming each upload. A banner says how many of the case&rsquo;s jobs are indexed and links the ones that are not; a case explores at most 20 uploads at once.</p>
+      <p>The address bar always holds the current search, so a copied link or a reload reopens the same view. The Processes panel draws from the same index: for Explore users it shows every process the log started, with the detected ones marked, rather than only the matched ones.</p>
+    </section>
+
     <!-- ── Similarity & correlation ─────────────────── -->
     <section id="similarity">
       <h2>Similarity &amp; correlation</h2>
@@ -636,6 +671,7 @@
           <tr><td>Private submissions</td><td>no</td><td>yes</td><td>yes</td><td>yes</td></tr>
           <tr><td>Resubmit a job</td><td>no</td><td>yes</td><td>yes</td><td>yes</td></tr>
           <tr><td>Comment on a job, watch a job</td><td>no</td><td>yes</td><td>yes</td><td>yes</td></tr>
+          <tr><td>Explore every event of a job, export events</td><td>no</td><td>own jobs</td><td>yes</td><td>yes</td></tr>
           <tr><td>Intel, IOC feed, STIX export, cases, tags, AI runs</td><td>no</td><td>no</td><td>yes</td><td>yes</td></tr>
           <tr><td>Delete jobs, manage workflows, manage users, raw tool outputs</td><td>no</td><td>no</td><td>no</td><td>yes</td></tr>
         </tbody>

@@ -31,6 +31,8 @@ from app.intel.tactics import (
 )
 from app.tools.catalog import TOOLS, output_tool
 from app.tools.event_fields import EventView
+from app.tools.event_keys import LinkAccumulator
+from app.tools.output_files import logical_name
 from app.tools.registry import get_adapter_class
 
 _log = logging.getLogger(__name__)
@@ -70,8 +72,10 @@ def _local_job_dir(job_id: int) -> Path:
 
 def _iter_output_files(job_dir: Path) -> Iterator[Path]:
     """Yield the raw tool-output files under *job_dir* (recursive, suffix-matched)."""
+    # Matched on the logical name: a finished job's outputs are `<name>.zst`. Missing them
+    # here would make has_raw_output() false, and _cache_analytics then writes nothing.
     for f in job_dir.rglob("*"):
-        if f.is_file() and f.name.lower().endswith(_OUTPUT_SUFFIXES):
+        if f.is_file() and logical_name(f.name).lower().endswith(_OUTPUT_SUFFIXES):
             yield f
 
 
@@ -89,6 +93,7 @@ def parse_single_output_file(
     rule_meta: dict[str | tuple[str, str], tuple[str | None, str | None, int | None]] | None = None,
     consumer: Callable[[dict], None] | None = None,
     max_events: int | None = None,
+    links: LinkAccumulator | None = None,
 ) -> tuple[dict[str, dict[str, int]], list[dict]]:
     """Parse one tool output file into (buckets, events). Thread-safe.
 
@@ -119,7 +124,8 @@ def parse_single_output_file(
     seen = 0
     max_events = MAX_PARSE_EVENTS if max_events is None else max_events
     meta = rule_meta or {}
-    tool = _TOOL_BY_SUFFIX.get(next((s for s in _OUTPUT_SUFFIXES if output_file.name.lower().endswith(s)), ""), "")
+    name = logical_name(output_file.name).lower()  # a finished job's outputs are `<name>.zst`
+    tool = _TOOL_BY_SUFFIX.get(next((s for s in _OUTPUT_SUFFIXES if name.endswith(s)), ""), "")
 
     def _mark(ts: str | None, tactic: str, rule_name: str, event: dict, level: object = None, raw_rule_id: str = ""):
         if markers is None:
@@ -165,6 +171,9 @@ def parse_single_output_file(
             ts = match.timestamp
             _record(ts, tactic)
             _mark(ts, tactic, match.rule_name, event, match.severity, match.rule_id)
+            if links is not None:
+                # The source event's identity, so the event store can mark it detected.
+                links.add(tool, match.rule_id, match.rule_name, match.severity, event, ts)
             seen += 1
             if consumer is None:
                 events.append(event)
@@ -209,6 +218,8 @@ def extract_all_from_raw_output(
     rule_meta: dict[str | tuple[str, str], tuple[str | None, str | None, int | None]] | None = None,
     consumer: Callable[[dict], None] | None = None,
     job_dir: Path | None = None,
+    process_events: list[dict] | None = None,
+    links: LinkAccumulator | None = None,
 ) -> tuple[dict[str, dict[str, int]], list[dict]]:
     """Read raw tool output files and extract ALL events.
 
@@ -228,8 +239,16 @@ def extract_all_from_raw_output(
     :func:`parse_single_output_file`. Each worker thread fills a private accumulator that
     is folded into the caller's under the ``as_completed`` loop — the same discipline
     ``file_bucket_list`` already uses, and the reason ``MarkerAccumulator`` needs no lock.
+
+    ``process_events``, when given, receives the process-creation events (those
+    ``lineage.is_process_event`` accepts) among the events the pass kept, so the analytics
+    pass can build the process forest without materialising every event. Files are read in
+    sorted path order and merged in that order: completion order made a multi-tool job's
+    event order, and so the process tree's tie-breaking, differ from run to run.
     """
     from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    from app.intel.lineage import is_process_event
 
     job_dir = job_dir or _local_job_dir(job_id)
     if not job_dir.is_dir():
@@ -238,13 +257,24 @@ def extract_all_from_raw_output(
     rt = rule_tactic or {}
     tt = technique_tactic or {}
 
-    output_files = list(_iter_output_files(job_dir))
+    output_files = sorted(_iter_output_files(job_dir))
 
     if not output_files:
         return {}, []
 
     if len(output_files) == 1:
-        return parse_single_output_file(output_files[0], rt, tt, markers=markers, rule_meta=rule_meta, consumer=consumer)
+        single = consumer
+        if consumer is not None and process_events is not None:
+
+            def single(event: dict, _consumer=consumer) -> None:
+                _consumer(event)
+                if is_process_event(event):
+                    process_events.append(event)
+
+        result = parse_single_output_file(output_files[0], rt, tt, markers=markers, rule_meta=rule_meta, consumer=single, links=links)
+        if consumer is None and process_events is not None:
+            process_events.extend(e for e in result[1] if is_process_event(e))
+        return result
 
     all_events: list[dict] = []
     file_bucket_list: list[dict[str, dict[str, int]]] = []
@@ -257,34 +287,55 @@ def extract_all_from_raw_output(
     if consumer is not None:
         lock = threading.Lock()
 
-        def guarded(event: dict, _consumer=consumer) -> None:
+        def guarded(event: dict, _consumer=consumer) -> bool:
             nonlocal remaining
             with lock:
                 if remaining <= 0:
-                    return
+                    return False
                 remaining -= 1
                 _consumer(event)
+                return True
 
     def _parse(path: Path):
         sink = MarkerAccumulator() if markers is not None else None
-        return (*parse_single_output_file(path, rt, tt, markers=sink, rule_meta=rule_meta, consumer=guarded), sink)
+        link_sink = LinkAccumulator() if links is not None else None
+        mine: list[dict] = []
+        per_file = guarded
+        if guarded is not None and process_events is not None:
 
+            def per_file(event: dict) -> None:
+                if guarded(event) and is_process_event(event):
+                    mine.append(event)
+
+        return (*parse_single_output_file(path, rt, tt, markers=sink, rule_meta=rule_meta, consumer=per_file, links=link_sink), sink, mine, link_sink)
+
+    results: dict[Path, tuple] = {}
     with ThreadPoolExecutor(max_workers=min(len(output_files), 4)) as pool:
         futures = {pool.submit(_parse, f): f for f in output_files}
         for fut in as_completed(futures):
             try:
-                file_buckets, file_events, file_markers = fut.result()
+                results[futures[fut]] = fut.result()
             except Exception:
                 continue
-            all_events.extend(file_events)
-            file_bucket_list.append(file_buckets)
-            if markers is not None and file_markers is not None:
-                markers.merge(file_markers)
+    for path in output_files:  # merged in path order, never completion order
+        if path not in results:
+            continue
+        file_buckets, file_events, file_markers, file_processes, file_links = results[path]
+        if links is not None and file_links is not None:
+            links.merge(file_links)
+        all_events.extend(file_events)
+        file_bucket_list.append(file_buckets)
+        if markers is not None and file_markers is not None:
+            markers.merge(file_markers)
+        if process_events is not None:
+            process_events.extend(file_processes)
 
     merged_buckets = merge_buckets(file_bucket_list)
 
     if len(all_events) > MAX_PARSE_EVENTS:
         all_events = all_events[:MAX_PARSE_EVENTS]
+    if consumer is None and process_events is not None:
+        process_events.extend(e for e in all_events if is_process_event(e))
     return merged_buckets, all_events
 
 

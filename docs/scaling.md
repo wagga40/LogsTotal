@@ -77,12 +77,35 @@ Notes:
 
 ## Storage growth
 
-Each job stores its uploaded log plus each tool's raw output. Stored tool stdout/stderr is
+Each job stores its uploaded log plus each tool's raw output. Raw outputs are stored
+zstd-compressed by default (about 40x); uploads can be too, with `UPLOAD_COMPRESSION=zstd`
+(about 26x on EVTX, at the cost of decompressing a copy for each analysis). Stored tool stdout/stderr is
 capped by `MAX_LOG_OUTPUT_BYTES` (default 50 KB per task). Raw outputs are deleted after
 `JOB_OUTPUT_RETENTION_DAYS` (default 90) by a daily sweep; uploaded files are kept unless
 you set `UPLOAD_RETENTION_DAYS`. Watch usage on `/admin/storage` and the disk gauge on
 `/admin`. The schedules and the manual reclaim actions are in
 [Storage and retention](runbooks/storage.md).
+
+## Explore
+
+Each upload gets an event index, built by a worker thread in a subprocess beside the
+detection tools.
+
+- **CPU and memory while building**: one build per worker host at a time
+  (`EVENTS_BUILD_MAX_CONCURRENT`), niced, DuckDB limited to `EVENTS_BUILD_MEMORY_MB`
+  (1 GB) and the process killed past `EVENTS_BUILD_MAX_RSS_MB` (2 GB). Measured peaks:
+  471 MB for a 213 MB EVTX, 1.7 GB for a 2.1 GB forwarded-events EVTX with 256 fields.
+- **A worker thread while building**: the build holds one Huey thread for its seconds to
+  minutes. On a busy host, add one to `HUEY_WORKERS` so builds do not delay analyses.
+- **Disk**: an index is about 5% of an EVTX upload (0.75% of a wide forwarded-events log).
+  The free-text index is roughly as large again; `EVENTS_TEXT_INDEX=false` drops it, and
+  free-text words with it.
+- **Web memory**: searches run in the web process, under `EVENTS_DUCKDB_MEMORY_MB` (768 MB)
+  shared by at most `EVENTS_MAX_CONCURRENT_QUERIES` (2) at once. Measured in a 2 GB web
+  container: 696 MB peak for two heavy searches and three exports on a 2M-event index.
+
+`./logstotal test:perf` measures the query engine against its budgets on a synthetic
+2M-event store.
 
 ## Apply a recommendation
 

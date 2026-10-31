@@ -64,7 +64,7 @@ async def _comparison_task_metadata(db: AsyncSession, job_ids: list[int]) -> dic
             TaskResult.status,
             TaskResult.execution_snapshot,
             TaskResult.diagnostics_json,
-            func.substr(TaskResult.log_output, 1, 2048).label("log_output"),
+            func.substr(TaskResult.log_output, 1, 2048).label("log_head"),
         )
         .where(TaskResult.job_id.in_(job_ids), TaskResult.tool_name.not_in(POST_TASK_NAMES))
         .order_by(TaskResult.id)

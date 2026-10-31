@@ -54,11 +54,14 @@ async def _known_sets(db: AsyncSession) -> tuple[set[str], set[int], set[int]]:
 
 
 async def _usage(db: AsyncSession, *, force: bool) -> storage_usage.UsageReport:
+    from app.events.store import known_store_prefixes_async
+
     filenames, job_ids, active = await _known_sets(db)
+    stores = await known_store_prefixes_async(db)
 
     def _run() -> storage_usage.UsageReport:
         return storage_usage.cached_usage(
-            gather=lambda: storage_usage.gather_usage_sync(known_filenames=filenames, known_job_ids=job_ids, active_job_ids=active),
+            gather=lambda: storage_usage.gather_usage_sync(known_filenames=filenames, known_job_ids=job_ids, active_job_ids=active, known_event_stores=stores),
             force=force,
         )
 
@@ -133,6 +136,7 @@ async def storage_usage_partial(
 @router.get("/db-footprint-partial")
 async def storage_db_footprint(
     request: Request,
+    db: AsyncSession = Depends(get_async_session),
     user: User = Depends(current_superuser),
 ):
     """Where the database's own bytes are.
@@ -142,7 +146,25 @@ async def storage_db_footprint(
     the critical path of a page an admin opens to check free space.
     """
     footprint = await run_in_threadpool(storage_usage.database_footprint_sync)
-    return templates.TemplateResponse(request, "admin/partials/_storage_database.html", {"request": request, "user": user, "footprint": footprint})
+    last_vacuum = (
+        await db.execute(
+            select(BackgroundTask.finished_at, BackgroundTask.detail)
+            .where(BackgroundTask.kind == "vacuum_database", BackgroundTask.status == BackgroundTaskStatus.COMPLETED)
+            .order_by(BackgroundTask.finished_at.desc())
+            .limit(1)
+        )
+    ).first()
+    return templates.TemplateResponse(
+        request,
+        "admin/partials/_storage_database.html",
+        {
+            "request": request,
+            "user": user,
+            "footprint": footprint,
+            "last_vacuum": last_vacuum,
+            "auto_vacuum_threshold": settings.db_vacuum_freelist_percent,
+        },
+    )
 
 
 @router.post("/purge-orphans")

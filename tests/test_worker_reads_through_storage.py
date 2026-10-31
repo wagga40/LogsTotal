@@ -162,6 +162,36 @@ async def test_the_admin_download_releases_its_copy(admin_client, async_db, monk
     assert store.released == store.loaded
 
 
+def test_purge_reports_only_the_bytes_it_deleted(sync_db, tmp_path, monkeypatch):
+    """An unowned upload is listed on the storage page but Purge never deletes it, so the
+    finished task must not report its bytes as reclaimed."""
+    import app.workers.tasks as tasks_mod
+    from app import storage as storage_mod
+    from app.models import BackgroundTask, BackgroundTaskStatus
+
+    upload_dir = tmp_path / "uploads"
+    upload_dir.mkdir()
+    monkeypatch.setattr("app.config.settings.upload_dir", upload_dir)
+    monkeypatch.setattr(storage_mod, "_storage", None)
+    monkeypatch.setattr(tasks_mod, "get_sync_session", lambda: sync_db)
+    monkeypatch.setattr(sync_db, "close", lambda: None)
+
+    (upload_dir / "ghost.evtx").write_bytes(b"g" * 5000)  # no LogFile row: shown, not purged
+    (upload_dir / "job_999" / "task_1").mkdir(parents=True)
+    (upload_dir / "job_999" / "task_1" / "old_hayabusa.json").write_bytes(b"h" * 1500)
+    bt = BackgroundTask(name="purge_orphaned_storage", status=BackgroundTaskStatus.PENDING)
+    sync_db.add(bt)
+    sync_db.commit()
+
+    tasks_mod.purge_orphaned_storage.call_local(bt.id)
+
+    sync_db.refresh(bt)
+    assert bt.status == BackgroundTaskStatus.COMPLETED
+    assert (upload_dir / "ghost.evtx").exists(), "Purge never deletes an upload"
+    assert not (upload_dir / "job_999").exists()
+    assert bt.detail.endswith("1.5 KB reclaimed"), bt.detail
+
+
 def test_purging_orphans_spares_what_was_created_during_the_walk(sync_db, tmp_path, monkeypatch):
     """The purge snapshots the known jobs and uploads, then walks storage. A job picked up
     during the walk (on S3 the walk can take minutes) wrote a directory the snapshot did not
@@ -205,3 +235,58 @@ def test_purging_orphans_spares_what_was_created_during_the_walk(sync_db, tmp_pa
     assert (upload_dir / f"job_{created['job']}").exists()
     assert (upload_dir / "late_b.evtx").exists()
     assert not (upload_dir / "job_999").exists(), "the real orphan still goes"
+
+
+def test_vacuum_checkpoints_the_wal_and_counts_it(sync_db, tmp_path, monkeypatch):
+    """In WAL mode VACUUM shrinks the main file at once but leaves a WAL as large as the new
+    database until a checkpoint. Measured on a scratch file: main 41 MB -> 4.1 MB with a
+    4.1 MB WAL beside it. Reading the main file alone over-reported what was freed, and a
+    WAL left over from before the run was never counted."""
+    import sqlite3
+
+    from sqlalchemy import create_engine
+
+    import app.database as database_mod
+    import app.workers.tasks as tasks_mod
+    from app.models import BackgroundTask, BackgroundTaskStatus
+
+    path = tmp_path / "vac.db"
+    raw = sqlite3.connect(path, isolation_level=None)
+    raw.execute("PRAGMA journal_mode=WAL")
+    raw.execute("CREATE TABLE t(x TEXT)")
+    raw.execute("BEGIN")
+    raw.executemany("INSERT INTO t VALUES (?)", [("x" * 1000,)] * 4000)
+    raw.execute("COMMIT")
+    raw.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    raw.execute("DELETE FROM t WHERE rowid % 10 != 0")  # leaves a WAL behind
+    raw.close()
+    wal = tmp_path / "vac.db-wal"
+
+    def on_disk() -> int:
+        return sum(p.stat().st_size for p in (path, wal) if p.exists())
+
+    before = on_disk()
+    engine = create_engine(f"sqlite:///{path}")
+    monkeypatch.setattr(database_mod, "sync_engine", engine)
+    monkeypatch.setattr(tasks_mod, "get_sync_session", lambda: sync_db)
+    monkeypatch.setattr(sync_db, "close", lambda: None)
+    bt = BackgroundTask(name="vacuum_database", status=BackgroundTaskStatus.PENDING)
+    sync_db.add(bt)
+    sync_db.commit()
+
+    tasks_mod.vacuum_database.call_local(bt.id)
+    engine.dispose()
+
+    sync_db.refresh(bt)
+    assert bt.status == BackgroundTaskStatus.COMPLETED, bt.error_message
+    assert not wal.exists() or wal.stat().st_size == 0, "the WAL is checkpointed and truncated"
+    from app.workers.utils import humanbytes
+
+    assert bt.detail == f"reclaimed {humanbytes(before - on_disk())}"
+    # The manual Vacuum also switches the file to incremental mode, so later reclaims by the
+    # daily optimise task are an incremental_vacuum instead of another whole-file rewrite.
+    check = sqlite3.connect(path)
+    try:
+        assert check.execute("PRAGMA auto_vacuum").fetchone()[0] == 2
+    finally:
+        check.close()

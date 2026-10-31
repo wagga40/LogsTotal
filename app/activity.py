@@ -127,6 +127,7 @@ ACTIONS: dict[str, ActionSpec] = {
     "job.tag.add": ActionSpec("job", "Job tagged"),
     "job.tag.remove": ActionSpec("job", "Job tag removed"),
     "job.watch": ActionSpec("job", "Job watch toggled"),
+    "job.events_index": ActionSpec("job", "Event index build requested"),
     # ── discussions ──
     # The comment *text* is never recorded — only that a comment was made, by whom, and on
     # what. An audit log that quietly duplicated every analyst's prose would be a second,
@@ -169,6 +170,8 @@ ACTIONS: dict[str, ActionSpec] = {
     "export.job_findings": ActionSpec("export", "Job findings exported"),
     "export.job_analysis": ActionSpec("export", "Job analysis report exported"),
     "export.job_raw": ActionSpec("export", "Raw job output downloaded"),
+    "export.job_events": ActionSpec("export", "Job events exported"),
+    "export.case_events": ActionSpec("export", "Case events exported"),
 }
 
 

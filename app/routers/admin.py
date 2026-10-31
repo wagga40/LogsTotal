@@ -132,6 +132,42 @@ MAINTENANCE_ACTIONS = [
         "confirm_message": "Label every existing entity from the built-in rules?",
     },
     {
+        "key": "compress-db",
+        "url": "/admin/backfill-compress-db",
+        "param": "backfill_compress_db",
+        "title": "Compress Stored Blobs",
+        "description": "Encode finding events, evidence samples, analytics and rule texts written before compression.",
+        "details": (
+            "New rows are stored compressed; older ones read as they are, so this only reclaims "
+            "space. Run once after upgrading, then Vacuum on the Storage page to return it to disk."
+        ),
+        "confirm_title": "Compress stored blobs",
+        "confirm_message": "Re-encode every uncompressed blob row in the database?",
+    },
+    {
+        "key": "compress-uploads",
+        "url": "/admin/backfill-compress-uploads",
+        "param": "backfill_compress_uploads",
+        "title": "Compress Uploads",
+        "description": "Compress the uploads stored before UPLOAD_COMPRESSION=zstd.",
+        "details": (
+            "Uploaded logs compress about 26x. Analyses, downloads and event indexes read a decompressed "
+            "copy, so nothing else changes. Uploads with a job pending or running are skipped; run it again later."
+        ),
+        "confirm_title": "Compress uploads",
+        "confirm_message": "Compress every stored upload that is not compressed yet?",
+    },
+    {
+        "key": "compress-outputs",
+        "url": "/admin/backfill-compress-outputs",
+        "param": "backfill_compress_outputs",
+        "title": "Compress Tool Outputs",
+        "description": "Compress the raw tool outputs of jobs that finished before outputs were stored compressed.",
+        "details": ("About 40x on real outputs. Every reader, and the raw ZIP export, handles plain and compressed outputs alike, so this only reclaims disk or bucket space."),
+        "confirm_title": "Compress tool outputs",
+        "confirm_message": "Compress the raw outputs of every finished job?",
+    },
+    {
         "key": "entity-attributes",
         "url": "/admin/backfill-entity-attributes",
         "param": "backfill_entity_attributes",
@@ -689,6 +725,42 @@ async def backfill_entities_trigger(
     return await _queue_background_task(request, db, "Entity Backfill", backfill_entities, "backfill_entities", user=user)
 
 
+@router.post("/backfill-compress-db")
+async def backfill_compress_db_trigger(
+    request: Request,
+    db: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_superuser),
+):
+    """Encode the large blob rows written before compression existed. Admin only."""
+    from app.workers.tasks import backfill_compress_db
+
+    return await _queue_background_task(request, db, "Compress Stored Blobs", backfill_compress_db, "backfill_compress_db", user=user)
+
+
+@router.post("/backfill-compress-uploads")
+async def backfill_compress_uploads_trigger(
+    request: Request,
+    db: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_superuser),
+):
+    """Compress uploads stored before UPLOAD_COMPRESSION=zstd. Admin only."""
+    from app.workers.tasks import backfill_compress_uploads
+
+    return await _queue_background_task(request, db, "Compress Uploads", backfill_compress_uploads, "backfill_compress_uploads", user=user)
+
+
+@router.post("/backfill-compress-outputs")
+async def backfill_compress_outputs_trigger(
+    request: Request,
+    db: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_superuser),
+):
+    """Compress the raw tool outputs of jobs that finished before compression. Admin only."""
+    from app.workers.tasks import backfill_compress_outputs
+
+    return await _queue_background_task(request, db, "Compress Tool Outputs", backfill_compress_outputs, "backfill_compress_outputs", user=user)
+
+
 @router.post("/backfill-entity-attributes")
 async def backfill_entity_attributes_trigger(
     request: Request,
@@ -807,6 +879,8 @@ async def settings_save(
     show_entities: bool = Form(False),
     show_threat_detection: bool = Form(False),
     show_process_tree: bool = Form(False),
+    show_explore: bool = Form(False),
+    explore_build_enabled: bool = Form(False),
     builtin_rules_enabled: bool = Form(False),
     render_markdown: bool = Form(False),
     show_ai_analysis: bool = Form(False),
@@ -834,6 +908,8 @@ async def settings_save(
         "show_entities": show_entities,
         "show_threat_detection": show_threat_detection,
         "show_process_tree": show_process_tree,
+        "show_explore": show_explore,
+        "explore_build_enabled": explore_build_enabled,
         "builtin_rules_enabled": builtin_rules_enabled,
         "render_markdown": render_markdown,
         "show_ai_analysis": show_ai_analysis,

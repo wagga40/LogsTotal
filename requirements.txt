@@ -10,6 +10,7 @@ argon2-cffi==25.1.0
 argon2-cffi-bindings==26.1.0
 async-timeout==5.0.1; python_full_version < "3.11.3"
 asyncpg==0.32.0
+backports-zstd==1.8.0; python_version < "3.14"
 bcrypt==5.0.0
 boto3==1.43.114
 botocore==1.43.114
@@ -20,7 +21,9 @@ click==8.5.0
 cryptography==50.0.2
 dnspython==2.9.0
 docker==7.2.0
+duckdb==2.0.0
 email-validator==2.3.0
+evtx==0.14.1
 fastapi==0.145.0
 fastapi-users-db-sqlalchemy==7.0.0
 fastapi-users[sqlalchemy]==15.0.5

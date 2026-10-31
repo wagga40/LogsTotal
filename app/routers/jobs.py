@@ -62,6 +62,7 @@ from app.models import (
     IntelRuleMatch,
     InvestigationCase,
     JobAiAnalysis,
+    JobArtifact,
     JobRuleMatch,
     JobStatus,
     JobTag,
@@ -658,7 +659,8 @@ async def job_detail(
 
     member_cases = await _member_case_backlinks(db, job_id, user)
     comment_count = (await comment_counts_for(db, "job", [job_id])).get(job_id, 0) if user else 0
-    tabs = _build_job_tabs(user, comment_count, show_ai=await _show_ai_tab(db, job_id, user, site_settings, job_status=status))
+    explore, explore_badge = await _explore_tab(db, job, user, site_settings)
+    tabs = _build_job_tabs(user, comment_count, show_ai=await _show_ai_tab(db, job_id, user, site_settings, job_status=status), explore=explore, explore_badge=explore_badge)
 
     return templates.TemplateResponse(
         request,
@@ -674,6 +676,7 @@ async def job_detail(
             "is_duplicate": bool(request.query_params.get("dup")),
             "can_resubmit": await _can_resubmit(db, job.file_id, user),
             "comparison_baseline_id": await comparison_baseline_id(db, job, user),
+            "failed_logs": await _failed_task_logs(db, job, user),
             "tlsh_hash": tlsh_hash,
             "site_settings": site_settings,
             "member_cases": member_cases,
@@ -681,8 +684,40 @@ async def job_detail(
             "tag_colors": TAG_COLORS,
             "job_id": job.id,
             "watching": (await job_watch.is_watching_async(db, job_id, user.id)) if user else False,
+            # The Explore state a link carried (`/jobs/7?q=…#explore`), handed to the lazily
+            # loaded pane so a reload or a shared link reopens the same view.
+            "explore_qs": urlencode([(k, v) for k, v in request.query_params.multi_items() if k in _EXPLORE_PARAMS]) if explore else "",
         },
     )
+
+
+_EXPLORE_PARAMS = frozenset({"q", "det", "cols", "sort", "dir", "page", "ev", "from", "to", "stack"})
+
+
+def _compact_count(n: int) -> str:
+    """1,234 → 1.2k, 1,900,000 → 1.9M, for a tab badge."""
+    for size, suffix in ((1_000_000, "M"), (1_000, "k")):
+        if n >= size:
+            return f"{n / size:.1f}".rstrip("0").rstrip(".") + suffix
+    return str(n)
+
+
+async def _explore_tab(db: AsyncSession, job: AnalysisJob, user: User | None, site_settings) -> tuple[bool, str | None]:
+    """Whether this viewer gets the Explore tab, and its badge (the indexed event count).
+
+    The tab appears whether or not the upload is indexed yet, so a member can build one;
+    only `can_explore_job` viewers get it at all, and never while the switches are off.
+    """
+    from app.config import settings as app_settings
+    from app.events.store import store_for_job_async
+    from app.models import EventStoreStatus, can_explore_job
+
+    if not (app_settings.events_enabled and site_settings.show_explore and can_explore_job(job, user)):
+        return False, None
+    row, _sha = await store_for_job_async(db, job)
+    if row is not None and row.status == EventStoreStatus.READY.value and row.event_count:
+        return True, _compact_count(row.event_count)
+    return True, None
 
 
 async def _can_resubmit(db: AsyncSession, file_id: int, user: User | None) -> bool:
@@ -728,22 +763,42 @@ async def _show_ai_tab(db: AsyncSession, job_id: int, user: User | None, site_se
     return bool(await db.scalar(select(func.count(JobAiAnalysis.id)).where(JobAiAnalysis.job_id == job_id)))
 
 
-def _build_job_tabs(user: User | None, comment_count: int, *, show_ai: bool = False) -> list[dict]:
+def _build_job_tabs(user: User | None, comment_count: int, *, show_ai: bool = False, explore: bool = False, explore_badge: str | None = None) -> list[dict]:
     """Job-detail tabs, same `{key, label, badge, lazy_event, icon}` shape as the entity
     and case pages so they can share `resourceTabs()`.
 
     Anonymous visitors get a single-entry list: the template then renders the results
     with no tab strip rather than one pointless tab.
 
-    `show_ai` is keyword-only with a default, the way `_build_entity_tabs`'
-    `show_process_tree` is, so positional call sites stay unchanged.
+    `show_ai` and `explore` are keyword-only with defaults, the way `_build_entity_tabs`'
+    `show_process_tree` is, so positional call sites stay unchanged. Explore sits beside
+    Results: both are "what is in this log", one matched, one all of it.
     """
     tabs = [{"key": "results", "label": "Results", "badge": None, "lazy_event": None, "icon": "shield"}]
+    if explore:
+        tabs.append({"key": "explore", "label": "Explore", "badge": explore_badge, "lazy_event": "loadExplore", "icon": "search"})
     if show_ai:
         tabs.append({"key": "ai", "label": "AI Analysis", "badge": None, "lazy_event": "loadAiAnalysis", "icon": "sparkles"})
     if user is not None:
         tabs.append({"key": "discussion", "label": "Discussions", "badge": comment_count or None, "lazy_event": "loadComments", "icon": "chat"})
     return tabs
+
+
+async def _failed_task_logs(db: AsyncSession, job: AnalysisJob, user: User | None) -> dict[int, str]:
+    """Logs of this job's failed tasks, for the admin-only error panel; `{}` for anyone else.
+
+    `TaskResult.log_output` is deferred, so the poll no longer carries every task's log.
+    A failed tool's log is still shown inline while the rest of the job runs, which the lazy
+    "Show logs" pane cannot do (the 3 s morph would wipe content loaded into it), so its
+    text comes from one query over the failed tasks only.
+    """
+    if user is None or not user.is_superuser:
+        return {}
+    failed = [tr.id for tr in job.task_results if enum_val(tr.status) == "failed"]
+    if not failed:
+        return {}
+    rows = await db.execute(select(TaskResult.id, TaskResult.log_output).where(TaskResult.id.in_(failed), TaskResult.log_output.isnot(None)))
+    return {task_id: log for task_id, log in rows.all() if log}
 
 
 async def _member_case_backlinks(db: AsyncSession, job_id: int, user: User | None) -> list:
@@ -828,6 +883,7 @@ async def job_status_partial(
             "estimated_remaining": estimated_remaining,
             "can_resubmit": await _can_resubmit(db, job.file_id, user),
             "comparison_baseline_id": await comparison_baseline_id(db, job, user),
+            "failed_logs": await _failed_task_logs(db, job, user),
         },
         status_code=286 if is_terminal else 200,
     )
@@ -990,7 +1046,7 @@ async def job_analytics(
     user: User | None = Depends(current_user_optional),
 ):
     """HTMX partial — lazy-load analytics cards (MITRE, timeline, entities, threat detection)."""
-    job = await _load_job_full(db, job_id)
+    job = await _load_job_full(db, job_id, analytics=True)
     if not job:
         return HTMLResponse("")
     if not _can_view_private(job, user):
@@ -1070,7 +1126,11 @@ async def job_process_tree(
     if not site_settings.show_process_tree:
         return HTMLResponse("")
 
-    forest = await load_job_forest(job_id)
+    # The full forest (every process creation in the upload, not just the matched ones) only
+    # for a viewer who may read the whole log; everyone else keeps the hit-anchored tree.
+    from app.models import can_explore_job
+
+    forest = await load_job_forest(job_id, db=db, full=can_explore_job(job, user))
 
     return templates.TemplateResponse(
         request,
@@ -1091,7 +1151,7 @@ async def get_task_log(
     _: User = Depends(current_superuser),
 ):
     """HTMX partial — lazy-load task log output. Admin only."""
-    tr = await db.get(TaskResult, task_result_id)
+    tr = await db.get(TaskResult, task_result_id, options=[undefer(TaskResult.log_output)])
     if not tr:
         raise HTTPException(404)
 
@@ -1171,9 +1231,18 @@ async def job_export_raw(
         # run. Offloaded like the process-tree route.
         def _build_archive() -> None:
             with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+                from app.tools.output_files import ZST_SUFFIX, logical_name, open_output
+
                 for path in sorted(job_dir.rglob("*")):
-                    if path.is_file():
-                        zf.write(path, str(path.relative_to(job_dir)))
+                    if not path.is_file():
+                        continue
+                    rel = path.relative_to(job_dir)
+                    if path.name.lower().endswith(ZST_SUFFIX):
+                        # Outputs are stored compressed; the archive carries what the tool wrote.
+                        with open_output(path) as source, zf.open(str(rel.with_name(logical_name(path.name))), "w") as sink:
+                            shutil.copyfileobj(source, sink, 1 << 20)
+                    else:
+                        zf.write(path, str(rel))
             tmp.close()
 
         await run_in_threadpool(_build_archive)
@@ -1274,7 +1343,7 @@ async def job_analytics_json(
     ``mitre``, ``timeline``, ``entities``, ``threats``.
     Omit to export everything.
     """
-    job = await _load_job_full(db, job_id)
+    job = await _load_job_full(db, job_id, analytics=True)
     if not job:
         raise HTTPException(404)
     if not job.analytics_json:
@@ -1699,6 +1768,11 @@ async def _delete_job(db: AsyncSession, job: AnalysisJob) -> None:
     # watch, and on PostgreSQL the other order is a ForeignKeyViolation.
     await db.execute(delete(JobWatchEvent).where(JobWatchEvent.job_id == job_id))
     await db.execute(delete(JobWatch).where(JobWatch.job_id == job_id))
+    # Derived results (timeline buckets, process forest): no relationship, so no cascade.
+    await db.execute(delete(JobArtifact).where(JobArtifact.job_id == job_id))
+    from app.events.store import overlay_locations_async
+
+    overlay_locations = await overlay_locations_async(db, job.file_id)
     await db.delete(job)
     await db.commit()
 
@@ -1716,15 +1790,22 @@ async def _delete_job(db: AsyncSession, job: AnalysisJob) -> None:
     # hundreds of them in a single request and stall every other caller, including the
     # 3s job-status polls and /health.
     await run_in_threadpool(st.delete_job_outputs_sync, job_id)
+    for sha256, gen in overlay_locations:
+        await run_in_threadpool(st.delete_overlay_sync, sha256, gen, job_id)
 
     # If no other jobs reference this LogFile, remove the file and DB record
     remaining = await db.scalar(select(AnalysisJob.id).where(AnalysisJob.file_id == file_id).limit(1))
     if remaining is None:
         log_file = await db.get(LogFile, file_id)
         if log_file:
+            from app.events.store import delete_store_files, stores_for_file_async
+
+            # The upload's event stores go with it: rows before the commit, files after.
+            doomed_stores = await stores_for_file_async(db, file_id)
             await run_in_threadpool(st.delete_sync, log_file.stored_filename)
             await db.delete(log_file)
             await db.commit()
+            await run_in_threadpool(delete_store_files, doomed_stores)
 
 
 # ── Analyst tags ─────────────────────────────────────────────────────────────
@@ -1883,13 +1964,14 @@ async def job_delete(
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
 
-async def _load_job_full(db: AsyncSession, job_id: int, *, blobs: tuple = ()) -> AnalysisJob | None:
+async def _load_job_full(db: AsyncSession, job_id: int, *, blobs: tuple = (), analytics: bool = False) -> AnalysisJob | None:
     """The job with its task results and findings.
 
     Backs the 3-second job-status poll, so `Finding.details` and `Finding.rule_content`
     stay deferred: the page uses `details` only as a boolean (`Finding.has_details`, a
     selected expression) and `rule_content` not at all. `blobs` names the deferred
-    `Finding` columns an export genuinely serialises.
+    `Finding` columns an export genuinely serialises; `analytics` undefers
+    `AnalysisJob.analytics_json` for the two analytics routes that render it.
     """
     findings_loader = selectinload(AnalysisJob.task_results).selectinload(TaskResult.findings)
     if blobs:
@@ -1905,6 +1987,7 @@ async def _load_job_full(db: AsyncSession, job_id: int, *, blobs: tuple = ()) ->
             # session is a MissingGreenlet rather than an extra query.
             selectinload(AnalysisJob.tags),
             findings_loader,
+            *([undefer(AnalysisJob.analytics_json)] if analytics else []),
         )
     )
     return result.scalar_one_or_none()

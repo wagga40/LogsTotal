@@ -50,6 +50,9 @@ dependencies = [
     # so a missing httpx does not stop the app booting — it silently disables two
     # advertised features instead. Keep it a runtime dependency.
     "httpx>=0.27",
+    "backports-zstd>=1.0; python_version < \"3.14\"",
+    "duckdb<3,>=2.0.0",
+    "evtx>=0.13",
 ]
 
 
@@ -115,6 +118,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "slow: marks tests that are slow (e.g., TLSH on large files)",
+    "perf: performance budgets, skipped unless LOGSTOTAL_PERF=1 (./logstotal test:perf)",
 ]
 
 [dependency-groups]

@@ -86,10 +86,11 @@
   <script defer src="/static/graph-render.js?v={{ asset_version('app/static/graph-render.js') }}"></script>
   <script defer src="/static/graph.js?v={{ asset_version('app/static/graph.js') }}"></script>
   {% endif %}
-  {# Events timeline — job detail and case detail only. Same before-Alpine rule as above. #}
+  {# Events timeline and Explore — job detail and case detail only. Same before-Alpine rule as above. #}
   {% if nav_path.startswith('/jobs/') or nav_path.startswith('/intel/cases/') %}
   <script defer src="/static/timeline.js?v={{ asset_version('app/static/timeline.js') }}"></script>
   <script defer src="/static/timeline-canvas.js?v={{ asset_version('app/static/timeline-canvas.js') }}"></script>
+  <script defer src="/static/explore.js?v={{ asset_version('app/static/explore.js') }}"></script>
   {% endif %}
   <script defer src="/static/vendor/alpine-morph.min.js?v={{ app_version }}"></script>
   <script defer src="/static/vendor/alpine.min.js?v={{ app_version }}"></script>
@@ -603,14 +604,21 @@
     .lt-help:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
     /* Named widths for the same reason .lt-scroll has named heights: a free choice of
      * width comes with no rule for picking one. */
+    /* Themed like every other panel that opens over the page (.lt-menu below): the same
+     * background, border and radius, so a "?" panel and a dropdown read as one family. */
     .lt-help-panel {
       position: absolute; top: 100%; left: 0; margin-top: .25rem; z-index: 50;
       width: 18rem; max-width: 90vw; padding: .75rem;
-      border-radius: .5rem; border: 1px solid var(--lt-border-strong);
-      background-color: var(--lt-surface); color: var(--lt-fg);
+      border-radius: .75rem; border: 1px solid var(--lt-border);
+      background-color: var(--lt-menu-bg); color: var(--lt-fg);
       font-size: .75rem; line-height: 1.6; text-align: left; font-weight: 400;
       box-shadow: 0 20px 25px -5px rgb(0 0 0 / .45), 0 8px 10px -6px rgb(0 0 0 / .35);
     }
+    /* The syntax/meaning rows. The syntax column takes at most 55% of the panel and both
+     * columns wrap: a long example used to keep its column at full width and push the
+     * explanations out past the panel's right edge, over whatever was underneath. */
+    .lt-help-rows { display: grid; grid-template-columns: fit-content(55%) minmax(0, 1fr); gap: .25rem .75rem; }
+    .lt-help-rows > dt, .lt-help-rows > dd { min-width: 0; overflow-wrap: anywhere; }
     .lt-help-panel--md    { width: 22rem; }
     .lt-help-panel--lg    { width: 26rem; }
     .lt-help-panel--right { left: auto; right: 0; }
@@ -650,7 +658,7 @@
      */
 
     /* ── Bounded lists (.lt-scroll) ────────────────────────────────────────────
-     * The one layout class in this block. Three named sizes make a scroll box's height
+     * The one layout class in this block. Four named sizes make a scroll box's height
      * a deliberate choice rather than an arbitrary max-h-*. Being CSS rather than Tailwind
      * also means the arbitrary values stop having to survive the production scan —
      * `max-h-[34rem]` only exists in the built sheet while some template still spells
@@ -673,6 +681,9 @@
     .lt-scroll--sm { max-height: 14rem; }   /* dropdowns and pickers */
     .lt-scroll--md { max-height: 26rem; }   /* a list inside a card that holds other content */
     .lt-scroll--lg { max-height: 34rem; }   /* a tab pane whose whole job is the list */
+    /* A workspace that is the page's reason to exist (Explore): as tall as the window
+     * allows, keeping the box's header and the pager under it on screen, never less than --lg. */
+    .lt-scroll--xl { max-height: max(34rem, calc(100vh - 12rem)); }
 
     /* ── Analyst prose (.lt-prose) ─────────────────────────────────────────────
      * Rendered Markdown for notes and comment threads. This exists because Tailwind's

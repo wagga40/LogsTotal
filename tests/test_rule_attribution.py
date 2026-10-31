@@ -50,7 +50,10 @@ async def _seed(async_db, tool: str, rule_id: str, rule_content: str):
     tr = TaskResult(job_id=job.id, tool_name=tool, status=TaskStatus.COMPLETED, findings_count=1)
     async_db.add(tr)
     await async_db.commit()
-    finding = Finding(task_result_id=tr.id, rule_id=rule_id, rule_name="r", severity=Severity.HIGH, count=1, rule_content=rule_content)
+    from app.rule_texts import rule_text_id_sync
+
+    rule_text_id = await async_db.run_sync(lambda session: rule_text_id_sync(session, rule_content))
+    finding = Finding(task_result_id=tr.id, rule_id=rule_id, rule_name="r", severity=Severity.HIGH, count=1, rule_text_id=rule_text_id)
     async_db.add(finding)
     await async_db.commit()
     return job, finding

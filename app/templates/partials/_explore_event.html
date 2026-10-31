@@ -1,0 +1,52 @@
+{% from "partials/_copy_button.html" import copy_button %}
+{% from "partials/_severity_macros.html" import sev_pill %}
+{#
+  One event, in a panel over the right edge: the rules that matched it, its fields grouped by
+  where they came from in the record, and its JSON rebuilt from the columns' paths. Esc or
+  Close removes it. Every + carries its term in `data-term`, built server-side.
+#}
+<div class="fixed inset-y-0 right-0 z-40 w-full max-w-xl bg-gray-950 border-l border-gray-800 shadow-2xl flex flex-col"
+     role="dialog" aria-label="Event {{ uid }}">
+  <div class="flex items-center justify-between gap-2 px-4 py-3 border-b border-gray-800">
+    <h3 class="text-sm font-semibold text-gray-200">Event <span class="font-mono text-gray-400">#{{ uid }}</span></h3>
+    <div class="flex items-center gap-2">
+      {% if not error %}{{ copy_button(target="explore-event-json", title="Copy the event as JSON", label="JSON") }}{% endif %}
+      <button type="button" class="lt-btn lt-btn--sm" @click="closeDrawer()">Close</button>
+    </div>
+  </div>
+  <div class="flex-1 overflow-y-auto p-4 space-y-5">
+    {% if error %}
+    <p class="text-sm text-red-300">{{ error }}</p>
+    {% else %}
+    {% if matched %}
+    <section>
+      <h4 class="text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Matched by</h4>
+      <ul class="space-y-1">
+        {% for rule in matched %}
+        <li class="flex items-center gap-2 text-xs"><span class="text-[10px] px-1.5 py-0.5 rounded border font-medium uppercase tracking-wider shrink-0 {{ sev_pill(rule.level) }}">{{ rule.level }}</span><span class="text-gray-200">{{ rule.name or rule.key }}</span><span class="text-gray-500">{{ rule.tool }}</span></li>
+        {% endfor %}
+      </ul>
+    </section>
+    {% endif %}
+    {% if around %}
+    <button type="button" class="lt-btn lt-btn--sm" data-term="{{ around.term }}" data-from="{{ around.from }}" data-to="{{ around.to }}"
+            @click="around($el.dataset)">Events within 5 minutes on this host</button>
+    {% endif %}
+    {% for group, rows in groups %}
+    <section>
+      <h4 class="text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">{{ group }}</h4>
+      <dl class="grid grid-cols-[minmax(0,11rem)_minmax(0,1fr)] gap-x-3 gap-y-1 text-xs">
+        {% for label, name, value in rows %}
+        <dt class="text-gray-500 truncate" title="{{ label }}">{{ label }}</dt>
+        <dd class="flex items-start gap-1 min-w-0">
+          <span class="flex-1 min-w-0 font-mono text-gray-200 break-all whitespace-pre-wrap">{{ value }}</span>
+          {% if plus.get(name) %}<button type="button" class="lt-btn lt-btn--xs shrink-0" title="Add to the search" data-term="{{ plus[name] }}" @click="addTerm($el.dataset.term)">+</button>{% endif %}
+        </dd>
+        {% endfor %}
+      </dl>
+    </section>
+    {% endfor %}
+    <pre id="explore-event-json" hidden>{{ json }}</pre>
+    {% endif %}
+  </div>
+</div>

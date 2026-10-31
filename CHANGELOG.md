@@ -18,9 +18,48 @@ backup step, migration ordering, and rollback for each deployment path.
 - Per-engine completion diagnostics and partial results. Usable findings survive malformed
   output or interrupted engines; incomplete coverage is explicitly labelled.
 
+- A daily database optimisation (04:10 UTC). On SQLite it refreshes planner statistics and
+  returns free pages to the filesystem once they pass `DB_VACUUM_FREELIST_PERCENT`
+  (default 25). The first reclaim is a full `VACUUM`, run automatically only up to 256 MB,
+  that switches the file to incremental auto-vacuum. The development database was 27% free
+  pages (42.9 MB, 31.4 MB after `VACUUM`). The storage page now shows free pages, WAL size,
+  auto-vacuum mode and the last vacuum.
+
+- **Compress Stored Blobs** on the Maintenance tab (`/admin/backfill-compress-db`) encodes
+  the finding events, evidence samples, analytics and rule texts written before they were
+  stored compressed. Run it once after upgrading, then Vacuum.
+
+- **Explore**: a new tab on the job page that lists every event of the upload, not only
+  the matched ones. It has free-text and field search with a documented syntax, a
+  histogram you can drag to zoom, field values with +/- filters, stacking (combinations of
+  up to three fields, rarest first), sortable and filterable columns, an event panel with the rules that matched, and CSV/NDJSON export. It is for
+  members, admins and a job's own submitter. Cases have it too: every event of every job
+  in the case, as one table with a Source column. Exports are audited and rate limited. See
+  [Explore and event indexes](docs/reference/explore.md).
+- Event indexes, which Explore runs on, **on by default** (`EVENTS_ENABLED`). Every
+  upload's events are parsed by LogsTotal itself (EVTX, JSON, winlogbeat, EVTX-XML, Sysmon
+  for Linux, auditd, journald, syslog) into Parquet, in a subprocess beside the detection
+  tools. An index is built once per file and rebuilt on demand, and can be evicted by
+  `EVENTS_RETENTION_DAYS` and `EVENTS_MAX_TOTAL_MB`. A 213 MB EVTX took 6.5 s and became an
+  11.5 MB index. Jobs analysed before this get a **Build event index** button.
+- Uploads can be stored compressed (`UPLOAD_COMPRESSION=zstd`, **off by default**). EVTX
+  compresses about 26x. Analyses, downloads, re-runs and event indexes read a private
+  decompressed copy that is removed afterwards, so tools and downloads see the original
+  bytes. **Compress Uploads** on the Maintenance tab converts the uploads already stored.
+- The process tree on the job page, for Explore users, shows every process the log
+  started, with the detected ones marked, instead of the matched ones only.
+
 ### Fixed
 
 - Missing or unreadable engine output no longer becomes a successful zero-match result.
+- Zircolite matches are dated again in the events timeline and the activity histogram.
+  Zircolite writes the event time as a root `SystemTime`, which was never read, so every
+  match counted as undated. Recalculate analytics, or run the analytics backfill, to
+  re-date existing jobs.
+- The storage page no longer counts uploads with no database row as reclaimable. Purge
+  never deletes them, and its finished task now reports only the bytes it deleted.
+- Vacuum checkpoints the SQLite WAL and reports the space freed across the database
+  file and its WAL; it read the main file alone and could report nothing reclaimed.
 - Regex timeouts cannot consume the budget granted to later events.
 - Refreshed Sigma files invalidate cached rule metadata, including `.yaml` files.
 - Zero-match reports describe observed results without declaring an input safe.
@@ -37,6 +76,27 @@ backup step, migration ordering, and rollback for each deployment path.
   Zircolite image for AMD64 and ARM64.
   Chainsaw 2.17.1 and Hayabusa 4.2.0 have refreshed rule snapshots. ChopChopGo stays at 1.1.0.
 - Tool updates accept exact release tags and rule refs for reproducible maintenance.
+- Job pages poll lighter: the jobs list, the recent-jobs panel and the job status poll no
+  longer load each job's analytics blob (1.3 MB per 20-row page in development) or every
+  tool's full log. A failed tool's log is still shown to admins.
+- Finding sample events, relationship evidence samples and job analytics are stored
+  zstd-compressed (4.8x and 20x on the development data). Rows written before this read
+  unchanged and are compressed when rewritten.
+- The case timeline's histogram and the Processes tab read results the analytics pass
+  stored once per job, instead of re-parsing every raw tool output on each cache miss
+  (2.5 s + 0.9 s and about 1 GB of memory for one development job). Both now outlive
+  output retention. Jobs analysed earlier fall back to the old path until recalculated.
+- Raw tool outputs are stored zstd-compressed once a job's analytics are computed
+  (`RAW_OUTPUT_COMPRESSION`, default on): one development job went from 276 MB to 7 MB.
+  Readers and the raw ZIP export handle plain and compressed outputs alike; **Compress Tool
+  Outputs** on the Maintenance tab compresses existing ones, on local disk or S3.
+- Each rule's source text is stored once in a shared `rule_text` table instead of on every
+  finding (1,705 findings shared 496 texts in development). With the compression
+  backfill and a vacuum, the development database went from 42.9 MB to 14.6 MB.
+- Twenty single-column indexes that a composite index already covered are dropped, and
+  lists that relied on their order (findings, tags, case links, rule matches) are now
+  explicitly ordered. SQLite connections use memory-mapped reads, in-memory temp storage
+  and a bounded WAL.
 - Job actions use visible buttons, offer comparisons only when an eligible earlier run
   exists, and group Artifact, Raw and JSON downloads in one menu. Analytics export
   sections start unchecked.
@@ -53,6 +113,11 @@ backup step, migration ordering, and rollback for each deployment path.
 - Migration `b8d46f1e932a` adds the `PARTIAL` task status, which older workers cannot read.
   `./logstotal upgrade` stops every worker before migrating; stop them yourself if you
   upgrade any other way.
+- Migration `f3a91c2e7d40` moves every finding's rule text into `rule_text` and drops
+  `finding.rule_content`. It is listed with the rollback-unsafe migrations; its own
+  downgrade writes the text back, so run it from the new code before installing older code.
+- Migration `e064602640a4` drops the twenty redundant indexes, quickly and without data
+  changes. Its downgrade recreates them.
 - `./logstotal upgrade:rollback` refuses to cross this migration. Restore the pre-upgrade
   backup, or downgrade the schema first to keep newer jobs — see
   [Rolling back the analysis-confidence migration](docs/runbooks/upgrading.md#rolling-back-the-analysis-confidence-migration).

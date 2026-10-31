@@ -159,8 +159,34 @@ def test_an_uncapped_scan_does_not_claim_truncation():
 
 
 def test_reclaimable_bytes_is_the_sum_of_the_reclaimable_groups():
-    report = classify([obj("job_99/a", 100), obj("ghost.evtx", 200)])
-    assert report.reclaimable_bytes == 300
+    report = classify([obj("job_99/a", 100), obj("tmpabc.upload", 50, age=TMP_SPOOL_STALE_SECONDS + 60), obj("ghost.evtx", 200)])
+    assert report.reclaimable_bytes == 150
+
+
+def test_a_stored_file_with_no_row_is_shown_but_never_counted_as_reclaimable():
+    """Purge deletes orphan job directories and the removable keys, never an upload. Counting
+    unowned uploads as reclaimable made the page promise bytes Purge then left in place, and
+    the finished task reported them as reclaimed."""
+    report = classify([obj("ghost.evtx", 800)])
+    group = next(g for g in report.orphans if g.kind == "unowned_upload")
+    assert group.reclaimable is False
+    assert report.reclaimable_bytes == 0
+    assert report.removable_keys == []
+
+
+def test_orphan_bytes_are_recorded_per_job_and_per_removable_key():
+    """The purge reports what it actually deleted, so it needs each item's size."""
+    report = classify(
+        [
+            obj("job_7/task_1/a.json", 100),
+            obj("job_7/task_2/b.json", 30),
+            obj("job_8/task_1/c.json", 5),
+            obj("tmpabc.upload", 50, age=TMP_SPOOL_STALE_SECONDS + 60),
+        ]
+    )
+    assert report.orphan_job_bytes == {7: 130, 8: 5}
+    assert report.removable == [("tmpabc.upload", 50)]
+    assert report.removable_keys == ["tmpabc.upload"]
 
 
 def test_an_empty_backend_reports_nothing_rather_than_failing():
@@ -269,3 +295,9 @@ def test_the_footprint_admits_what_it_cannot_measure():
     source = inspect.getsource(storage_usage.database_footprint_sync)
     assert "dbstat" in source
     assert 'result["note"]' in source
+
+
+def test_the_explore_cache_is_reported_and_never_offered_for_deletion():
+    """Match-sets and S3 store copies trim themselves and may be in use by a query."""
+    report = classify([obj(".events_cache/matches/evtx-b1-0000abcd-0-all-time.parquet", 300, age=10 * 86400), obj(".events_cache/stores/a/b/events.parquet", 700, age=10 * 86400)])
+    assert report.other_bytes == 1000 and report.removable == [] and report.uploads_bytes == 0

@@ -1126,6 +1126,57 @@ def summarize(results: list[CheckResult]) -> dict:
     }
 
 
+#: Run in a child process, like a real build: duckdb stays out of the web and doctor processes
+#: (tests/test_events_import_graph.py), and the probe sees exactly what the builder will.
+_EVENT_STORE_PROBE = (
+    "import json, duckdb, evtx\n"
+    "c = duckdb.connect()\n"
+    "m = dict(c.execute(\"SELECT extension_name, install_mode FROM duckdb_extensions() WHERE extension_name IN ('json', 'parquet')\").fetchall())\n"
+    "print(json.dumps({'version': duckdb.__version__, 'modes': m}))\n"
+)
+
+
+def check_event_store() -> CheckResult:
+    """Explore's event-store builder: its engine, EVTX parser and staging directory.
+
+    INFO while EVENTS_ENABLED is off. Confirms the two DuckDB extensions the store needs are
+    compiled in: one downloaded at run time breaks offline bundles.
+    """
+    import json
+    import subprocess
+    import sys
+
+    section = "Event stores"
+    if not settings.events_enabled:
+        return CheckResult(section, INFO, "event store", "off (EVENTS_ENABLED=false): no events are stored for Explore", "")
+    try:
+        probe = subprocess.run([sys.executable, "-c", _EVENT_STORE_PROBE], capture_output=True, text=True, timeout=60, check=False)
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        return CheckResult(section, FAIL, "event store", f"the builder's engine did not start: {exc}", "")
+    if probe.returncode != 0:
+        last = (probe.stderr.strip().splitlines() or ["no output"])[-1]
+        return CheckResult(section, FAIL, "event store", f"the builder's engine did not start: {last}", "reinstall the dependencies: pdm install, or rebuild the image")
+    info = json.loads(probe.stdout)
+    missing = [name for name in ("json", "parquet") if info["modes"].get(name) != "STATICALLY_LINKED"]
+    if missing:
+        return CheckResult(
+            section,
+            WARN,
+            "event store",
+            f"duckdb {info['version']}: {', '.join(missing)} not compiled in",
+            "use the pinned duckdb wheel; an extension downloaded at run time fails offline",
+        )
+    staging = Path(settings.upload_dir) / ".events_build"
+    try:
+        staging.mkdir(parents=True, exist_ok=True)
+        marker = staging / f".probe-{os.getpid()}"
+        marker.write_text("x")
+        marker.unlink()
+    except OSError as exc:
+        return CheckResult(section, FAIL, "event store", f"cannot write {staging}: {exc}", "the builder stages under upload_dir; fix its permissions")
+    return CheckResult(section, PASS, "event store", f"duckdb {info['version']}, json and parquet built in, staging writable", "")
+
+
 def run_all() -> list[CheckResult]:
     """Everything the admin System Status card shows, in display order."""
     results: list[CheckResult] = []
@@ -1145,6 +1196,7 @@ def run_all() -> list[CheckResult]:
         if optional is not None:
             results.append(optional)
     results.append(check_backup_receipt())
+    results.append(check_event_store())
     results.append(check_host_os())
     results.extend(check_disk())
     results.extend(check_tool_binaries())

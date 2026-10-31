@@ -7,6 +7,7 @@ visible only to the owner (and admins). Sharing flips the flag globally.
 from __future__ import annotations
 
 from datetime import datetime
+from urllib.parse import urlencode
 
 from fastapi import APIRouter, Depends, Form, HTTPException, Request
 from fastapi.concurrency import run_in_threadpool
@@ -20,6 +21,7 @@ from app import activity
 from app.auth.api_tokens import current_user_or_api_token, principal_actor_label, principal_user
 from app.auth.users import current_member_or_above
 from app.comments import clean_text, comment_counts_for
+from app.config import settings
 from app.constants import ENTITY_TYPES, SEVERITY_ORDER, SEVERITY_RANK, TERMINAL_JOB_STATUSES
 from app.database import get_async_session, parse_row_id, utc_now_naive
 from app.intel.cases import (
@@ -166,7 +168,7 @@ def _clean_note(raw: str, cap: int) -> str | None:
     return clean_text(raw, cap, label="Note")
 
 
-def _build_case_tabs(entity_count: int, job_count: int, comment_count: int = 0, *, show_ai: bool = False) -> list[dict]:
+def _build_case_tabs(entity_count: int, job_count: int, comment_count: int = 0, *, show_ai: bool = False, explore: bool = False) -> list[dict]:
     """Assemble the case-detail tab list. Mirrors `routers/intel.py::_build_entity_tabs` —
     same dict shape (`key`, `label`, `badge`, `lazy_event`, `icon`) so the entity page's
     Alpine tab component works unchanged. The `timeline` tab sits second (after overview)
@@ -175,6 +177,8 @@ def _build_case_tabs(entity_count: int, job_count: int, comment_count: int = 0, 
     return [
         {"key": "overview", "label": "Overview", "badge": None, "lazy_event": None, "icon": "info"},
         {"key": "timeline", "label": "Timeline", "badge": None, "lazy_event": "loadTimeline", "icon": "clock"},
+        # Every event of the case's uploads, beside the timeline that charts their alerts.
+        *([{"key": "explore", "label": "Explore", "badge": None, "lazy_event": "loadExplore", "icon": "search"}] if explore else []),
         # Both lazy, because they are paged: the badge counts come from two cheap COUNTs
         # in `case_detail`, and the rows arrive only if you open the tab.
         {"key": "entities", "label": "Entities", "badge": entity_count, "lazy_event": "loadEntities", "icon": "users"},
@@ -749,7 +753,7 @@ async def case_process_tree_partial(
     if job and site_settings.show_process_tree:
         if entity:
             # Plain strings resolved before the threadpool hop — never an ORM instance.
-            ctx["forest"] = await load_job_forest(job, entity_type=entity.entity_type, entity_value=entity.value)
+            ctx["forest"] = await load_job_forest(job, db=db, entity_type=entity.entity_type, entity_value=entity.value, full=True)
             ctx["scope_label"] = f"job #{job} · {entity.value}"
             # The two halves of one question: the tree says how this binary *ran*, the typed
             # edges say what it touched. Same grouping code as the Intel Relationships tab —
@@ -758,7 +762,7 @@ async def case_process_tree_partial(
             groups, total, capped = await fetch_relationship_groups(db, entity.id, job)
             ctx.update(groups=groups, rel_total=total, rel_capped=capped)
         else:
-            ctx["forest"] = await load_job_forest(job)
+            ctx["forest"] = await load_job_forest(job, db=db, full=True)
     return templates.TemplateResponse(request, "intel/partials/_case_processes.html", ctx)
 
 
@@ -857,7 +861,8 @@ async def case_detail(
 
     comment_count = (await comment_counts_for(db, "case", [case_id])).get(case_id, 0)
     site = await get_site_settings(db)
-    tabs = _build_case_tabs(entity_total, job_total, comment_count, show_ai=site.show_ai_analysis)
+    tabs = _build_case_tabs(entity_total, job_total, comment_count, show_ai=site.show_ai_analysis, explore=settings.events_enabled and site.show_explore)
+    explore_params = {"q", "det", "cols", "sort", "dir", "page", "ev", "from", "to", "stack"}
 
     return templates.TemplateResponse(
         request,
@@ -872,6 +877,7 @@ async def case_detail(
             "valid_statuses": sorted(_VALID_STATUSES),
             "tabs": tabs,
             "site_settings": await get_site_settings(db),
+            "explore_qs": urlencode([(k, v) for k, v in request.query_params.multi_items() if k in explore_params]),
         },
     )
 
@@ -1152,6 +1158,14 @@ async def case_timeline_partial(
     # finished and the data existed.
     terminal_job_ids = {j.id for j in filtered_jobs if enum_val(j.status) in TERMINAL_JOB_STATUSES}
 
+    # Buckets the analytics pass stored (JobArtifact), fetched on this async session before
+    # the threadpool hop. They outlive the raw outputs, so a job that has them is covered even
+    # after output retention; the Redis cache and the raw parse are the fallback for jobs
+    # analysed before artifacts existed.
+    from app import job_artifacts
+
+    stored_buckets = await job_artifacts.get_many(db, [jid for jid in filtered_job_ids if jid in terminal_job_ids], job_artifacts.TL_BUCKETS)
+
     def _build_histogram() -> tuple[dict[str, dict[str, int]], int]:
         from app.json_utils import dumps as json_dumps
         from app.redis_client import TIMELINE_BUCKETS_PREFIX
@@ -1159,6 +1173,10 @@ async def case_timeline_partial(
         bucket_dicts: list[dict[str, dict[str, int]]] = []
         covered = 0
         for jid in filtered_job_ids:
+            if isinstance(stored_buckets.get(jid), dict):
+                covered += 1
+                bucket_dicts.append(stored_buckets[jid])
+                continue
             cache_key = f"{TIMELINE_BUCKETS_PREFIX}{jid}"
             cacheable = jid in terminal_job_ids
             buckets: dict | None = None
@@ -1988,6 +2006,7 @@ async def _load_case_export_context(db: AsyncSession, case_id: int, user: User) 
                 await db.execute(
                     select(EntityJobLink)
                     .where(EntityJobLink.entity_id.in_([e.id for e in entities]), EntityJobLink.job_id.in_(case_job_ids))
+                    .order_by(EntityJobLink.id)
                     .options(selectinload(EntityJobLink.job))
                 )
             )

@@ -45,6 +45,15 @@ _JOB_DIR_RE = re.compile(r"^job_(\d+)[/\\]")
 #: Per-download private copies made by the S3 backend, named `{pid}-{uuid}`.
 _S3_CACHE_PREFIX = ".s3_cache"
 _HEALTH_PROBE_PREFIX = ".health-probe-"
+_EVENT_STORE_PREFIX = "events"
+_EVENTS_BUILD_PREFIX = ".events_build"
+#: The web tier's Explore cache (match-sets, S3 store copies, DuckDB spill). It trims itself
+#: and may be in use by a query, so it is reported but never offered for deletion.
+_EVENTS_CACHE_PREFIX = ".events_cache"
+#: Private plaintext copies of compressed uploads, held for the length of a job or download.
+_DECOMPRESSED_PREFIX = ".decompressed"
+#: A copy older than this belongs to no live reader: no analysis or download runs a day.
+DECOMPRESSED_STALE_SECONDS = 86_400
 _TMP_SPOOL_RE = re.compile(r"^tmp\w*\.upload$")
 
 
@@ -79,8 +88,15 @@ class UsageReport:
     #: because the purge task acts on it. Bounded by the number of orphaned directories,
     #: which is a count of jobs rather than of files.
     orphan_job_ids: set[int] = field(default_factory=set)
-    #: Full keys of the stray non-job files that can be removed (spools, stale cache).
-    removable_keys: list[str] = field(default_factory=list)
+    #: Bytes under each orphaned job directory, so the purge can report what it deleted.
+    orphan_job_bytes: dict[int, int] = field(default_factory=dict)
+    #: `(key, size)` of the stray non-job files that can be removed (spools, stale cache).
+    removable: list[tuple[str, int]] = field(default_factory=list)
+    #: Event stores (`events/{sha256}/{gen}/`): derived copies of uploads, counted apart.
+    event_store_bytes: int = 0
+    event_store_count: int = 0
+    #: `(sha256, gen)` of store directories no EventStore row names; the purge removes them.
+    orphan_event_stores: dict[tuple[str, str], int] = field(default_factory=dict)  # -> bytes
     truncated: bool = False
     scanned: int = 0
     free_bytes: int | None = None
@@ -95,6 +111,10 @@ class UsageReport:
     @property
     def reclaimable_bytes(self) -> int:
         return sum(group.bytes for group in self.orphans if group.reclaimable)
+
+    @property
+    def removable_keys(self) -> list[str]:
+        return [key for key, _size in self.removable]
 
 
 def job_id_of(key: str) -> int | None:
@@ -112,6 +132,8 @@ def classify_objects(
     now: float,
     top_n: int = 10,
     worker_alive_ttl: int = 180,
+    known_event_stores: frozenset[str] | set[str] = frozenset(),
+    build_stale_seconds: float = 2 * 3600,
 ) -> UsageReport:
     """Split the stored objects into uploads, outputs and leftovers. Pure.
 
@@ -132,10 +154,14 @@ def classify_objects(
     upload_sizes: list[tuple[str, int]] = []
     job_sizes: dict[int, int] = {}
 
+    # Shown, never purged: an upload is stored before its LogFile row commits, so "no row"
+    # also describes an upload in flight, and this is evidence someone submitted. Counting it
+    # as reclaimable made the page promise bytes Purge then left in place.
     missing_owner = OrphanGroup(
         kind="unowned_upload",
         label="Stored files with no database row",
-        detail="Uploaded logs whose LogFile row is gone — normally a job deleted while storage was unreachable.",
+        detail="Uploaded logs whose LogFile row is gone — normally a job deleted while storage was unreachable. Purge leaves these alone; delete them by hand once checked.",
+        reclaimable=False,
     )
     orphan_outputs = OrphanGroup(
         kind="orphan_outputs",
@@ -146,6 +172,16 @@ def classify_objects(
         kind="tmp_spool",
         label="Abandoned upload spools",
         detail="Partial uploads whose request died before the file was moved into place.",
+    )
+    orphan_stores = OrphanGroup(
+        kind="orphan_event_store",
+        label="Event stores no upload owns",
+        detail="Explore's copies of uploads whose database row is gone. Derived data: rebuilt from the upload whenever it is needed.",
+    )
+    stale_builds = OrphanGroup(
+        kind="events_build",
+        label="Abandoned event-store builds",
+        detail="Staging files of a store build whose worker died before it finished.",
     )
     stale_cache = OrphanGroup(
         kind="s3_cache",
@@ -167,7 +203,40 @@ def classify_objects(
             report.other_count += 1
             if now - obj.mtime > max(worker_alive_ttl, 180) * 4:
                 _add(stale_cache, key, obj.size)
-                report.removable_keys.append(key)
+                report.removable.append((key, obj.size))
+            continue
+
+        if key.startswith(_EVENT_STORE_PREFIX + "/"):
+            # Counted apart from uploads: without this branch every store file would be an
+            # "uploaded log with no row" — and offered for deletion as one.
+            report.event_store_bytes += obj.size
+            report.event_store_count += 1
+            parts = key.split("/")
+            prefix = "/".join(parts[:3])
+            if len(parts) >= 4 and prefix not in known_event_stores:
+                _add(orphan_stores, key, obj.size)
+                report.orphan_event_stores[(parts[1], parts[2])] = report.orphan_event_stores.get((parts[1], parts[2]), 0) + obj.size
+            continue
+
+        if key.startswith(_DECOMPRESSED_PREFIX + "/"):
+            report.other_bytes += obj.size
+            report.other_count += 1
+            if now - obj.mtime > DECOMPRESSED_STALE_SECONDS:
+                _add(stale_cache, key, obj.size)
+                report.removable.append((key, obj.size))
+            continue
+
+        if key.startswith(_EVENTS_CACHE_PREFIX + "/"):
+            report.other_bytes += obj.size
+            report.other_count += 1
+            continue
+
+        if key.startswith(_EVENTS_BUILD_PREFIX + "/"):
+            report.other_bytes += obj.size
+            report.other_count += 1
+            if now - obj.mtime > build_stale_seconds:
+                _add(stale_builds, key, obj.size)
+                report.removable.append((key, obj.size))
             continue
 
         if name.startswith(_HEALTH_PROBE_PREFIX):
@@ -185,6 +254,7 @@ def classify_objects(
             if job_id not in known_job_ids and job_id not in active_job_ids:
                 _add(orphan_outputs, key, obj.size)
                 report.orphan_job_ids.add(job_id)
+                report.orphan_job_bytes[job_id] = report.orphan_job_bytes.get(job_id, 0) + obj.size
             continue
 
         if _TMP_SPOOL_RE.match(name):
@@ -192,7 +262,7 @@ def classify_objects(
             report.other_count += 1
             if now - obj.mtime > TMP_SPOOL_STALE_SECONDS:
                 _add(stale_spools, key, obj.size)
-                report.removable_keys.append(key)
+                report.removable.append((key, obj.size))
             continue
 
         report.uploads_bytes += obj.size
@@ -204,7 +274,7 @@ def classify_objects(
     report.largest_uploads = sorted(upload_sizes, key=lambda pair: pair[1], reverse=True)[:top_n]
     report.largest_jobs = sorted(job_sizes.items(), key=lambda pair: pair[1], reverse=True)[:top_n]
 
-    report.orphans = [group for group in (orphan_outputs, missing_owner, stale_spools, stale_cache) if group.count]
+    report.orphans = [group for group in (orphan_outputs, missing_owner, orphan_stores, stale_builds, stale_spools, stale_cache) if group.count]
     return report
 
 
@@ -221,7 +291,7 @@ _lock = threading.Lock()
 _cached: UsageReport | None = None
 
 
-def gather_usage_sync(*, known_filenames: set[str], known_job_ids: set[int], active_job_ids: set[int]) -> UsageReport:
+def gather_usage_sync(*, known_filenames: set[str], known_job_ids: set[int], active_job_ids: set[int], known_event_stores: set[str] | None = None) -> UsageReport:
     """Walk the backend and classify. Blocking — call through a threadpool."""
     report = UsageReport(backend=settings.storage_backend, ran_at=time.time())
     try:
@@ -233,6 +303,8 @@ def gather_usage_sync(*, known_filenames: set[str], known_job_ids: set[int], act
             active_job_ids=active_job_ids,
             now=time.time(),
             worker_alive_ttl=settings.worker_alive_ttl,
+            known_event_stores=known_event_stores or set(),
+            build_stale_seconds=2 * settings.events_build_timeout_seconds,
         )
     except Exception as exc:
         report.error = str(exc)
@@ -267,6 +339,31 @@ def reset_cache() -> None:
 
 
 # ── Database footprint ────────────────────────────────────────────────────────
+
+
+_AUTO_VACUUM_MODES = {0: "none", 1: "full", 2: "incremental"}
+
+
+def sqlite_free_space(conn) -> dict:
+    """Pages, free pages and auto-vacuum mode of the open SQLite database. Pure reads.
+
+    Free pages are whole pages on the freelist. Rows deleted from scattered pages leave those
+    pages partly full, which only a full VACUUM repacks, so this is a floor on what a VACUUM
+    would reclaim, not an estimate of it.
+    """
+    from sqlalchemy import text
+
+    pages = conn.execute(text("PRAGMA page_count")).scalar() or 0
+    page_size = conn.execute(text("PRAGMA page_size")).scalar() or 0
+    free = conn.execute(text("PRAGMA freelist_count")).scalar() or 0
+    mode = conn.execute(text("PRAGMA auto_vacuum")).scalar() or 0
+    return {
+        "bytes": pages * page_size,
+        "free_pages": free,
+        "free_bytes": free * page_size,
+        "free_percent": (100.0 * free / pages) if pages else 0.0,
+        "auto_vacuum": _AUTO_VACUUM_MODES.get(mode, str(mode)),
+    }
 
 
 def database_footprint_sync() -> dict:
@@ -305,6 +402,12 @@ def database_footprint_sync() -> dict:
                 result["total_bytes"] = conn.execute(text("SELECT pg_database_size(current_database())")).scalar()
                 return result
 
+            # Free pages, the WAL and the auto-vacuum mode: deleting rows never shrinks the
+            # file, and the WAL can hold as much again until a checkpoint, so without these
+            # the total above reads as live data when part of it is reclaimable.
+            space = sqlite_free_space(conn)
+            wal = [p for p in sqlite_db_paths() if p.name.endswith("-wal")]
+            result["sqlite"] = {**space, "wal_bytes": wal[0].stat().st_size if wal else 0}
             # SQLite: the file itself is the honest total.
             page_count = conn.execute(text("PRAGMA page_count")).scalar() or 0
             page_size = conn.execute(text("PRAGMA page_size")).scalar() or 0

@@ -89,7 +89,7 @@ templates.env.globals["qs_without_page"] = qs_without_page
 
 
 def _register_syntax_help() -> None:
-    """The two search grammars' help panels, as globals rather than context keys.
+    """The search grammars' help panels, as globals rather than context keys.
 
     Both are static application data — the list the *parser* reads — not per-request state,
     and each is rendered from more than one place: the entity grammar's help hangs off
@@ -99,6 +99,8 @@ def _register_syntax_help() -> None:
     test would notice. Imported lazily inside the function so this module keeps importing
     without dragging the intel package in at definition time.
     """
+    from app.events.query import SYNTAX_HELP as EXPLORE_SYNTAX_HELP
+    from app.events.query import SYNTAX_INTRO as EXPLORE_SYNTAX_INTRO
     from app.intel.queries import SYNTAX_HELP as ENTITY_SYNTAX_HELP
     from app.intel.queries import SYNTAX_INTRO as ENTITY_SYNTAX_INTRO
     from app.jobs_query import SYNTAX_HELP as JOBS_SYNTAX_HELP
@@ -106,6 +108,8 @@ def _register_syntax_help() -> None:
     templates.env.globals["entity_syntax_help"] = ENTITY_SYNTAX_HELP
     templates.env.globals["entity_syntax_intro"] = ENTITY_SYNTAX_INTRO
     templates.env.globals["jobs_syntax_help"] = JOBS_SYNTAX_HELP
+    templates.env.globals["explore_syntax_help"] = EXPLORE_SYNTAX_HELP
+    templates.env.globals["explore_syntax_intro"] = EXPLORE_SYNTAX_INTRO
 
 
 _register_syntax_help()

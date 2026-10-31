@@ -1,6 +1,7 @@
 """Application settings loaded from environment variables and .env file."""
 
 from pathlib import Path
+from typing import Literal
 
 from pydantic import model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -231,6 +232,39 @@ class Settings(BaseSettings):
     # evidence a user submitted, and doing that on a schedule must be switched on rather
     # than inherited.
     upload_retention_days: int = 0
+    # The share of the SQLite file in free pages past which the daily optimise task gives
+    # them back to the filesystem: incrementally once the file is in incremental mode, by a
+    # full VACUUM up to 256 MB, or only flagged on /admin/storage above that. 0 disables it.
+    db_vacuum_freelist_percent: int = 25
+    # Compress each job's raw tool outputs (zstd) once its analytics are computed. Readers
+    # handle plain and compressed files alike, so turning this off only stops new compression.
+    raw_output_compression: bool = True
+    # Store new uploads zstd-compressed (`off` or `zstd`). Readers decompress a private copy
+    # for the length of a job, so tools and downloads see the original bytes.
+    upload_compression: Literal["off", "zstd"] = "off"
+    upload_compression_level: int = 3
+
+    # Event stores (app/events/): every event of an upload, as Parquet. A derived cache,
+    # rebuildable from the upload, built by a subprocess beside the detection tools.
+    events_enabled: bool = True
+    events_build_timeout_seconds: int = 3600
+    events_build_memory_mb: int = 1024
+    events_build_max_rss_mb: int = 2048
+    events_build_threads: int = 2
+    events_build_max_concurrent: int = 1
+    events_min_free_disk_mb: int = 2048
+    events_max_events: int = 5_000_000
+    events_max_columns: int = 4096
+    events_text_index: bool = True
+    events_retention_days: int = 0
+    events_max_total_mb: int = 0
+    # The web tier's query engine (app/events/engine.py): DuckDB in the web process.
+    events_duckdb_threads: int = 2
+    events_duckdb_memory_mb: int = 768
+    events_max_concurrent_queries: int = 2
+    events_query_timeout_seconds: int = 10
+    events_cache_max_mb: int = 4096
+    events_export_rate_limit_per_minute: int = 5
 
     @model_validator(mode="after")
     def _check_and_derive(self) -> "Settings":

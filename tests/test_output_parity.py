@@ -27,7 +27,7 @@ CASES = json.loads((FIXTURES / "inputs.json").read_text())
 EXPECTED = json.loads((FIXTURES / "expected.json").read_text()) if (FIXTURES / "expected.json").exists() else {}
 
 
-def capture_case(case: dict, directory: Path) -> dict:
+def capture_case(case: dict, directory: Path, *, compressed: bool = False) -> dict:
     directory.mkdir(parents=True, exist_ok=True)
     rules = directory / "rules"
     rules.mkdir()
@@ -43,6 +43,13 @@ def capture_case(case: dict, directory: Path) -> dict:
     else:
         payload = "\n".join(json.dumps(record) for record in case["records"])
     output.write_text(payload)
+    if compressed:
+        # What a finished job leaves on disk: every reader below must see the same evidence.
+        from app.tools.output_files import compress_output_file
+
+        compress_output_file(output)
+        output = output.with_name(output.name + ".zst")
+        assert output.is_file() and not output.with_suffix("").exists()
     models = [SimpleNamespace(**{**asdict(f), "tags": json.dumps(f.tags), "details": json.dumps(f.details), "id": i + 100}) for i, f in enumerate(findings)]
     job = SimpleNamespace(id=1, task_results=[SimpleNamespace(tool_name=case["tool"], findings=models)])
     meta = {}
@@ -50,6 +57,11 @@ def capture_case(case: dict, directory: Path) -> dict:
     markers = MarkerAccumulator()
     buckets, events = parse_single_output_file(output, rt, tt, rule_meta=meta, markers=markers)
     analytics = _compute_analytics_data(job, job_dir=directory)
+    # Persisted as JobArtifact rows, not in analytics_json: checked against the paths they
+    # replace rather than snapshotted, so the recorded expectations stay as they were.
+    assert analytics.pop("timeline_buckets") == buckets, "stored buckets equal a fresh parse"
+    assert analytics.pop("process_forest") == build_process_forest(events), "stored forest equals the materialised build"
+    analytics.pop("event_links")  # its own tests: tests/test_event_keys.py
     analytics["relationships"] = sorted([[list(key), count] for key, count in analytics["relationships"].items()])
     analytics["relationship_evidence"] = sorted([[list(key), value] for key, value in analytics["relationship_evidence"].items()])
     matches = []
@@ -60,7 +72,10 @@ def capture_case(case: dict, directory: Path) -> dict:
     except (TypeError, ValueError, AttributeError) as exc:
         reader_error = type(exc).__name__
     key_events = build_key_events([dict(asdict(f), events=f.details, finding_id=i + 100, job_id=1) for i, f in enumerate(findings)])
-    assert output.read_text() == payload, "readers must retain native output bytes"
+    from app.tools.output_files import open_output
+
+    with open_output(output) as stream:
+        assert stream.read().decode() == payload, "readers must retain native output bytes"
     result = {
         "findings": [asdict(f) for f in findings],
         "matches": matches,
@@ -78,6 +93,15 @@ def capture_case(case: dict, directory: Path) -> dict:
 @pytest.mark.parametrize("name", list(CASES))
 def test_existing_tool_results_are_identical(name, tmp_path):
     assert capture_case(CASES[name], tmp_path / name) == EXPECTED[name]
+
+
+@pytest.mark.parametrize("name", list(CASES))
+def test_compressed_outputs_read_identically(name, tmp_path):
+    """A finished job's outputs are `<name>.zst`. If any reader stopped recognising them,
+    has_raw_output() would turn false and _cache_analytics would silently write no
+    analytics, markers or entities for every new job — so every reader is checked against
+    the same recorded results as the plain files."""
+    assert capture_case(CASES[name], tmp_path / name, compressed=True) == EXPECTED[name]
 
 
 @pytest.mark.parametrize(

@@ -1242,3 +1242,24 @@ def test_filesystem_doctor_resolves_profile_runners(tmp_path, monkeypatch):
     monkeypatch.setattr(system_checks, "_docker_daemon_reachable", lambda: False)
     checks = system_checks.check_docker_tools(tmp_path)
     assert any(check.level == system_checks.WARN and "windows.yml" in check.name for check in checks)
+
+
+def test_the_event_store_check_is_info_when_off_and_passes_when_on(monkeypatch, tmp_path):
+    from app import system_checks
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "events_enabled", False)
+    assert system_checks.check_event_store().level == system_checks.INFO
+    monkeypatch.setattr(settings, "events_enabled", True)
+    monkeypatch.setattr(settings, "upload_dir", tmp_path)
+    result = system_checks.check_event_store()
+    assert result.level == system_checks.PASS, result.message
+    assert "json and parquet built in" in result.message
+
+
+def test_doctor_runs_the_event_store_check_too():
+    """doctor enumerates its checks explicitly, so a new one must be wired in both places."""
+    from pathlib import Path
+
+    source = (Path(__file__).resolve().parents[1] / "scripts" / "doctor.py").read_text()
+    assert "check_event_store()" in source

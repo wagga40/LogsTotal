@@ -5,10 +5,12 @@ All DB access here uses the sync SQLAlchemy engine.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import shutil
 import threading
 import time
+import uuid
 from collections import Counter
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import UTC, datetime
@@ -746,6 +748,10 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
         # on local disk it is the stored file itself and release_sync is a no-op.
         loaded_path = file_path
 
+        # The event store builds beside the tools, on any free worker thread, once per file
+        # and log type however many jobs run on it. Never fails the job.
+        _request_event_store(log_file.id, enum_val(job.effective_log_type) if job.effective_log_type else enum_val(log_file.log_type), job_id)
+
         task_configs = parse_workflow_yaml(workflow.tasks_yaml)
         if not task_configs:
             _fail_job(db, job, "Workflow has no tasks defined.")
@@ -949,6 +955,15 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
             # S3 deployment would silently produce empty timelines, entities and threat
             # detection. In a `finally` so a post-processing failure still mirrors the
             # outputs — losing them would take the RAW ZIP export with it.
+            if settings.raw_output_compression:
+                # After analytics (which read them plain, at full speed) and before the sync,
+                # so S3 uploads the compressed files. Never raises; a file it cannot compress
+                # stays plain and readable.
+                from app.tools.output_files import compress_job_outputs
+
+                compressed, saved = compress_job_outputs(output_dir)
+                if compressed:
+                    _log.info("Job %d: compressed %d tool output(s), %d bytes saved", job_id, compressed, saved)
             storage.sync_job_outputs_from_worker(job_id, output_dir)
             # A Processes tab opened while the tools ran cached a partial (often empty) tree
             # for five minutes. The outputs are complete from here on, so drop it.
@@ -1064,6 +1079,11 @@ def _persist_tool_result(db, task_result_id: int, output: ToolOutput) -> tuple[b
         return False, False
 
     if was_success:
+        from app.rule_texts import rule_text_ids_sync, rule_text_sha
+
+        # Rule texts resolved for the whole tool at once: many findings cite the same rule,
+        # and each distinct text is stored once in rule_text however many findings cite it.
+        rule_ids = rule_text_ids_sync(db, (f.rule_content for f in output.findings))
         for f in output.findings:
             finding = Finding(
                 task_result_id=task_result_id,
@@ -1073,7 +1093,7 @@ def _persist_tool_result(db, task_result_id: int, output: ToolOutput) -> tuple[b
                 count=f.count,
                 tags=json_dumps(f.tags),
                 details=json_dumps(f.details),
-                rule_content=f.rule_content or None,
+                rule_text_id=rule_ids.get(rule_text_sha(f.rule_content)) if f.rule_content else None,
             )
             db.add(finding)
 
@@ -1174,6 +1194,21 @@ def _cache_analytics(job: AnalysisJob, data: dict, job_dir: Path | None = None) 
         return False
     job.analytics_json = json_dumps(analytics_json_payload(data))
     job.event_markers = pack_index(data.get("event_markers"))
+    # The case timeline's buckets and the Processes tab's forest, from the same pass, so
+    # neither re-parses the raw outputs again (and both outlive them).
+    from sqlalchemy import inspect as sa_inspect
+
+    from app import job_artifacts
+
+    state = sa_inspect(job, raiseerr=False)  # None for a stand-in that is not a mapped job
+    db = state.session if state is not None else None
+    if db is not None:
+        if "timeline_buckets" in data:
+            job_artifacts.put_sync(db, job.id, job_artifacts.TL_BUCKETS, data["timeline_buckets"])
+        if "process_forest" in data:
+            job_artifacts.put_sync(db, job.id, job_artifacts.PROC_FOREST, data["process_forest"])
+        if "event_links" in data:
+            job_artifacts.put_sync(db, job.id, job_artifacts.EVENT_LINKS, data["event_links"])
     return True
 
 
@@ -1212,6 +1247,10 @@ def _run_post_job_processing(
         _cache_analytics(job, analytics_data)
         _finish(analytics_tr_id, an_started, TaskStatus.COMPLETED)
         db.commit()
+        if settings.events_enabled:
+            # The links are stored now; if the upload's store finished first, overlay at once.
+            # The task is a cheap no-op while the store is still building.
+            build_event_overlay(job.id)
 
         from app.intel.entities import persist_entities_from_analytics
 
@@ -1483,6 +1522,9 @@ def recalculate_single_analytics(job_id: int, bg_task_id: int | None = None):
 
         persist_entities_from_analytics(db, job.id, data)
         db.commit()
+        # The links may have changed (or exist for the first time): relink Explore's view.
+        with contextlib.suppress(Exception):
+            build_event_overlay(job.id)
         _mark_bg_task(db, bg_task_id, "completed", detail="Analytics recalculated.")
         _log.info("recalculate_single_analytics: job %d done", job_id)
     except Exception as exc:
@@ -1586,6 +1628,8 @@ def backfill_entities(bg_task_id: int | None = None):
     try:
         _mark_bg_task(db, bg_task_id, "running")
 
+        from sqlalchemy.orm import undefer
+
         from app.intel.entities import persist_entities_from_analytics
 
         BATCH = 100
@@ -1595,6 +1639,7 @@ def backfill_entities(bg_task_id: int | None = None):
         while True:
             batch = (
                 db.query(AnalysisJob)
+                .options(undefer(AnalysisJob.analytics_json))
                 .filter(
                     AnalysisJob.analytics_json.isnot(None),
                     AnalysisJob.id > last_id,
@@ -1763,6 +1808,254 @@ def backfill_entity_attributes(bg_task_id: int | None = None):
         _mark_bg_task(db, bg_task_id, "completed", detail=f"{total} entities")
     except Exception as exc:
         _log.error("backfill_entity_attributes failed: %s", exc)
+        _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
+    finally:
+        db.close()
+
+
+#: (table, column) pairs stored as CompressedText, rewritten by backfill_compress_db.
+_COMPRESSED_COLUMNS = (
+    ("finding", "details"),
+    ("entity_relationship_evidence", "sample_events_json"),
+    ("analysisjob", "analytics_json"),
+    ("rule_text", "content"),
+)
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def backfill_compress_db(bg_task_id: int | None = None):
+    """Encode the blob rows written before CompressedText existed.
+
+    New rows are written compressed; old ones read unchanged, so nothing breaks without this.
+    It only reclaims the space. It reads and writes the raw stored text with plain SQL, so an
+    encoded row is recognised by its `zs1:` prefix and never encoded twice, and a row the
+    codec cannot shrink is left as it is. Encoding a row takes microseconds, so it commits per
+    batch (the cheap-loop case of the backfill rule). The freed pages go back to the
+    filesystem at the next Vacuum or daily optimise.
+    """
+    from sqlalchemy import bindparam, func, select, update
+    from sqlalchemy import column as sa_column
+    from sqlalchemy import table as sa_table
+
+    from app.db_types import MIN_CHARS, PREFIX, CompressedText
+    from app.workers.utils import humanbytes
+
+    codec = CompressedText()
+    db = get_sync_session()
+    try:
+        _mark_bg_task(db, bg_task_id, "running")
+        BATCH = 500
+        rewritten, before, after = 0, 0, 0
+        for table, column in _COMPRESSED_COLUMNS:
+            last_id = 0
+            # Untyped columns on purpose: the raw stored text, never CompressedText's decoding.
+            t = sa_table(table, sa_column("id"), sa_column(column))
+            blob = t.c[column]
+            select_sql = (
+                select(t.c.id, blob)
+                .where(t.c.id > bindparam("last"), blob.isnot(None), func.length(blob) >= MIN_CHARS, func.substr(blob, 1, len(PREFIX)) != PREFIX)
+                .order_by(t.c.id)
+                .limit(BATCH)
+            )
+            update_sql = update(t).where(t.c.id == bindparam("row_id")).values({column: bindparam("value")})
+            while True:
+                rows = db.execute(select_sql, {"last": last_id}).all()
+                if not rows:
+                    break
+                last_id = rows[-1][0]
+                updates = []
+                for row_id, value in rows:
+                    encoded = codec.process_bind_param(value, None)
+                    if encoded is not value and encoded.startswith(PREFIX):
+                        updates.append({"row_id": row_id, "value": encoded})
+                        before += len(value)
+                        after += len(encoded)
+                if updates:
+                    db.execute(update_sql, updates)
+                db.commit()
+                rewritten += len(updates)
+                _bg_task_progress(db, bg_task_id, f"{table}.{column}: {rewritten} rows encoded…")
+                if _bg_cancel_requested(bg_task_id):
+                    _finish_cancelled(db, bg_task_id, f"cancelled after {rewritten} rows")
+                    return
+        detail = f"{rewritten} rows encoded, {humanbytes(before)} → {humanbytes(after)}" if rewritten else "nothing to encode"
+        if rewritten:
+            detail += "; run Vacuum on Storage to return the space"
+        _log.info("backfill_compress_db: %s", detail)
+        _mark_bg_task(db, bg_task_id, "completed", detail=detail)
+    except Exception as exc:
+        _log.error("backfill_compress_db failed: %s", exc)
+        _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
+    finally:
+        db.close()
+
+
+def _request_event_store(log_file_id: int, log_type: str, job_id: int) -> None:
+    """Ask for this upload's event store; on a session of its own, so it cannot touch the job's.
+
+    Never raises: the store is an optional, derived view, and a failure here must cost the
+    analysis nothing. Committed before the enqueue so the task always finds its row.
+    """
+    if not settings.events_enabled:
+        return
+    from app.events.store import request_build_sync
+
+    db = get_sync_session()
+    try:
+        store_id = request_build_sync(db, log_file_id=log_file_id, log_type=log_type, job_id=job_id)
+        db.commit()
+        if store_id is not None:
+            build_event_store(store_id)
+    except Exception:
+        _log.warning("Job %d: could not request the event store", job_id, exc_info=True)
+        db.rollback()
+    finally:
+        db.close()
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def build_event_store(store_id: int):
+    """Build one upload's event store in a supervised subprocess (app/events/store.py).
+
+    Once ready, every job on that upload gets its detection overlay: the store and a job's
+    analysis finish in either order, and whichever finishes second asks for the overlay.
+    """
+    from app.events.store import jobs_for_store_sync, run_build
+
+    db = get_sync_session()
+    try:
+        outcome = run_build(db, store_id)
+        _log.info("Event store %d: %s", store_id, outcome)
+        for job_id in jobs_for_store_sync(db, store_id):
+            build_event_overlay(job_id)
+    finally:
+        db.close()
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def build_event_overlay(job_id: int):
+    """Mark which of its upload's stored events a job detected (app/events/overlay.py)."""
+    from app.events.store import run_overlay
+
+    db = get_sync_session()
+    try:
+        _log.info("Job %d: event overlay: %s", job_id, run_overlay(db, job_id))
+    finally:
+        db.close()
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def backfill_compress_uploads(bg_task_id: int | None = None):
+    """Compress uploads stored before UPLOAD_COMPRESSION=zstd, one at a time.
+
+    An upload with a pending or running job is skipped (its worker may be reading it) and
+    picked up by the next run. For each one: write the `.zst` copy, store it, point the row
+    at it and commit, and only then delete the plain key — so a crash in between leaves an
+    orphan the storage page can purge, never a row naming a file that is gone. One commit
+    per upload, as every expensive backfill here does.
+    """
+    from app.compression_utils import compress_file
+    from app.storage import COMPRESSED_SUFFIX, get_storage
+    from app.workers.utils import humanbytes, plural
+
+    db = get_sync_session()
+    try:
+        _mark_bg_task(db, bg_task_id, "running")
+        st = get_storage()
+        BATCH = 100
+        done, skipped, saved, last_id = 0, 0, 0, 0
+        while True:
+            rows = db.query(LogFile).filter(LogFile.id > last_id).order_by(LogFile.id).limit(BATCH).all()
+            if not rows:
+                break
+            last_id = rows[-1].id
+            for lf in rows:
+                if lf.stored_filename.endswith(COMPRESSED_SUFFIX):
+                    continue
+                active = db.query(AnalysisJob.id).filter(AnalysisJob.file_id == lf.id, AnalysisJob.status.in_([JobStatus.PENDING, JobStatus.RUNNING])).first()
+                if active is not None or not st.exists_sync(lf.stored_filename):
+                    skipped += 1
+                    continue
+                plain_name = lf.stored_filename
+                source = st.load_sync(plain_name)
+                packed = Path(settings.upload_dir) / f".{uuid.uuid4().hex}{COMPRESSED_SUFFIX}"
+                try:
+                    size = compress_file(source, packed, level=settings.upload_compression_level)
+                    before = Path(source).stat().st_size
+                    st.save_path_sync(plain_name + COMPRESSED_SUFFIX, packed)
+                finally:
+                    st.release_sync(source)
+                    packed.unlink(missing_ok=True)
+                lf.stored_filename = plain_name + COMPRESSED_SUFFIX
+                db.commit()
+                try:
+                    st.delete_sync(plain_name)
+                except Exception:
+                    _log.warning("backfill_compress_uploads: could not remove %s; the storage page lists it as an orphan", plain_name, exc_info=True)
+                done += 1
+                saved += max(0, before - size)
+            _bg_task_progress(db, bg_task_id, f"{plural(done, 'upload')} compressed so far…")
+            if _bg_cancel_requested(bg_task_id):
+                _finish_cancelled(db, bg_task_id, f"cancelled after {plural(done, 'upload')}")
+                return
+        detail = f"{plural(done, 'upload')} compressed, {humanbytes(saved)} saved" if done else "nothing to compress"
+        if skipped:
+            detail += f"; {plural(skipped, 'upload')} skipped (in use or missing), run again later"
+        _log.info("backfill_compress_uploads: %s", detail)
+        _mark_bg_task(db, bg_task_id, "completed", detail=detail)
+    except Exception as exc:
+        db.rollback()
+        _log.error("backfill_compress_uploads failed: %s", exc)
+        _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
+    finally:
+        db.close()
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def backfill_compress_outputs(bg_task_id: int | None = None):
+    """Compress the raw tool outputs of jobs that finished before RAW_OUTPUT_COMPRESSION.
+
+    Terminal jobs only: a pending or running job's directory is still being written, and its
+    own run compresses it at the end. Goes through the storage backend, so S3 objects are
+    rewritten one at a time with the plain key deleted only after its `.zst` twin is stored.
+    No database writes per job, so there is no writer lock to hold.
+    """
+    from app.storage import get_storage
+    from app.workers.utils import humanbytes, plural
+
+    db = get_sync_session()
+    try:
+        _mark_bg_task(db, bg_task_id, "running")
+        st = get_storage()
+        BATCH = 200
+        jobs, files, saved, last_id = 0, 0, 0, 0
+        while True:
+            ids = [
+                row[0]
+                for row in db.query(AnalysisJob.id)
+                .filter(AnalysisJob.id > last_id, AnalysisJob.status.notin_([JobStatus.PENDING, JobStatus.RUNNING]))
+                .order_by(AnalysisJob.id)
+                .limit(BATCH)
+                .all()
+            ]
+            if not ids:
+                break
+            last_id = ids[-1]
+            for job_id in ids:
+                n, b = st.compress_job_outputs_sync(job_id)
+                if n:
+                    jobs += 1
+                    files += n
+                    saved += b
+            _bg_task_progress(db, bg_task_id, f"{plural(files, 'output')} compressed so far…")
+            if _bg_cancel_requested(bg_task_id):
+                _finish_cancelled(db, bg_task_id, f"cancelled after {plural(files, 'output')}")
+                return
+        detail = f"{plural(files, 'output')} in {plural(jobs, 'job')} compressed, {humanbytes(saved)} saved" if files else "nothing to compress"
+        _log.info("backfill_compress_outputs: %s", detail)
+        _mark_bg_task(db, bg_task_id, "completed", detail=detail)
+    except Exception as exc:
+        _log.error("backfill_compress_outputs failed: %s", exc)
         _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
     finally:
         db.close()
@@ -2801,6 +3094,7 @@ def purge_orphaned_storage(bg_task_id: int | None = None):
     and between rendering it and pressing the button a job can finish and legitimately
     claim a directory. Jobs still `pending` or `running` are excluded for that reason.
     """
+    from app.events.store import known_store_prefixes_sync
     from app.models import LogFile
     from app.storage import get_storage
     from app.storage_usage import classify_objects
@@ -2820,10 +3114,13 @@ def purge_orphaned_storage(bg_task_id: int | None = None):
             active_job_ids=active_jobs,
             now=time.time(),
             worker_alive_ttl=settings.worker_alive_ttl,
+            known_event_stores=known_store_prefixes_sync(db),
+            build_stale_seconds=2 * settings.events_build_timeout_seconds,
         )
 
-        removed_jobs, removed_files = 0, 0
-        freed = report.reclaimable_bytes
+        # Counted from what is actually deleted below, never from the report's total: the
+        # report also lists groups Purge leaves alone, and a delete can fail.
+        removed_jobs, removed_files, freed = 0, 0, 0
 
         # The snapshot predates the walk, which on S3 can take minutes: a job picked up in
         # the meantime has a directory the snapshot never heard of. Ask again, just before
@@ -2837,14 +3134,27 @@ def purge_orphaned_storage(bg_task_id: int | None = None):
         for jid in sorted(orphan_job_ids):
             if st.delete_job_outputs_sync(jid):
                 removed_jobs += 1
+                freed += report.orphan_job_bytes.get(jid, 0)
             if _bg_cancel_requested(bg_task_id):
                 _finish_cancelled(db, bg_task_id, f"cancelled after {removed_jobs} directories")
                 return
 
-        for key in report.removable_keys:
+        # Event stores: re-checked against the rows just before deleting, like job directories.
+        still_owned = known_store_prefixes_sync(db)
+        for sha256, gen in sorted(report.orphan_event_stores):
+            if f"events/{sha256}/{gen}" in still_owned:
+                continue
+            try:
+                if st.delete_event_store_sync(sha256, gen):
+                    removed_files += 1
+                    freed += report.orphan_event_stores[(sha256, gen)]
+            except ValueError:
+                continue  # not a store-shaped path; never delete what the regex refuses
+        for key, size in report.removable:
             try:
                 st.delete_sync(key)
                 removed_files += 1
+                freed += size
             except Exception:
                 _log.debug("could not remove %s", key, exc_info=True)
 
@@ -2882,12 +3192,27 @@ def vacuum_database(bg_task_id: int | None = None):
             _mark_bg_task(db, bg_task_id, "completed", detail="Not a SQLite database — PostgreSQL reclaims space automatically")
             return
         path = Path(sync_engine.url.database) if sync_engine.url.database else None
-        before = path.stat().st_size if path and path.exists() else 0
+
+        def on_disk() -> int:
+            # Main file plus WAL. In WAL mode VACUUM shrinks the main file at once but leaves
+            # a WAL as large as the new database until a checkpoint, and a WAL left over from
+            # before the run holds space too — the main file alone misreports both ways.
+            if path is None:
+                return 0
+            return sum(p.stat().st_size for p in (path, path.with_name(path.name + "-wal")) if p.exists())
+
+        before = on_disk()
         # Its own connection with autocommit: VACUUM cannot run inside a transaction.
         with sync_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+            # Takes effect through this VACUUM, which is the only way to change the mode of an
+            # existing file. From then on the daily optimise task reclaims free pages with a
+            # cheap incremental_vacuum instead of another whole-file rewrite.
+            conn.execute(text("PRAGMA auto_vacuum=INCREMENTAL"))
             conn.execute(text("VACUUM"))
-        after = path.stat().st_size if path and path.exists() else 0
-        freed = max(0, before - after)
+            # Returns busy rather than raising when a reader holds the WAL; the next
+            # checkpoint then finishes the job, and the figure below says what this one did.
+            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        freed = max(0, before - on_disk())
         from app.workers.utils import humanbytes
 
         detail = f"reclaimed {humanbytes(freed)}" if freed else "nothing to reclaim"
@@ -2898,6 +3223,82 @@ def vacuum_database(bg_task_id: int | None = None):
         _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
     finally:
         db.close()
+
+
+#: Above this, the daily task does not run a full VACUUM itself: it takes an exclusive lock
+#: and rewrites the file, and a web write waiting longer than SQLITE_BUSY_TIMEOUT_MS returns a
+#: 500. A few seconds at this size; the storage page flags anything larger for an admin.
+_AUTO_VACUUM_MAX_BYTES = 256 * 1024 * 1024
+
+
+@huey.periodic_task(crontab(minute="*/10"))
+def event_store_sweep_periodic():
+    """Every 10 minutes: re-enqueue dropped builds, fail dead ones, retry, evict (app/events/store.py)."""
+    with _ScheduledRun("event_store_sweep_periodic") as run:
+        run.detail = _event_store_sweep_body() or ""
+
+
+def _event_store_sweep_body() -> str:
+    from app.events.store import sweep_sync
+
+    db = get_sync_session()
+    try:
+        requeue, summary = sweep_sync(db)
+        for store_id in requeue:
+            build_event_store(store_id)
+        return summary
+    except Exception:
+        db.rollback()
+        raise  # so _ScheduledRun records it as failed rather than "ok"
+    finally:
+        db.close()
+
+
+@huey.periodic_task(crontab(hour="4", minute="10"))
+def optimize_database_periodic():
+    """Daily: refresh SQLite's planner statistics and give free pages back to the filesystem."""
+    with _ScheduledRun("optimize_database_periodic") as run:
+        run.detail = _optimize_database_periodic_body() or ""
+
+
+def _optimize_database_periodic_body() -> str:
+    """`PRAGMA optimize`, then reclaim free pages once they pass DB_VACUUM_FREELIST_PERCENT.
+
+    Deleting rows frees pages inside the file and never shrinks it: the dev database was
+    24.7% free pages and had never been vacuumed. Incremental mode (set by the first full
+    VACUUM) makes later reclaims an incremental_vacuum, which only truncates free pages.
+    PostgreSQL needs none of this: autovacuum and autoanalyze do both.
+    """
+    from sqlalchemy import text
+
+    from app.database import sync_engine
+    from app.storage_usage import sqlite_free_space
+    from app.workers.utils import humanbytes
+
+    if sync_engine.url.get_backend_name() != "sqlite":
+        return "PostgreSQL: autovacuum and autoanalyze handle this"
+    threshold = settings.db_vacuum_freelist_percent
+    with sync_engine.connect().execution_options(isolation_level="AUTOCOMMIT") as conn:
+        conn.execute(text("PRAGMA optimize"))
+        space = sqlite_free_space(conn)
+        summary = f"{space['free_percent']:.0f}% of {humanbytes(space['bytes'])} in free pages"
+        if not threshold or threshold <= 0 or space["free_percent"] < threshold:
+            return f"statistics refreshed; {summary}"
+        if space["auto_vacuum"] == "incremental":
+            # Frees one page per step, so it must be stepped to completion: through
+            # SQLAlchemy it returns no rows and the result is closed after the first step,
+            # which freed 1 page of 752 in the test. fetchall() on the DB-API cursor runs it out.
+            conn.connection.driver_connection.execute("PRAGMA incremental_vacuum").fetchall()
+            conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+            return f"statistics refreshed; returned {humanbytes(space['free_bytes'])} of free pages ({summary})"
+        if space["bytes"] > _AUTO_VACUUM_MAX_BYTES:
+            _log.warning("optimize_database_periodic: %s; run Vacuum from /admin/storage (over %s, not vacuumed automatically)", summary, humanbytes(_AUTO_VACUUM_MAX_BYTES))
+            return f"statistics refreshed; {summary} — run Vacuum from Storage (file over {humanbytes(_AUTO_VACUUM_MAX_BYTES)})"
+        conn.execute(text("PRAGMA auto_vacuum=INCREMENTAL"))
+        conn.execute(text("VACUUM"))
+        conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
+        after = sqlite_free_space(conn)
+        return f"statistics refreshed; vacuumed {humanbytes(space['bytes'])} to {humanbytes(after['bytes'])} and switched to incremental auto-vacuum"
 
 
 @huey.periodic_task(crontab(hour="5", minute="30"))
@@ -2931,7 +3332,7 @@ def _clear_job_references(db, job_id: int) -> None:
 
     from app.ai.case_evidence import invalidate_case_sources
     from app.intel.entities import remove_entity_links_for_job_sync
-    from app.models import CaseJobLink, Comment, IntelRuleMatch, JobAiAnalysis, JobRuleMatch, JobTag, JobWatch, JobWatchEvent, WebhookDelivery
+    from app.models import CaseJobLink, Comment, IntelRuleMatch, JobAiAnalysis, JobArtifact, JobRuleMatch, JobTag, JobWatch, JobWatchEvent, WebhookDelivery
 
     db.execute(invalidate_case_sources(job_id))
     # entity_job_link, entity_relationship_evidence and finding_entity_link.
@@ -2946,11 +3347,13 @@ def _clear_job_references(db, job_id: int) -> None:
     # Events before watches: an event references the watch as well as the job.
     db.execute(delete(JobWatchEvent).where(JobWatchEvent.job_id == job_id))
     db.execute(delete(JobWatch).where(JobWatch.job_id == job_id))
+    db.execute(delete(JobArtifact).where(JobArtifact.job_id == job_id))
 
 
 def _prune_old_uploads_periodic_body():
     from datetime import timedelta
 
+    from app.events.store import delete_store_files, stores_for_file_sync
     from app.models import LogFile
     from app.storage import get_storage
 
@@ -2975,6 +3378,7 @@ def _prune_old_uploads_periodic_body():
             # while leaving its row pointing at nothing, retried every night, forever.
             doomed_jobs: list[int] = []
             doomed_uploads: list[str] = []
+            doomed_stores: list[tuple[str, str]] = []
             for lf in batch:
                 jobs = db.query(AnalysisJob).filter(AnalysisJob.file_id == lf.id).all()
                 # A job still running owns its file; leave the pair for the next sweep
@@ -2990,10 +3394,12 @@ def _prune_old_uploads_periodic_body():
                     _clear_job_references(db, job.id)
                     db.delete(job)
                     doomed_jobs.append(job.id)
+                doomed_stores.extend(stores_for_file_sync(db, lf.id))
                 db.delete(lf)
                 doomed_uploads.append(lf.stored_filename)
                 removed += 1
             db.commit()
+            delete_store_files(doomed_stores)
             for job_id in doomed_jobs:
                 st.delete_job_outputs_sync(job_id)
                 forget_job_keys(job_id)

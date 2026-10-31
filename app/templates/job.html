@@ -222,6 +222,17 @@
       {% include "partials/_job_status.html" %}
     </div>
 
+    {% if tabs | selectattr('key', 'equalto', 'explore') | list %}
+    <div x-show="tab === 'explore'" x-cloak>
+      <div id="explore-region"
+           hx-get="/jobs/{{ job.id }}/explore-partial{% if explore_qs %}?{{ explore_qs }}{% endif %}"
+           hx-trigger="loadExplore from:body once"
+           hx-swap="outerHTML">
+        <p class="text-sm text-gray-500">Loading events…</p>
+      </div>
+    </div>
+    {% endif %}
+
     {% if tabs | selectattr('key', 'equalto', 'ai') | list %}
     <div x-show="tab === 'ai'" x-cloak>
       <div id="ai-analysis-region"

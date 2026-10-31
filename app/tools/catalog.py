@@ -132,4 +132,7 @@ TOOLS = {
 
 
 def output_tool(filename: str) -> ToolSpec | None:
-    return next((spec for spec in TOOLS.values() if filename.lower().endswith(spec.output_suffix)), None)
+    # A compressed output keeps its name plus `.zst` (app/tools/output_files.py).
+    name = filename.lower()
+    name = name[:-4] if name.endswith(".zst") else name
+    return next((spec for spec in TOOLS.values() if name.endswith(spec.output_suffix)), None)

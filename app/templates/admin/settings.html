@@ -67,6 +67,10 @@
               "The heuristic panel — LOLBINs, encoding, privilege escalation.") }}
     {{ toggle("show_process_tree", "Process tree", site_settings.show_process_tree,
               "Parent-to-child lineage rebuilt from matched process-creation events. Needs the job's raw output still on disk.") }}
+    {{ toggle("show_explore", "Explore", site_settings.show_explore,
+              "Search, filter and export every event of an upload, not only the ones a rule matched. Shown to members, admins and a job's own signed-in submitter; never to anonymous viewers. Needs EVENTS_ENABLED.") }}
+    {{ toggle("explore_build_enabled", "Build event index on request", site_settings.explore_build_enabled,
+              "Offers a Build button on jobs analysed before event indexes existed. New uploads are indexed automatically while EVENTS_ENABLED is on.") }}
     {{ toggle("builtin_rules_enabled", "Shared rules", site_settings.builtin_rules_enabled,
               "Evaluates the shared rules — lolbin, privileged, rfc1918 and the rest listed on the Rules page — which tag matching entities as each job finishes. This gates the work, not the display: tagging is the only thing here that writes a row per entity per job. Off leaves existing tags in place. Individual rules switch on and off on the Rules page.") }}
   {% endcall %}

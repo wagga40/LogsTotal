@@ -173,6 +173,21 @@ def sync_db():
 
 
 @pytest.fixture(autouse=True)
+def events_off_by_default(monkeypatch):
+    """EVENTS_ENABLED is on in production; off here unless a test turns it on.
+
+    With it on, every `run_analysis` asks for an event store on a session of its own, and
+    most worker tests hand the code ONE shared session for every `get_sync_session()` call,
+    so that request's `close()` detached the job mid-run. The event store's own tests set it
+    explicitly; `tests/test_run_analysis_events.py` runs an analysis with it on, on separate
+    sessions as production has them.
+    """
+    from app.config import settings
+
+    monkeypatch.setattr(settings, "events_enabled", False)
+
+
+@pytest.fixture(autouse=True)
 def huey_memory_storage():
     """Point Huey's queue at memory, so nothing in the suite needs a live Redis.
 

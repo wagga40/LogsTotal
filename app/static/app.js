@@ -323,14 +323,23 @@ window.dispatchWhenReady = dispatchWhenReady;
 // Returns the control to press, or null. Every null is a place an arrow already means
 // something: a field's caret, a select's options, a table that scrolls sideways, an open
 // dialog, and modifier chords (Alt+← is the browser's Back).
+// Whether a page-level single-key shortcut must leave this keystroke alone: it was already
+// handled, it is a chord (Alt+← is the browser's Back), it lands in something that types,
+// or a dialog is open. Shared by the pager's ← / → and Explore's j / k / Enter / slash.
+function ltKeyStandsDown(event, doc) {
+  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey) return true;
+  const t = event.target;
+  if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return true;
+  return !!doc.querySelector('dialog[open]');
+}
+window.ltKeyStandsDown = ltKeyStandsDown;
+
 function ltPagerKeyTarget(event, doc) {
-  if (event.defaultPrevented || event.altKey || event.ctrlKey || event.metaKey || event.shiftKey) return null;
+  if (event.shiftKey || ltKeyStandsDown(event, doc)) return null;
   const which = { ArrowLeft: 'prev', ArrowRight: 'next' }[event.key];
   if (!which) return null;
   const t = event.target;
-  if (t && (t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName))) return null;
   if (t && t.tagName !== 'BODY' && t.tagName !== 'HTML' && t.scrollWidth > t.clientWidth) return null;
-  if (doc.querySelector('dialog[open]')) return null;
   const control = doc.querySelector(`[data-pager-keys] [data-pager-${which}]`);
   if (!control || control.hasAttribute('disabled') || control.getAttribute('aria-disabled') === 'true') return null;
   return control;

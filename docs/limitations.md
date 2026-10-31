@@ -58,6 +58,19 @@ The caps, the deliberate omissions, and what is not built — so you find out wh
 | Process-tree chain depth | 100 | A chain running deeper is split and the continuation re-rooted as a separate chain (nothing is dropped); the view says so. Depth is bounded separately from node count, because every consumer of the forest recurses once per level |
 | Stored tool stdout/stderr per task | `MAX_LOG_OUTPUT_BYTES` (50 KB) | Truncated at write time |
 
+**Explore** has its own limits ([Explore and event indexes](reference/explore.md)):
+
+- An index holds at most `EVENTS_MAX_EVENTS` events (5 million) and `EVENTS_MAX_COLUMNS`
+  distinct fields (4,096); past them it says it is truncated, and extra fields are
+  searchable as text only.
+- **Linking detections to events is exact on Windows logs** (computer, channel, record id)
+  and **best-effort on Linux text logs**, which carry no record id: a detection links only
+  where its time and message pick out exactly one event. The rest are counted, never
+  guessed.
+- **Classic syslog lines carry no year.** It is taken from the upload date; a log that
+  spans New Year, or an old log uploaded later, can be dated a year off. The index says so.
+- EVTX records that cannot be parsed are skipped and counted; the rest of the file is kept.
+
 Analytics, entity extraction and the timelines are all parsed from the raw tool output on
 disk. **Once that output is cleaned up, they cannot be recomputed** — the stored results
 survive, but "Recalculate analytics" declines rather than replacing them with an empty

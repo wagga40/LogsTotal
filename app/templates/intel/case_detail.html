@@ -125,6 +125,17 @@
     </div>
     {% endif %}
 
+    {% if tabs | selectattr('key', 'equalto', 'explore') | list %}
+    <div x-show="tab === 'explore'" x-cloak>
+      <div id="explore-region"
+           hx-get="/intel/cases/{{ case.id }}/explore-partial{% if explore_qs %}?{{ explore_qs }}{% endif %}"
+           hx-trigger="loadExplore from:body once"
+           hx-swap="outerHTML">
+        <p class="py-12 text-center text-sm text-gray-500">Loading events…</p>
+      </div>
+    </div>
+    {% endif %}
+
     <!-- Timeline (lazy via HTMX; loads on first activation of the tab) -->
     <div x-show="tab === 'timeline'" x-cloak>
       <div id="case-timeline-region"

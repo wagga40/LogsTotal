@@ -6,9 +6,11 @@ S3Storage: uses boto3 to PUT/GET from any S3-compatible endpoint (Garage, Seawee
 
 from __future__ import annotations
 
+import contextlib
 import errno
 import logging
 import os
+import re
 import shutil
 import tempfile
 import uuid
@@ -52,6 +54,40 @@ class StorageBackend(ABC):
     def load_sync(self, filename: str) -> Path:
         """Sync version of load() for Huey workers."""
 
+    def _materialize(self, path: Path) -> Path:
+        """A plaintext copy of a compressed upload, private to this caller; else *path* itself.
+
+        Under `upload_dir/.decompressed/{pid}-{uuid}/`, never a system temp directory: the
+        Docker-run tool mounts the file's parent and maps only paths under `upload_dir`.
+        The copy is the caller's to release with `release_sync`, like an S3 download.
+        """
+        if not path.name.endswith(COMPRESSED_SUFFIX):
+            return path
+        from app.compression_utils import decompress_file
+
+        dest_dir = Path(settings.upload_dir) / DECOMPRESSED_DIR / f"{os.getpid()}-{uuid.uuid4().hex}"
+        dest_dir.mkdir(parents=True, exist_ok=True)
+        dest = dest_dir / path.name[: -len(COMPRESSED_SUFFIX)]
+        try:
+            decompress_file(path, dest)
+        except BaseException:
+            shutil.rmtree(dest_dir, ignore_errors=True)
+            raise
+        return dest
+
+    @staticmethod
+    def _release_decompressed(path: Path) -> bool:
+        """Remove a `_materialize` copy (and its private directory). False if *path* is not one."""
+        try:
+            root = (Path(settings.upload_dir) / DECOMPRESSED_DIR).resolve()
+            resolved = Path(path).resolve()
+            if not resolved.is_relative_to(root) or resolved == root:
+                return False
+            shutil.rmtree(resolved.parent if resolved.parent != root else resolved, ignore_errors=True)
+            return True
+        except OSError:
+            return False
+
     def release_sync(self, path: Path) -> None:
         """Drop a local copy produced by :meth:`load_sync`, if it was a temporary one.
 
@@ -74,6 +110,10 @@ class StorageBackend(ABC):
 
         ``local_path`` must not be used by the caller afterwards.
         """
+
+    @abstractmethod
+    def save_path_sync(self, filename: str, local_path: Path) -> str:
+        """`save_path` for worker code (the upload compression backfill)."""
 
     @abstractmethod
     async def delete(self, filename: str) -> None:
@@ -117,6 +157,45 @@ class StorageBackend(ABC):
         """Remove stored tool outputs for a job. Returns True if anything was removed."""
 
     @abstractmethod
+    def publish_event_store_sync(self, sha256: str, gen: str, local_dir: Path) -> int:
+        """Move a validated store into place under `events/{sha256}/{gen}/`; return its bytes.
+
+        The manifest goes last, so a reader never sees one before every file it lists.
+        """
+
+    @abstractmethod
+    def event_store_dir_sync(self, sha256: str, gen: str) -> Path | None:
+        """The store's local directory (local backend), or None where it is not on this disk."""
+
+    @abstractmethod
+    def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
+        """Remove one store's files. The only delete under `events/`: no general prefix delete."""
+
+    @abstractmethod
+    def put_overlay_sync(self, sha256: str, gen: str, job_id: int, local_dir: Path) -> None:
+        """Store a job's detection overlay beside its store (`overlays/job_{id}/`), replacing any."""
+
+    @abstractmethod
+    def delete_overlay_sync(self, sha256: str, gen: str, job_id: int) -> None:
+        """Remove one job's overlay; the store itself is untouched."""
+
+    @abstractmethod
+    def fetch_event_store_file_sync(self, sha256: str, gen: str, name: str, dest: Path) -> Path:
+        """One store file at a local path: the stored file itself (local) or a download into *dest*."""
+
+    @abstractmethod
+    def fetch_overlay_file_sync(self, sha256: str, gen: str, job_id: int, name: str, dest: Path) -> Path | None:
+        """One file of a job's overlay at a local path, or None when the overlay has none."""
+
+    @abstractmethod
+    def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
+        """Compress a finished job's plain tool outputs in place; return (files, bytes saved).
+
+        For outputs stored before RAW_OUTPUT_COMPRESSION. Never raises for one file: an output
+        it cannot compress stays plain and readable.
+        """
+
+    @abstractmethod
     def iter_objects_sync(self, prefix: str | None = None) -> Iterator[StoredObject]:
         """Every stored object, as ``(key, size_bytes, mtime_epoch)``.
 
@@ -130,6 +209,22 @@ class StorageBackend(ABC):
         Blocking on both backends: a local walk, and one S3 round trip per 1,000 keys.
         Callers in the web tier must go through `run_in_threadpool`.
         """
+
+
+_STORE_SHA = re.compile(r"^[0-9a-f]{64}$")
+_STORE_GEN = re.compile(r"^[a-z_]+-b\d+-[0-9a-f]{8}$")
+EVENT_STORE_PREFIX = "events"
+#: A stored upload whose key ends so is a zstd frame (UPLOAD_COMPRESSION=zstd).
+COMPRESSED_SUFFIX = ".zst"
+#: Where readers get a private plaintext copy of a compressed upload, under upload_dir.
+DECOMPRESSED_DIR = ".decompressed"
+
+
+def event_store_prefix(sha256: str, gen: str) -> str:
+    """`events/{sha256}/{gen}` after checking both parts: this names what a delete removes."""
+    if not _STORE_SHA.match(sha256 or "") or not _STORE_GEN.match(gen or ""):
+        raise ValueError(f"not an event store location: {sha256!r}/{gen!r}")
+    return f"{EVENT_STORE_PREFIX}/{sha256}/{gen}"
 
 
 class LocalStorage(StorageBackend):
@@ -150,6 +245,9 @@ class LocalStorage(StorageBackend):
     async def save_path(self, filename: str, local_path: Path) -> str:
         return await run_in_threadpool(self._move_into_place, filename, local_path)
 
+    def save_path_sync(self, filename: str, local_path: Path) -> str:
+        return self._move_into_place(filename, local_path)
+
     def _move_into_place(self, filename: str, local_path: Path) -> str:
         target = self._dir / filename
         try:
@@ -168,10 +266,16 @@ class LocalStorage(StorageBackend):
         return filename
 
     async def load(self, filename: str) -> Path:
+        if filename.endswith(COMPRESSED_SUFFIX):
+            return await run_in_threadpool(self.load_sync, filename)
         return self._dir / filename
 
     def load_sync(self, filename: str) -> Path:
-        return self._dir / filename
+        return self._materialize(self._dir / filename)
+
+    def release_sync(self, path: Path) -> None:
+        # The stored file itself is never released; a decompressed copy is.
+        self._release_decompressed(path)
 
     async def delete(self, filename: str) -> None:
         (self._dir / filename).unlink(missing_ok=True)
@@ -200,6 +304,51 @@ class LocalStorage(StorageBackend):
         target = self._dir / f"job_{job_id}"
         existed = target.is_dir()
         shutil.rmtree(target, ignore_errors=True)
+        return existed
+
+    def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
+        from app.tools.output_files import compress_job_outputs
+
+        return compress_job_outputs(self._dir / f"job_{job_id}")
+
+    def publish_event_store_sync(self, sha256: str, gen: str, local_dir: Path) -> int:
+        target = self._dir / event_store_prefix(sha256, gen)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        # Staging lives under upload_dir too, so this is a rename on one filesystem: the store
+        # appears whole or not at all.
+        os.replace(local_dir, target)
+        return sum(p.stat().st_size for p in target.iterdir() if p.is_file())
+
+    def event_store_dir_sync(self, sha256: str, gen: str) -> Path | None:
+        target = self._dir / event_store_prefix(sha256, gen)
+        return target if target.is_dir() else None
+
+    def put_overlay_sync(self, sha256: str, gen: str, job_id: int, local_dir: Path) -> None:
+        target = self._dir / event_store_prefix(sha256, gen) / "overlays" / f"job_{int(job_id)}"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.rmtree(target, ignore_errors=True)
+        os.replace(local_dir, target)
+
+    def delete_overlay_sync(self, sha256: str, gen: str, job_id: int) -> None:
+        shutil.rmtree(self._dir / event_store_prefix(sha256, gen) / "overlays" / f"job_{int(job_id)}", ignore_errors=True)
+
+    def fetch_event_store_file_sync(self, sha256: str, gen: str, name: str, dest: Path) -> Path:
+        if "/" in name or name.startswith("."):
+            raise ValueError(f"not a store file name: {name!r}")
+        return self._dir / event_store_prefix(sha256, gen) / name
+
+    def fetch_overlay_file_sync(self, sha256: str, gen: str, job_id: int, name: str, dest: Path) -> Path | None:
+        if "/" in name or name.startswith("."):
+            raise ValueError(f"not an overlay file name: {name!r}")
+        path = self._dir / event_store_prefix(sha256, gen) / "overlays" / f"job_{int(job_id)}" / name
+        return path if path.is_file() else None
+
+    def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
+        target = self._dir / event_store_prefix(sha256, gen)
+        existed = target.is_dir()
+        shutil.rmtree(target, ignore_errors=True)
+        with contextlib.suppress(OSError):
+            target.parent.rmdir()  # the sha256 directory, once its last gen is gone
         return existed
 
     def iter_objects_sync(self, prefix: str | None = None) -> Iterator[StoredObject]:
@@ -269,8 +418,11 @@ class S3Storage(StorageBackend):
         return filename
 
     async def save_path(self, filename: str, local_path: Path) -> str:
+        return await run_in_threadpool(self.save_path_sync, filename, local_path)
+
+    def save_path_sync(self, filename: str, local_path: Path) -> str:
         try:
-            await run_in_threadpool(self._s3.upload_file, str(local_path), self._bucket, filename)
+            self._s3.upload_file(str(local_path), self._bucket, filename)
         finally:
             Path(local_path).unlink(missing_ok=True)
         return filename
@@ -284,10 +436,19 @@ class S3Storage(StorageBackend):
     def load_sync(self, filename: str) -> Path:
         return self._download(filename)
 
+    def _download(self, filename: str) -> Path:
+        path = self._download_raw(filename)
+        if not filename.endswith(COMPRESSED_SUFFIX):
+            return path
+        try:
+            return self._materialize(path)
+        finally:
+            self.release_sync(path)  # the compressed download; the caller holds the plain copy
+
     def _cache_dir(self) -> Path:
         return settings.upload_dir / ".s3_cache"
 
-    def _download(self, filename: str) -> Path:
+    def _download_raw(self, filename: str) -> Path:
         """Download to a caller-private directory under the cache.
 
         The per-download prefix matters: every caller pairs `load_sync` with
@@ -312,6 +473,8 @@ class S3Storage(StorageBackend):
         directory so a mistaken call can never remove a real upload (the local backend
         hands back the stored file itself).
         """
+        if self._release_decompressed(path):
+            return
         try:
             cache_dir = self._cache_dir().resolve()
             resolved = Path(path).resolve()
@@ -419,6 +582,96 @@ class S3Storage(StorageBackend):
             removed = True
             self._s3.delete_objects(Bucket=self._bucket, Delete={"Objects": objs})
         return removed
+
+    def publish_event_store_sync(self, sha256: str, gen: str, local_dir: Path) -> int:
+        from app.events.manifest import MANIFEST
+
+        prefix = event_store_prefix(sha256, gen)
+        files = sorted((p for p in local_dir.iterdir() if p.is_file()), key=lambda p: p.name == MANIFEST)
+        total = 0
+        for path in files:  # the manifest sorts last
+            self._s3.upload_file(str(path), self._bucket, f"{prefix}/{path.name}")
+            total += path.stat().st_size
+        shutil.rmtree(local_dir, ignore_errors=True)
+        return total
+
+    def event_store_dir_sync(self, sha256: str, gen: str) -> Path | None:
+        event_store_prefix(sha256, gen)  # validates
+        return None  # not on this disk; the web tier's store cache fetches it
+
+    def put_overlay_sync(self, sha256: str, gen: str, job_id: int, local_dir: Path) -> None:
+        prefix = f"{event_store_prefix(sha256, gen)}/overlays/job_{int(job_id)}"
+        self.delete_overlay_sync(sha256, gen, job_id)
+        for path in sorted(p for p in local_dir.iterdir() if p.is_file()):
+            self._s3.upload_file(str(path), self._bucket, f"{prefix}/{path.name}")
+        shutil.rmtree(local_dir, ignore_errors=True)
+
+    def delete_overlay_sync(self, sha256: str, gen: str, job_id: int) -> None:
+        prefix = f"{event_store_prefix(sha256, gen)}/overlays/job_{int(job_id)}/"
+        paginator = self._s3.get_paginator("list_objects_v2")
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            objs = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if objs:
+                self._s3.delete_objects(Bucket=self._bucket, Delete={"Objects": objs})
+
+    def fetch_event_store_file_sync(self, sha256: str, gen: str, name: str, dest: Path) -> Path:
+        if "/" in name or name.startswith("."):
+            raise ValueError(f"not a store file name: {name!r}")
+        dest.mkdir(parents=True, exist_ok=True)
+        local = dest / name
+        self._s3.download_file(self._bucket, f"{event_store_prefix(sha256, gen)}/{name}", str(local))
+        return local
+
+    def fetch_overlay_file_sync(self, sha256: str, gen: str, job_id: int, name: str, dest: Path) -> Path | None:
+        from botocore.exceptions import ClientError
+
+        if "/" in name or name.startswith("."):
+            raise ValueError(f"not an overlay file name: {name!r}")
+        dest.mkdir(parents=True, exist_ok=True)
+        local = dest / name
+        try:
+            self._s3.download_file(self._bucket, f"{event_store_prefix(sha256, gen)}/overlays/job_{int(job_id)}/{name}", str(local))
+        except ClientError as exc:
+            if str(exc.response.get("Error", {}).get("Code")) in ("404", "NoSuchKey", "NotFound"):
+                return None
+            raise
+        return local
+
+    def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
+        prefix = event_store_prefix(sha256, gen) + "/"
+        paginator = self._s3.get_paginator("list_objects_v2")
+        removed = False
+        for page in paginator.paginate(Bucket=self._bucket, Prefix=prefix):
+            objs = [{"Key": o["Key"]} for o in page.get("Contents", [])]
+            if objs:
+                removed = True
+                self._s3.delete_objects(Bucket=self._bucket, Delete={"Objects": objs})
+        return removed
+
+    def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
+        """One object at a time: download, compress, upload `<key>.zst`, then delete the plain
+        key. The plain object is removed only after its compressed twin is stored, so an
+        interrupted run leaves both, never neither, and the readers take either."""
+        from app.tools.output_files import ZST_SUFFIX, compress_output_file, is_tool_output
+
+        files, saved = 0, 0
+        keys = [o.key for o in self.iter_objects_sync(prefix=f"job_{job_id}/") if is_tool_output(o.key.rsplit("/", 1)[-1]) and not o.key.lower().endswith(ZST_SUFFIX)]
+        if keys:
+            self._cache_dir().mkdir(parents=True, exist_ok=True)
+        for key in keys:
+            work = Path(tempfile.mkdtemp(prefix="compress-", dir=self._cache_dir()))
+            try:
+                local = work / key.rsplit("/", 1)[-1]
+                self._s3.download_file(self._bucket, key, str(local))
+                saved += compress_output_file(local)
+                self._s3.upload_file(str(local.with_name(local.name + ZST_SUFFIX)), self._bucket, key + ZST_SUFFIX)
+                self._s3.delete_object(Bucket=self._bucket, Key=key)
+                files += 1
+            except Exception as exc:
+                logger.warning("Could not compress S3 output %s; left as it was: %s", key, exc)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        return files, saved
 
     def iter_objects_sync(self, prefix: str | None = None) -> Iterator[StoredObject]:
         """Every object in the bucket, with the size the listing already carries.

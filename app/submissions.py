@@ -18,6 +18,7 @@ from sqlalchemy.exc import IntegrityError
 from starlette.concurrency import run_in_threadpool
 
 from app import activity
+from app.compression_utils import compress_file
 from app.config import settings
 from app.database import utc_now_naive
 from app.detection.workflow_runner import get_compatible_workflows
@@ -25,6 +26,7 @@ from app.middleware.upload_admission import require_upload_lease
 from app.models import AnalysisJob, CaseJobLink, InvestigationCase, JobStatus, LogFile, LogType, SubmissionReceipt, WorkflowDef, can_view_job, enum_val, visible_case_filter
 from app.network.client_ip import get_client_ip
 from app.site_settings import get_site_settings
+from app.storage import COMPRESSED_SUFFIX
 
 logger = logging.getLogger(__name__)
 
@@ -262,6 +264,18 @@ async def submit_file(*, request, file, workflow_id, log_type_override, force_re
         if log_file is None:
             storage = get_storage()
             saved_name = _stored_filename(detected)
+            if settings.upload_compression == "zstd":
+                # Hashing and type detection already ran on the plaintext spool; the stored
+                # copy is compressed, and `size_bytes` stays the original size.
+                saved_name += COMPRESSED_SUFFIX
+                packed = tmp_path.with_name(tmp_path.name + COMPRESSED_SUFFIX)
+                try:
+                    await run_in_threadpool(compress_file, tmp_path, packed, level=settings.upload_compression_level)
+                    tmp_path.unlink(missing_ok=True)
+                    tmp_path = packed
+                except BaseException:
+                    packed.unlink(missing_ok=True)
+                    raise
             await storage.save_path(saved_name, tmp_path)
             log_file = LogFile(
                 original_filename=original_name,

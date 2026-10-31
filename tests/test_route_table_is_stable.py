@@ -112,4 +112,6 @@ def test_route_count_is_what_we_expect():
     # Includes the two `/intel/watch*` redirects, and job-scope alert acks as their own
     # route twice (the Rules page and the nav bell swap different regions).
     # Case AI adds four endpoints: panel, start, cancel and delete.
-    assert len(intel_routes) == 104, f"expected 104 /intel routes, found {len(intel_routes)} — update this number deliberately, with the reason in the commit"
+    # 104 → 111: case-wide Explore (explore-partial, results, histogram.json, field, event,
+    # suggest, export.{fmt}).
+    assert len(intel_routes) == 111, f"expected 111 /intel routes, found {len(intel_routes)} — update this number deliberately, with the reason in the commit"

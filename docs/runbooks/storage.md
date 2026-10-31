@@ -34,6 +34,36 @@ The events timeline is built during the analytics step and stored with the job. 
 
 The events timeline shows every timestamp in UTC, while the hourly histogram keeps each tool's own time offset. On a job whose tools disagree about the time zone the two can sit an offset apart; the events timeline is the correct one.
 
+### Compressed uploads
+
+With `UPLOAD_COMPRESSION=zstd`, new uploads are stored as `<key>.zst` (EVTX compresses
+about 26x). Whatever reads an upload — an analysis, a download, a re-run, the event index
+build — gets a private decompressed copy under `.decompressed/` and removes it when done,
+so tools and downloads see the original bytes. **Compress Uploads** on the Maintenance tab
+converts uploads stored before the switch, skipping any with a job still running; run it
+again later for those. A `.decompressed/` copy older than a day belongs to no live reader
+and is offered for removal on `/admin/storage`.
+
+Turning `UPLOAD_COMPRESSION` back off stores new uploads plain; compressed ones keep
+reading as before.
+
+### Event indexes
+
+Explore's event indexes live under `events/` beside the uploads and are not touched by
+output cleanup: Explore, and the full process tree, keep working after a job's raw outputs
+are swept. They are a cache rebuilt from the upload, so removing one is always safe; the
+job's Explore tab then offers **Build event index**.
+
+- `EVENTS_RETENTION_DAYS` evicts indexes nobody opened for that long and
+  `EVENTS_MAX_TOTAL_MB` caps their total, least recently opened out first. Both are off by
+  default and run in the 10-minute event index sweep.
+- Deleting an upload deletes its indexes. An index no row owns is listed on
+  `/admin/storage` as an orphan and removed by **Purge**.
+- `.events_cache/` is the web server's own cache (search results; on S3, local copies of
+  indexes, up to `EVENTS_CACHE_MAX_MB`). It trims itself and is never offered for deletion.
+
+See [Explore and event indexes](../reference/explore.md).
+
 ### Orphaned files
 
 A stored file or output directory that no database row refers to any more is an orphan. `/admin/storage` finds them on either storage backend (local or S3) and shows how much space they hold; **Purge** removes them as a background task. Nothing removes orphans on a schedule.
@@ -50,6 +80,7 @@ Workers run these tasks on a fixed schedule. They run only while at least one wo
 |-----------|---------|-------|---------|
 | 03:00 | Revoked API tokens | 90 days | fixed |
 | 03:30 | Enrichment results not fetched again | 30 days | fixed |
+| 04:10 | — SQLite only: refreshes planner statistics, and returns free pages to the filesystem past a threshold | | `DB_VACUUM_FREELIST_PERCENT` |
 | 04:15 | Webhook delivery history | 30 days | `WEBHOOK_DELIVERY_RETENTION_DAYS` |
 | 04:30 | Deleted comments | 180 days | fixed |
 | 04:45 | Raw tool output directories | 90 days | `JOB_OUTPUT_RETENTION_DAYS`, or the override on `/admin/storage` |
@@ -57,6 +88,7 @@ Workers run these tasks on a fixed schedule. They run only while at least one wo
 | 05:15 | Finished background task records | 30 days | `BACKGROUND_TASK_RETENTION_DAYS` |
 | 05:30 | Uploaded log files **and their jobs** | never (off) | `UPLOAD_RETENTION_DAYS` |
 | every hour at :20 | — refreshes rule lists that have a source URL | | per list |
+| every 10 minutes | Event stores idle past the window, or the least recently opened past the size cap (rebuilt from the upload on demand); also retries failed builds | never (off) | `EVENTS_RETENTION_DAYS`, `EVENTS_MAX_TOTAL_MB` |
 
 For each setting, `0` turns that task off and keeps the data forever. `UPLOAD_RETENTION_DAYS` is `0` by default: the other tasks remove derived data, while this one deletes the logs users submitted, so it must be switched on deliberately. The windows marked *fixed* cannot be changed.
 

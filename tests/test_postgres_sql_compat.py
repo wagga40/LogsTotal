@@ -489,3 +489,112 @@ async def test_analysis_confidence_upgrade_and_rollback_on_postgresql(pg_engine)
     async with pg_engine.connect() as conn:
         conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
         await conn.run_sync(round_trip)
+
+
+async def test_redundant_prefix_index_drop_round_trips_on_postgresql(pg_engine):
+    """e064602640a4 on real PostgreSQL DDL: drop each index a composite covers, put it back,
+    and tolerate one already gone. Runs in a throwaway schema built from the current models,
+    with the twenty indexes recreated by the downgrade first."""
+    import importlib.util
+    import uuid
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+    from sqlalchemy import inspect as sa_inspect
+
+    from app.database import Base
+
+    path = Path(__file__).resolve().parents[1] / "alembic/versions/e064602640a4_drop_redundant_prefix_indexes.py"
+    spec = importlib.util.spec_from_file_location("prefix_index_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    names = {index for _table, index, _column in migration.REDUNDANT}
+
+    def present(conn, schema):
+        inspector = sa_inspect(conn)
+        return {i["name"] for table, _index, _column in migration.REDUNDANT for i in inspector.get_indexes(table, schema=schema)} & names
+
+    def round_trip(conn):
+        schema = "prefix_" + uuid.uuid4().hex
+        conn.execute(text(f"CREATE SCHEMA {schema}"))
+        conn.execute(text(f"SET search_path TO {schema}"))
+        try:
+            Base.metadata.create_all(conn)
+            conn.commit()
+            context = MigrationContext.configure(conn)
+            with Operations.context(context), context.begin_transaction():
+                migration.downgrade()
+            assert present(conn, schema) == names
+            conn.execute(text("DROP INDEX ix_job_tag_job_id"))
+            conn.commit()
+            with Operations.context(context), context.begin_transaction():
+                migration.upgrade()
+            assert present(conn, schema) == set()
+        finally:
+            conn.rollback()
+            conn.execute(text("SET search_path TO public"))
+            conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+            conn.commit()
+
+    async with pg_engine.connect() as conn:
+        conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        await conn.run_sync(round_trip)
+
+
+async def test_rule_text_dedupe_round_trips_on_postgresql(pg_engine):
+    """f3a91c2e7d40 on real PostgreSQL, foreign keys enforced: downgrade to per-finding text,
+    upgrade back to two shared rule_text rows, and every finding keeps its exact rule."""
+    import importlib.util
+    import uuid
+    from pathlib import Path
+
+    from alembic.migration import MigrationContext
+    from alembic.operations import Operations
+
+    from app.database import Base
+
+    path = Path(__file__).resolve().parents[1] / "alembic/versions/f3a91c2e7d40_rule_text_dedupe.py"
+    spec = importlib.util.spec_from_file_location("rule_text_migration", path)
+    migration = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(migration)
+    rules = ["title: A\n" * 30, "title: B\n" * 30]
+
+    def round_trip(conn):
+        schema = "ruletext_" + uuid.uuid4().hex
+        conn.execute(text(f"CREATE SCHEMA {schema}"))
+        conn.execute(text(f"SET search_path TO {schema}"))
+        try:
+            Base.metadata.create_all(conn)
+            conn.execute(
+                text(
+                    "INSERT INTO logfile (id, original_filename, stored_filename, sha256, size_bytes, uploaded_at, log_type, detected_type) VALUES (1, 'a', 'a', :s, 1, now(), 'EVTX', 'EVTX')"
+                ),
+                {"s": "a" * 64},
+            )
+            conn.execute(
+                text("INSERT INTO workflowdef (id, name, log_types, tasks_yaml, is_default, created_at, updated_at) VALUES (1, 'w', '[]', 'tasks: []', false, now(), now())")
+            )
+            conn.execute(text("INSERT INTO analysisjob (id, file_id, workflow_id, status, created_at) VALUES (1, 1, 1, 'COMPLETED', now())"))
+            conn.execute(text("INSERT INTO taskresult (id, job_id, tool_name, status, findings_count) VALUES (1, 1, 'chainsaw', 'COMPLETED', 3)"))
+            conn.commit()
+            context = MigrationContext.configure(conn)
+            with Operations.context(context), context.begin_transaction():
+                migration.downgrade()
+            for i, content in enumerate([rules[0], rules[1], rules[0]], start=1):
+                conn.execute(text("INSERT INTO finding (id, task_result_id, rule_name, severity, count, rule_content) VALUES (:i, 1, 'r', 'HIGH', 1, :c)"), {"i": i, "c": content})
+            conn.commit()
+            with Operations.context(context), context.begin_transaction():
+                migration.upgrade()
+            assert conn.execute(text("SELECT count(*) FROM rule_text")).scalar() == 2
+            got = dict(conn.execute(text("SELECT f.id, r.content FROM finding f JOIN rule_text r ON r.id = f.rule_text_id ORDER BY f.id")).all())
+            assert got == {1: rules[0], 2: rules[1], 3: rules[0]}
+        finally:
+            conn.rollback()
+            conn.execute(text("SET search_path TO public"))
+            conn.execute(text(f"DROP SCHEMA {schema} CASCADE"))
+            conn.commit()
+
+    async with pg_engine.connect() as conn:
+        conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+        await conn.run_sync(round_trip)

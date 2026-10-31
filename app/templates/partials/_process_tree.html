@@ -1,5 +1,9 @@
 {% from "partials/_help_popover.html" import help_popover %}
 {% from "partials/_copy_button.html" import copy_button with context %}
+{% from "partials/_severity_macros.html" import sev_dot %}
+{# A forest from the event store (stats.source == "events") holds every process creation: a node
+   with a `uid` is a real process; `hit` says whether a rule detected it, `det` its level. #}
+{% set _levels = ["informational", "low", "medium", "high", "critical"] %}
 {% set stats = forest.stats %}
 
 {% macro node(n) %}
@@ -12,7 +16,7 @@
 
      `lt-entity-match` is the *server-side* anchor highlight, distinct from `lt-match`,
      which the client filter toggles as you type — the two must not fight over one class. #}
-  <div class="lt-row group flex items-start gap-2 py-1.5 px-2 rounded-lg transition-colors hover:bg-gray-800/50 transition{% if not n.hit %} lt-inferred{% endif %}{% if n.match %} lt-entity-match{% endif %}"
+  <div class="lt-row group flex items-start gap-2 py-1.5 px-2 rounded-lg transition-colors hover:bg-gray-800/50 transition{% if not n.hit and n.uid is not defined %} lt-inferred{% endif %}{% if n.match %} lt-entity-match{% endif %}"
        data-search="{{ ((n.image or '') ~ ' ' ~ (n.image_full or '') ~ ' ' ~ (n.cmdline or '') ~ ' ' ~ (n.user or '') ~ ' ' ~ (n.computer or '') ~ ' ' ~ (n.pid or '') ~ ' ' ~ (n.hashes | join(' ') if n.hashes else '')) | lower }}">
 
     {# toggle / leaf marker #}
@@ -37,6 +41,10 @@
         {% if n.hit %}
         <span class="font-mono text-sm text-blue-200 font-semibold truncate">{{ n.image or '(process)' }}</span>
         <span class="inline-flex items-center px-1.5 py-px rounded text-[10px] font-bold tracking-wide bg-red-500/15 text-red-300 ring-1 ring-inset ring-red-500/30">HIT</span>
+        {% if n.det is defined %}<span class="inline-block w-2 h-2 rounded-full flex-shrink-0 {{ sev_dot(_levels[n.det]) }}" title="Highest detection: {{ _levels[n.det] }}"></span>{% endif %}
+        {% elif n.uid is defined %}
+        <span class="font-mono text-sm text-gray-300 truncate">{{ n.image or '(process)' }}</span>
+        <span class="inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium bg-gray-700/40 text-gray-400 ring-1 ring-inset ring-gray-600/40" title="A process in the upload that no rule detected — shown for context">context</span>
         {% else %}
         <span class="font-mono text-sm text-gray-400 italic truncate">{{ n.image or '[ancestor]' }}</span>
         <span class="inline-flex items-center px-1.5 py-px rounded text-[10px] font-medium bg-gray-700/40 text-gray-400 ring-1 ring-inset ring-gray-600/40" title="Parent inferred from a matched child event — not itself a rule match">inferred</span>
@@ -186,15 +194,27 @@
       <span class="lt-chip lt-chip--square bg-amber-900/40 text-amber-200 border-amber-700/40">{{ scope_label }}</span>
       {% endif %}
       {% call help_popover('How to read this process tree', width='md') %}
+          {% if stats.source == 'events' %}
+          Parent&rarr;child process lineage from <strong class="text-white">every</strong> process creation in the upload
+          (Sysmon Event&nbsp;ID&nbsp;1 / Security 4688 / auditd execve), ordered by creation time. <strong class="text-white">HIT</strong>
+          nodes were detected by a rule (the dot is the highest level); <em>context</em> nodes ran but no rule matched them;
+          <em>inferred</em> nodes are parents seen only in a child's event.
+          {% else %}
           Parent&rarr;child process lineage reconstructed from rule-matched process-creation events
           (Sysmon Event&nbsp;ID&nbsp;1 / Security 4688), ordered by creation time. <strong class="text-white">HIT</strong>
           nodes matched a rule; <em>inferred</em> nodes are parents seen only in a child's event. This is a
           lineage-first view of suspicious processes, not the full host process tree.
+          {% endif %}
       {% endcall %}
 
       {% if stats.processes %}
       <div class="ml-auto flex items-center gap-1.5 text-[11px]">
+        {% if stats.source == 'events' %}
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-red-500/10 text-red-300 ring-1 ring-inset ring-red-500/20 font-medium">{{ stats.detected }} detected</span>
+        <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-700/40 text-gray-400 ring-1 ring-inset ring-gray-600/30">{{ stats.total_processes or stats.processes }} processes</span>
+        {% else %}
         <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-red-500/10 text-red-300 ring-1 ring-inset ring-red-500/20 font-medium">{{ stats.hits }} hit{{ '' if stats.hits == 1 else 's' }}</span>
+        {% endif %}
         <span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-700/40 text-gray-400 ring-1 ring-inset ring-gray-600/30">{{ stats.roots }} chain{{ '' if stats.roots == 1 else 's' }}</span>
         {% if stats.inferred %}<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-gray-700/40 text-gray-400 ring-1 ring-inset ring-gray-600/30">{{ stats.inferred }} inferred</span>{% endif %}
         {% if stats.entity_pruned %}<span class="inline-flex items-center px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-300 ring-1 ring-inset ring-amber-500/20 font-medium" title="Processes that name this entity; the rest of each chain is ancestry and descendants">{{ stats.matched }} anchored</span>{% endif %}
@@ -266,6 +286,8 @@
     <p class="text-[11px] text-amber-400/80 mt-2">
       {% if stats.entity_pruned %}
       The job's lineage was capped at {{ stats.max_nodes }} processes before this filter was applied, so chains beyond that cap are not represented here.
+      {% elif stats.source == 'events' and stats.shown %}
+      Showing {{ stats.shown }} of {{ stats.total_processes }} processes: every detection with its ancestry first, then the rest by time.
       {% else %}
       Showing the first {{ stats.hits }} processes — tree truncated for size.
       {% endif %}

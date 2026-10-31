@@ -9,7 +9,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
-from sqlalchemy import create_engine, inspect, text
+from sqlalchemy import create_engine, inspect, select, text
+from sqlalchemy.orm import undefer
 
 INITIAL_REVISION = "09db4ba71a7c"  # first migration in the chain
 
@@ -525,7 +526,9 @@ def test_case_ai_followup_repairs_already_applied_revision(tmp_db, has_source_de
             assert (runs[0].source_deleted_at is not None) == has_source_deleted_at
         after = dict(conn.execute(text("SELECT * FROM case_ai_analysis WHERE id = 42")).mappings().one())
         assert {key: after[key] for key in before} == before
-        assert inspect(conn).get_indexes("case_ai_analysis") == indexes
+        # Every index survives the repair, except the one e064602640a4 drops on purpose later
+        # in the chain: (case_id) is the leading column of ix_case_ai_analysis_case_created.
+        assert inspect(conn).get_indexes("case_ai_analysis") == [i for i in indexes if i["name"] != "ix_case_ai_analysis_case_id"]
         assert sorted(inspect(conn).get_foreign_keys("case_ai_analysis"), key=lambda fk: fk["constrained_columns"]) == sorted(
             foreign_keys, key=lambda fk: fk["constrained_columns"]
         )
@@ -571,3 +574,111 @@ def test_analysis_confidence_migration_tolerates_columns_the_legacy_patcher_adde
     run_auto_migrate()
     with _connect(tmp_db) as conn:
         assert conn.scalar(text("SELECT version_num FROM alembic_version")) == get_head_revision()
+
+
+def test_redundant_prefix_indexes_drop_and_restore(tmp_db):
+    """e064602640a4 drops twenty single-column indexes a composite covers; its downgrade puts
+    every one back, and both directions tolerate an index that is already absent."""
+    from alembic import command
+    from app.migrations import _alembic_config
+
+    sample = {("entity_job_link", "ix_entity_job_link_job_id"), ("finding", "ix_finding_task_result_id"), ("job_tag", "ix_job_tag_job_id")}
+
+    def present():
+        with _connect(tmp_db) as conn:
+            return {(table, name) for table, name in sample if name in {i["name"] for i in inspect(conn).get_indexes(table)}}
+
+    command.upgrade(_alembic_config(), "b8d46f1e932a")
+    assert present() == sample
+    command.upgrade(_alembic_config(), "e064602640a4")
+    assert present() == set()
+    command.downgrade(_alembic_config(), "b8d46f1e932a")
+    assert present() == sample
+    with _connect(tmp_db) as conn:
+        conn.execute(text("DROP INDEX ix_job_tag_job_id"))
+        conn.commit()
+    command.upgrade(_alembic_config(), "e064602640a4")  # one already gone: still migrates
+    assert present() == set()
+
+
+_RULES = ["title: Rule A\nauthor: someone\n" * 20, "title: Rule B\nauthor: other\n" * 20]
+
+
+def _seed_findings_with_rule_content(conn):
+    conn.execute(
+        text("INSERT INTO logfile (id, original_filename, stored_filename, sha256, size_bytes, log_type, detected_type) VALUES (1, 'a.evtx', 'a', :sha, 1, 'EVTX', 'EVTX')"),
+        {"sha": "a" * 64},
+    )
+    conn.execute(text("INSERT INTO workflowdef (id, name, log_types, tasks_yaml, is_default) VALUES (1, 'w', '[]', 'tasks: []', FALSE)"))
+    conn.execute(text("INSERT INTO analysisjob (id, file_id, workflow_id, status) VALUES (1, 1, 1, 'COMPLETED')"))
+    conn.execute(text("INSERT INTO taskresult (id, job_id, tool_name, status, findings_count) VALUES (1, 1, 'chainsaw', 'COMPLETED', 4)"))
+    for i, content in enumerate([_RULES[0], _RULES[1], _RULES[0], None], start=1):
+        conn.execute(
+            text("INSERT INTO finding (id, task_result_id, rule_name, severity, count, rule_content) VALUES (:id, 1, :name, 'HIGH', 1, :content)"),
+            {"id": i, "name": f"r{i}", "content": content},
+        )
+    conn.commit()
+
+
+def _rule_contents_via_orm(tmp_db) -> dict[int, str | None]:
+    from sqlalchemy.orm import Session
+
+    from app.models import Finding
+
+    with _connect(tmp_db) as conn, Session(conn) as db:
+        return {f.id: f.rule_content for f in db.scalars(select(Finding).options(undefer(Finding.rule_content)).order_by(Finding.id))}
+
+
+def test_rule_text_dedupe_moves_every_finding_and_drops_the_column(tmp_db):
+    from alembic import command
+    from app.migrations import _alembic_config
+
+    command.upgrade(_alembic_config(), "e064602640a4")
+    with _connect(tmp_db) as conn:
+        _seed_findings_with_rule_content(conn)
+    command.upgrade(_alembic_config(), "f3a91c2e7d40")
+    with _connect(tmp_db) as conn:
+        assert conn.execute(text("SELECT count(*) FROM rule_text")).scalar() == 2  # four findings, two texts
+        assert "rule_content" not in {c["name"] for c in inspect(conn).get_columns("finding")}
+    assert _rule_contents_via_orm(tmp_db) == {1: _RULES[0], 2: _RULES[1], 3: _RULES[0], 4: None}
+
+
+def test_rule_text_downgrade_restores_the_text_even_when_compressed(tmp_db):
+    """The compression backfill may have encoded rule_text rows; older code reads plain YAML."""
+    import base64
+
+    from alembic import command
+    from app.compression_utils import compress
+    from app.migrations import _alembic_config
+
+    command.upgrade(_alembic_config(), "e064602640a4")
+    with _connect(tmp_db) as conn:
+        _seed_findings_with_rule_content(conn)
+    command.upgrade(_alembic_config(), "f3a91c2e7d40")
+    with _connect(tmp_db) as conn:
+        encoded = "zs1:" + base64.b64encode(compress(_RULES[1].encode())).decode()
+        conn.execute(text("UPDATE rule_text SET content = :c WHERE content = :plain"), {"c": encoded, "plain": _RULES[1]})
+        conn.commit()
+    command.downgrade(_alembic_config(), "e064602640a4")
+    with _connect(tmp_db) as conn:
+        rows = dict(conn.execute(text("SELECT id, rule_content FROM finding ORDER BY id")).all())
+        assert rows == {1: _RULES[0], 2: _RULES[1], 3: _RULES[0], 4: None}
+        assert "rule_text" not in inspect(conn).get_table_names()
+
+
+def test_a_legacy_database_moves_rule_content_and_is_still_stamped(tmp_db):
+    """The legacy path (unstamped, or AUTO_MIGRATE=false) never runs f3a91c2e7d40, so the
+    patcher does the same move; otherwise compare_metadata reports the old column as drift."""
+    from alembic import command
+    from app.migrations import _alembic_config, get_head_revision, run_auto_migrate
+
+    command.upgrade(_alembic_config(), "e064602640a4")
+    with _connect(tmp_db) as conn:
+        _seed_findings_with_rule_content(conn)
+        conn.execute(text("DROP TABLE alembic_version"))
+        conn.commit()
+    run_auto_migrate()
+    assert _stamped_revision(tmp_db) == get_head_revision()
+    assert _rule_contents_via_orm(tmp_db) == {1: _RULES[0], 2: _RULES[1], 3: _RULES[0], 4: None}
+    with _connect(tmp_db) as conn:
+        assert conn.execute(text("SELECT count(*) FROM rule_text")).scalar() == 2
