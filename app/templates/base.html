@@ -86,10 +86,11 @@
   <script defer src="/static/graph-render.js?v={{ asset_version('app/static/graph-render.js') }}"></script>
   <script defer src="/static/graph.js?v={{ asset_version('app/static/graph.js') }}"></script>
   {% endif %}
-  {# Events timeline — job detail and case detail only. Same before-Alpine rule as above. #}
+  {# Events timeline and Explore — job detail and case detail only. Same before-Alpine rule as above. #}
   {% if nav_path.startswith('/jobs/') or nav_path.startswith('/intel/cases/') %}
   <script defer src="/static/timeline.js?v={{ asset_version('app/static/timeline.js') }}"></script>
   <script defer src="/static/timeline-canvas.js?v={{ asset_version('app/static/timeline-canvas.js') }}"></script>
+  <script defer src="/static/explore.js?v={{ asset_version('app/static/explore.js') }}"></script>
   {% endif %}
   <script defer src="/static/vendor/alpine-morph.min.js?v={{ app_version }}"></script>
   <script defer src="/static/vendor/alpine.min.js?v={{ app_version }}"></script>

@@ -1,0 +1,98 @@
+{% from "partials/_help_popover.html" import help_popover %}
+{#
+  The Explore pane: search box, histogram, fields, results table, event drawer.
+
+  Lives on the job page's Explore tab, a pane of its own, never inside `#job-status-region`
+  (that region morph-swaps every 3s while a job runs). The form owns the whole search
+  state; every control writes a hidden field and submits it, so the address bar (set by the
+  results route's HX-Replace-Url) always reproduces what is on screen.
+
+  Values from the log reach the page only as text or `data-*` attributes, never inside an
+  Alpine expression: a field value is attacker-controlled, and an expression is code.
+
+  `hx-history="false"`: htmx would otherwise snapshot the whole page into localStorage on
+  every HX-Replace-Url, leaving log events in the browser's storage (and overflowing its
+  quota on a busy job). Back and Forward refetch instead.
+#}
+<div id="explore-region" class="space-y-4" hx-history="false"
+     x-data='exploreView({{ {"base": base_url, "ev": state.ev, "columns": columns} | tojson }})'
+     @keydown.window="onKey($event)">
+  <form id="explore-form" class="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2"
+        hx-get="{{ base_url }}/results" hx-target="#explore-results" hx-swap="innerHTML">
+    <div class="flex flex-wrap items-center gap-2">
+      <input id="explore-q" name="q" type="search" value="{{ state.q }}" autocomplete="off" spellcheck="false"
+             class="lt-field lt-field--lg flex-1 min-w-[16rem] font-mono"
+             placeholder="Search every event: a word, Field:value, -term, a OR b, det:yes …"
+             aria-label="Search events">
+      {{ help_popover('Explore search syntax', rows=explore_syntax_help, intro=explore_syntax_intro, width='lg', align='right') }}
+      <label class="flex items-center gap-1.5 text-xs {{ 'text-gray-300' if linked else 'text-gray-600' }}"
+             title="{{ 'Only events a rule matched' if linked else 'Detections are not linked to these events yet' }}">
+        <input type="checkbox" class="lt-check" name="det" value="1" {% if state.det and linked %}checked{% endif %} {% if not linked %}disabled{% endif %}
+               @change="submit()"> Detections only
+      </label>
+      <button type="submit" class="lt-btn lt-btn--primary">Search</button>
+    </div>
+    <input type="hidden" name="cols" value="{{ state.cols | join(',') }}" x-ref="cols">
+    <input type="hidden" name="sort" value="{{ state.sort or '' }}" x-ref="sort">
+    <input type="hidden" name="dir" value="{{ 'desc' if state.desc else '' }}" x-ref="dir">
+    <input type="hidden" name="from" value="{{ state.start.isoformat() if state.start else '' }}" x-ref="from">
+    <input type="hidden" name="to" value="{{ state.end.isoformat() if state.end else '' }}" x-ref="to">
+    {% if store.warnings %}
+    <p class="text-xs text-amber-300">{{ store.warnings | join('; ') }}.</p>
+    {% endif %}
+    {% if not linked %}
+    <p class="text-xs text-gray-500">This job's detections are not linked to its events yet, so detection terms (det:, level:, rule:) are unavailable. That happens on its own once the index and the analysis have both finished.</p>
+    {% endif %}
+  </form>
+
+  <div class="bg-gray-900 border border-gray-800 rounded-xl p-4"
+       x-data='exploreHistogram({{ {"url": base_url ~ "/histogram.json", "qs": state.qs(page=1, ev=None), "colors": colors} | tojson }})'>
+    <canvas x-ref="canvas" class="block w-full h-28 cursor-crosshair select-none" role="img"
+            aria-label="Events over time; drag across the chart to zoom into a time range"></canvas>
+    <div class="flex items-center justify-between mt-1 text-[11px] text-gray-500">
+      <span x-text="label">Loading…</span>
+      <span class="flex items-center gap-3">
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm" :style="`background:${colors.events}`"></span> events</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm" :style="`background:${colors.detected}`"></span> detected</span>
+        <button type="button" class="lt-btn lt-btn--xs" x-show="zoomed" x-cloak @click="resetZoom()">Reset zoom</button>
+      </span>
+    </div>
+  </div>
+
+  <div class="grid grid-cols-1 lg:grid-cols-[15rem_minmax(0,1fr)] gap-4 items-start">
+    <aside class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden" x-data="{ filter: '' }">
+      <div class="p-2 border-b border-gray-800">
+        <input type="search" class="lt-field lt-field--sm w-full" x-model="filter" aria-label="Filter fields"
+               placeholder="Filter {{ '{:,}'.format(field_count) }} fields">
+      </div>
+      <div class="lt-scroll lt-scroll--lg">
+        <ul class="py-1">
+          {% for f in fields %}
+          <li data-field-name="{{ f.name | lower }}" x-data="{ open: false }"
+              x-show="!filter || $el.dataset.fieldName.includes(filter.toLowerCase())">
+            <div class="flex items-center gap-2 px-2 py-1 hover:bg-gray-800/60">
+              <input type="checkbox" class="lt-check" title="Show as a column" data-column="{{ f.name }}"
+                     {% if f.name in columns %}checked{% endif %} @change="toggleColumn($el.dataset.column, $el.checked)">
+              <button type="button" class="flex-1 min-w-0 text-left truncate text-xs font-mono text-gray-300 hover:text-white"
+                      title="{{ f.path }}: top values among the matches"
+                      hx-get="{{ base_url }}/field?f={{ f.name | urlencode }}" hx-include="#explore-form"
+                      hx-target="next .explore-facet" hx-swap="innerHTML" @click="open = true">{{ f.name }}</button>
+              <span class="text-[10px] text-gray-500 tabular-nums" title="Share of events that have this field">{{ f.coverage }}%</span>
+            </div>
+            <div class="explore-facet" x-show="open" x-cloak></div>
+          </li>
+          {% endfor %}
+          {% if field_count > fields | length %}
+          <li class="px-3 py-2 text-[11px] text-gray-500">{{ field_count - fields | length }} rarer fields not listed; search them by name (Field:value).</li>
+          {% endif %}
+        </ul>
+      </div>
+    </aside>
+
+    <section id="explore-results" class="min-w-0">
+      {% include "partials/_explore_results.html" %}
+    </section>
+  </div>
+
+  <div id="explore-drawer"></div>
+</div>

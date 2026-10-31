@@ -71,6 +71,58 @@ def request_build_sync(db, *, log_file_id: int, log_type: str, job_id: int | Non
     return None
 
 
+async def store_for_job_async(db, job) -> tuple[EventStore | None, str | None]:
+    """The job's store row (any status) and its upload's sha256, for the web tier."""
+    from app.models import enum_val
+
+    log_file = await db.get(LogFile, job.file_id)
+    if log_file is None:
+        return None, None
+    log_type = enum_val(job.effective_log_type) if job.effective_log_type else enum_val(log_file.log_type)
+    if not log_type:
+        return None, log_file.sha256
+    row = await db.scalar(select(EventStore).where(EventStore.log_file_id == log_file.id, EventStore.log_type == log_type, EventStore.builder_version == BUILDER_VERSION))
+    return row, log_file.sha256
+
+
+async def request_build_async(db, job, *, manual: bool = False) -> int | None:
+    """The web twin of request_build_sync, for the Build button. The caller commits, then enqueues.
+
+    *manual* also restarts a store that failed MAX_ATTEMPTS times: the automatic retries
+    stop so a broken upload does not rebuild forever, but a person asking again is a new try.
+    """
+    from app.models import enum_val
+
+    if not settings.events_enabled:
+        return None
+    log_file = await db.get(LogFile, job.file_id)
+    log_type = enum_val(job.effective_log_type) if job.effective_log_type else (enum_val(log_file.log_type) if log_file else None)
+    if log_file is None or not log_type:
+        return None
+    row = await db.scalar(select(EventStore).where(EventStore.log_file_id == log_file.id, EventStore.log_type == log_type, EventStore.builder_version == BUILDER_VERSION))
+    if row is None:
+        row = EventStore(
+            log_file_id=log_file.id,
+            log_type=log_type,
+            builder_version=BUILDER_VERSION,
+            status=EventStoreStatus.PENDING.value,
+            requested_by_job_id=job.id,
+            attempts=0,
+            truncated=False,
+        )
+        db.add(row)
+        await db.flush()
+        return row.id
+    if row.status not in _RESTARTABLE:
+        return None
+    if row.status == EventStoreStatus.FAILED.value and row.attempts >= MAX_ATTEMPTS:
+        if not manual:
+            return None
+        row.attempts = 0
+    row.status, row.requested_by_job_id = EventStoreStatus.PENDING.value, job.id
+    return row.id
+
+
 def _claim(db, store_id: int) -> bool:
     claimed = db.execute(
         update(EventStore)
@@ -362,6 +414,11 @@ def run_overlay(db, job_id: int) -> str:
     row, sha256 = found
     links = job_artifacts.get_sync(db, job_id, job_artifacts.EVENT_LINKS)
     if links is None:
+        from app.constants import TERMINAL_JOB_STATUSES
+        from app.models import enum_val
+
+        if enum_val(job.status) not in TERMINAL_JOB_STATUSES:
+            return "no detection links yet (the analysis writes them when it finishes)"
         return "no detection links (analysed before they were captured; recalculate analytics)"
     links_bytes = orjson.dumps(links)
     links_sha = hashlib.sha256(links_bytes).hexdigest()[:16]

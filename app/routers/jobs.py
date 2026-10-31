@@ -659,7 +659,8 @@ async def job_detail(
 
     member_cases = await _member_case_backlinks(db, job_id, user)
     comment_count = (await comment_counts_for(db, "job", [job_id])).get(job_id, 0) if user else 0
-    tabs = _build_job_tabs(user, comment_count, show_ai=await _show_ai_tab(db, job_id, user, site_settings, job_status=status))
+    explore, explore_badge = await _explore_tab(db, job, user, site_settings)
+    tabs = _build_job_tabs(user, comment_count, show_ai=await _show_ai_tab(db, job_id, user, site_settings, job_status=status), explore=explore, explore_badge=explore_badge)
 
     return templates.TemplateResponse(
         request,
@@ -683,8 +684,40 @@ async def job_detail(
             "tag_colors": TAG_COLORS,
             "job_id": job.id,
             "watching": (await job_watch.is_watching_async(db, job_id, user.id)) if user else False,
+            # The Explore state a link carried (`/jobs/7?q=…#explore`), handed to the lazily
+            # loaded pane so a reload or a shared link reopens the same view.
+            "explore_qs": urlencode([(k, v) for k, v in request.query_params.multi_items() if k in _EXPLORE_PARAMS]) if explore else "",
         },
     )
+
+
+_EXPLORE_PARAMS = frozenset({"q", "det", "cols", "sort", "dir", "page", "ev", "from", "to"})
+
+
+def _compact_count(n: int) -> str:
+    """1,234 → 1.2k, 1,900,000 → 1.9M, for a tab badge."""
+    for size, suffix in ((1_000_000, "M"), (1_000, "k")):
+        if n >= size:
+            return f"{n / size:.1f}".rstrip("0").rstrip(".") + suffix
+    return str(n)
+
+
+async def _explore_tab(db: AsyncSession, job: AnalysisJob, user: User | None, site_settings) -> tuple[bool, str | None]:
+    """Whether this viewer gets the Explore tab, and its badge (the indexed event count).
+
+    The tab appears whether or not the upload is indexed yet, so a member can build one;
+    only `can_explore_job` viewers get it at all, and never while the switches are off.
+    """
+    from app.config import settings as app_settings
+    from app.events.store import store_for_job_async
+    from app.models import EventStoreStatus, can_explore_job
+
+    if not (app_settings.events_enabled and site_settings.show_explore and can_explore_job(job, user)):
+        return False, None
+    row, _sha = await store_for_job_async(db, job)
+    if row is not None and row.status == EventStoreStatus.READY.value and row.event_count:
+        return True, _compact_count(row.event_count)
+    return True, None
 
 
 async def _can_resubmit(db: AsyncSession, file_id: int, user: User | None) -> bool:
@@ -730,17 +763,20 @@ async def _show_ai_tab(db: AsyncSession, job_id: int, user: User | None, site_se
     return bool(await db.scalar(select(func.count(JobAiAnalysis.id)).where(JobAiAnalysis.job_id == job_id)))
 
 
-def _build_job_tabs(user: User | None, comment_count: int, *, show_ai: bool = False) -> list[dict]:
+def _build_job_tabs(user: User | None, comment_count: int, *, show_ai: bool = False, explore: bool = False, explore_badge: str | None = None) -> list[dict]:
     """Job-detail tabs, same `{key, label, badge, lazy_event, icon}` shape as the entity
     and case pages so they can share `resourceTabs()`.
 
     Anonymous visitors get a single-entry list: the template then renders the results
     with no tab strip rather than one pointless tab.
 
-    `show_ai` is keyword-only with a default, the way `_build_entity_tabs`'
-    `show_process_tree` is, so positional call sites stay unchanged.
+    `show_ai` and `explore` are keyword-only with defaults, the way `_build_entity_tabs`'
+    `show_process_tree` is, so positional call sites stay unchanged. Explore sits beside
+    Results: both are "what is in this log", one matched, one all of it.
     """
     tabs = [{"key": "results", "label": "Results", "badge": None, "lazy_event": None, "icon": "shield"}]
+    if explore:
+        tabs.append({"key": "explore", "label": "Explore", "badge": explore_badge, "lazy_event": "loadExplore", "icon": "search"})
     if show_ai:
         tabs.append({"key": "ai", "label": "AI Analysis", "badge": None, "lazy_event": "loadAiAnalysis", "icon": "sparkles"})
     if user is not None:

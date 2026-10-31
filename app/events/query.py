@@ -161,6 +161,31 @@ def _ident(name: str) -> str:
     return '"' + name.replace('"', '""') + '"'
 
 
+def combine(*parts: Compiled) -> Compiled:
+    """Every part must match: the typed query AND the controls' terms (det, the brush).
+
+    Compiled apart rather than concatenated as text, so the typed query keeps its own limits
+    and an error in it points at what the analyst typed, not at an offset into a string the
+    page assembled.
+    """
+    live = [p for p in parts if p.where is not None]
+    if not live:
+        return Compiled(where=None)
+    if len(live) == 1:
+        return live[0]
+    params: tuple = ()
+    for p in live:
+        params += p.params
+    return Compiled(
+        where=" AND ".join(f"({p.where})" for p in live),
+        params=params,
+        needs=frozenset().union(*(p.needs for p in live)),
+        fields=tuple(dict.fromkeys(f for p in live for f in p.fields)),
+        bare_words=tuple(w for p in live for w in p.bare_words),
+        terms=sum(p.terms for p in live),
+    )
+
+
 def compile_query(raw: str, schema: Schema) -> Compiled:
     """Compile *raw* against *schema*, or raise QueryError."""
     raw = raw or ""
@@ -521,7 +546,7 @@ def _weekday(value: str, tok: _Tok) -> tuple[str, list]:
     return f"(isodow(_lt_time) IN ({', '.join(str(d) for d in sorted(days))}))", []
 
 
-def column_filter_to_terms(column: str, cell: str) -> str:
+def column_filter_to_terms(column: str, cell: str, *, shortcut: bool = False) -> str:
     """A filter-row cell (`x`, `=x`, `!x`, `>=1`, `*`, `!*`) as a query term for *column*.
 
     The filter row is a way of writing the query, not a second filter: its terms go into `q`,
@@ -541,8 +566,13 @@ def column_filter_to_terms(column: str, cell: str) -> str:
         body = cell
     else:
         body = "*" + cell.strip("*") + "*"
-    body = body.replace('"', "*")
+    if '"' in body:
+        # A quote cannot sit inside a quoted value; it becomes a one-place wildcard, so an
+        # exact term turns into a wildcard one (still matching the value it came from).
+        body = (body[1:] if body.startswith("=") else body).replace('"', "*")
     if any(ch.isspace() or ch in "()" for ch in body):
         body = f'"{body}"'
-    name = f".{column}" if column.lower() in SHORTCUTS else column
+    # A column sharing a shortcut's name is reached with a leading dot; *shortcut* means the
+    # caller asked for the shortcut itself (host:, channel:, eid: for the fixed columns).
+    name = f".{column}" if column.lower() in SHORTCUTS and not shortcut else column
     return f"{'-' if negate else ''}{name}:{body}"

@@ -266,6 +266,9 @@ def _migrate_add_missing_columns(conn):
         "max_finding_details": "INTEGER NOT NULL DEFAULT 10",
         "demo_mode": f"BOOLEAN NOT NULL DEFAULT {_false}",
         "max_upload_files": "INTEGER NOT NULL DEFAULT 50",
+        # Selected on every page load, so a legacy start dies without them (9d2e6b1f4c58).
+        "show_explore": f"BOOLEAN NOT NULL DEFAULT {_true}",
+        "explore_build_enabled": f"BOOLEAN NOT NULL DEFAULT {_true}",
     }.items():
         if column not in existing_site:
             conn.execute(text(f"ALTER TABLE sitesettings ADD COLUMN {column} {definition}"))

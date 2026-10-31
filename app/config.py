@@ -259,6 +259,7 @@ class Settings(BaseSettings):
     events_max_concurrent_queries: int = 2
     events_query_timeout_seconds: int = 10
     events_cache_max_mb: int = 4096
+    events_export_rate_limit_per_minute: int = 5
 
     @model_validator(mode="after")
     def _check_and_derive(self) -> "Settings":

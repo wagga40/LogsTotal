@@ -1,0 +1,82 @@
+{% from "partials/_pager.html" import pager %}
+{% from "partials/_severity_macros.html" import sev_dot %}
+{#
+  The results: counts, export links, the table with its sort headers and filter row, and the
+  pager (outside the scroll box, so "Next" is always reachable). Swapped into
+  `#explore-results` by every search; the route sets the address bar and tells the
+  histogram the new query through HX-Trigger.
+
+  A filter-row cell is not a second filter: Enter sends it with the form, the route turns it
+  into a query term (`column_filter_to_terms`) and the box shows the result.
+#}
+{% macro cell(value) -%}
+{%- if value is none -%}{%- elif value is number -%}{{ value }}{%- elif value.isoformat is defined -%}{{ value.isoformat(sep=' ') }}{%- else -%}{{ value }}{%- endif -%}
+{%- endmacro %}
+{% if busy %}
+<div class="bg-gray-900 border border-gray-800 rounded-xl p-6 text-sm text-gray-400"
+     hx-get="{{ base_url }}/results" hx-include="#explore-form" hx-trigger="load delay:2s" hx-target="#explore-results" hx-swap="innerHTML">
+  Busy with other searches; retrying…
+</div>
+{% elif error %}
+<div class="bg-gray-900 border border-red-900/60 rounded-xl p-4 text-sm text-red-300" role="alert">{{ error }}</div>
+{% else %}
+<div class="flex flex-wrap items-center justify-between gap-2 mb-2 text-xs text-gray-400">
+  <span><strong class="text-gray-200 tabular-nums">{{ '{:,}'.format(total) }}</strong> of {{ '{:,}'.format(store.events) }} events{% if store.truncated %} (the index stops at its event cap){% endif %}</span>
+  <span class="flex items-center gap-1">
+    <a class="lt-btn lt-btn--xs" href="{{ base_url }}/export.csv{% if state.qs(page=1, ev=None) %}?{{ state.qs(page=1, ev=None) }}{% endif %}" download title="The visible columns of every matching event, up to 500,000">CSV</a>
+    <a class="lt-btn lt-btn--xs" href="{{ base_url }}/export.ndjson{% if state.qs(page=1, ev=None) %}?{{ state.qs(page=1, ev=None) }}{% endif %}" download title="Every field of every matching event, up to 100,000">NDJSON</a>
+  </span>
+</div>
+<div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+  {# `overflow-x-auto` beside `.lt-scroll` (which sets overflow-y only): wide rows scroll
+     sideways inside the card instead of being clipped by its rounded `overflow-hidden`. #}
+  <div class="lt-scroll lt-scroll--lg overflow-x-auto">
+    <table class="w-full text-xs">
+      <thead class="sticky top-0 z-10 bg-gray-900">
+        <tr class="text-gray-400">
+          <th class="w-6" aria-label="Detected"></th>
+          {% for c in columns %}
+          <th class="text-left font-medium px-2 pt-2 pb-1 whitespace-nowrap">
+            <button type="button" class="hover:text-white" data-column="{{ c }}" @click="sortBy($el.dataset.column)"
+                    title="Sort by {{ column_label(c) }}">{{ column_label(c) }}{% if state.sort == c %} {{ '↓' if state.desc else '↑' }}{% endif %}</button>
+          </th>
+          {% endfor %}
+        </tr>
+        <tr class="border-b border-gray-800">
+          <th></th>
+          {% for c in columns %}
+          <th class="px-1 pb-1.5 font-normal">
+            {% if not c.startswith('_lt_') or c in filterable_fixed %}
+            <input type="text" name="fval" class="lt-field lt-field--sm w-full min-w-[5rem] font-mono" autocomplete="off"
+                   placeholder="filter" aria-label="Filter {{ column_label(c) }}"
+                   title="{{ 'Enter adds a time bound: >=2026-01-31T10:00 or <2026-02-01' if c == '_lt_time' else 'Enter adds a term: text contains it, =x is exact, !x excludes, >=10 compares, * is present' }}"
+                   hx-get="{{ base_url }}/results" hx-include="#explore-form" hx-vals='{{ {"fcol": c} | tojson }}'
+                   hx-trigger="keyup[key=='Enter']" hx-target="#explore-results" hx-swap="innerHTML">
+            {% endif %}
+          </th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in rows %}
+        <tr data-uid="{{ row._lt_uid }}" tabindex="-1"
+            class="border-t border-gray-800/70 hover:bg-gray-800/40 cursor-pointer"
+            :class="selected === {{ row._lt_uid }} ? 'bg-blue-900/30' : ''"
+            @click="open({{ row._lt_uid }})">
+          <td class="pl-2 align-middle">{% if row._det is defined and row._det is not none %}<span class="inline-block w-2 h-2 rounded-full {{ sev_dot(levels[row._det]) }}" title="Detected: {{ levels[row._det] }}{% if row._rules and row._rules > 1 %}, {{ row._rules }} rules{% endif %}"></span>{% endif %}</td>
+          {% for c in columns %}
+          {% set text = cell(row[c]) %}
+          <td class="px-2 py-1 font-mono text-gray-300 max-w-[28rem] truncate" title="{{ text }}">{{ text }}</td>
+          {% endfor %}
+        </tr>
+        {% else %}
+        <tr><td colspan="{{ columns | length + 1 }}" class="px-4 py-8 text-center text-gray-500">No event matches.</td></tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+</div>
+<div class="mt-2">
+  {{ pager(state.page, pages, url=base_url ~ '/results', qs=state.qs(page=1, ev=None), target='#explore-results', total=total, per_page=per_page, noun='events', noun_one='event', keys=True) }}
+</div>
+{% endif %}

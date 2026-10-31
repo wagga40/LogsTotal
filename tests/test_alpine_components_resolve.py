@@ -25,6 +25,7 @@ STATIC_JS = [
     APP / "static" / "account-menu.js",
     APP / "static" / "graph.js",
     APP / "static" / "timeline.js",
+    APP / "static" / "explore.js",
 ]
 
 # `x-data="foo(...)"` / `x-data='foo(...)'` — only factory *calls*, not object literals.
@@ -100,7 +101,7 @@ def test_our_js_is_loaded_before_alpine():
     """
     base = (TEMPLATES / "base.html").read_text(encoding="utf-8")
     alpine = base.index("/static/vendor/alpine.min.js")
-    for asset in ("/static/app.js", "/static/account-menu.js", "/static/graph.js", "/static/timeline.js", "/static/timeline-canvas.js"):
+    for asset in ("/static/app.js", "/static/account-menu.js", "/static/graph.js", "/static/timeline.js", "/static/timeline-canvas.js", "/static/explore.js"):
         assert asset in base, f"{asset} is not loaded from base.html"
         assert base.index(asset) < alpine, f"{asset} must be listed before alpine.min.js or its Alpine factories will not exist at Alpine.start()"
 
@@ -125,7 +126,7 @@ def test_first_party_static_assets_are_cache_busted_by_mtime():
     code change — which is how an already-fixed JS bug kept reproducing in the browser.
     """
     base = (TEMPLATES / "base.html").read_text(encoding="utf-8")
-    for asset in ("app.js", "account-menu.js", "graph.js", "themes.css", "timeline.js", "timeline-canvas.js"):
+    for asset in ("app.js", "account-menu.js", "graph.js", "themes.css", "timeline.js", "timeline-canvas.js", "explore.js"):
         match = re.search(rf"/static/{re.escape(asset)}\?v=\{{\{{\s*(.+?)\s*\}}\}}", base)
         assert match, f"{asset} is not referenced with a cache-buster in base.html"
         expr = match.group(1)

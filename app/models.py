@@ -428,6 +428,12 @@ class SiteSettings(Base):
     show_entities = Column(Boolean, nullable=False, default=True)
     show_threat_detection = Column(Boolean, nullable=False, default=True)
     show_process_tree = Column(Boolean, nullable=False, default=True)
+    # Explore: every event of an upload, not only what the tools matched. `show_explore`
+    # hides the tab from everyone; `explore_build_enabled` is the "Build event index" button
+    # for uploads analysed before stores existed (new uploads are built automatically while
+    # EVENTS_ENABLED is on). Both default on, like the other job-page panels.
+    show_explore = Column(Boolean, nullable=False, default=True)
+    explore_build_enabled = Column(Boolean, nullable=False, default=True)
     # The shipped label vocabulary — `lolbin`, `privileged`, `rfc1918` and the rest —
     # evaluated as rules and applied as tags. On by default: the labels are part of what an
     # instance shows out of the box.

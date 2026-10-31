@@ -79,6 +79,41 @@ def store_dir(sha256: str, gen: str):
     trim()
 
 
+def is_local_or_cached(sha256: str, gen: str) -> bool:
+    """Whether opening the store now would be quick: on this disk, or already fetched."""
+    from app.storage import get_storage
+
+    if get_storage().event_store_dir_sync(sha256, gen) is not None:
+        return True
+    return (cache_root() / "stores" / sha256 / gen / MANIFEST).is_file()
+
+
+_prefetching: set[str] = set()
+
+
+def prefetch(sha256: str, gen: str) -> None:
+    """Start fetching a store in the background (at most once at a time); the page polls."""
+    from app.storage import event_store_prefix
+
+    key = event_store_prefix(sha256, gen)
+    with _locks_guard:
+        if key in _prefetching:
+            return
+        _prefetching.add(key)
+
+    def run() -> None:
+        try:
+            with store_dir(sha256, gen):
+                pass
+        except Exception:
+            logger.warning("Event store %s/%s: background fetch failed", sha256, gen, exc_info=True)
+        finally:
+            with _locks_guard:
+                _prefetching.discard(key)
+
+    threading.Thread(target=run, name=f"events-prefetch-{gen}", daemon=True).start()
+
+
 def _download_store(sha256: str, gen: str, target: Path) -> None:
     from app.json_utils import load_file
     from app.storage import get_storage

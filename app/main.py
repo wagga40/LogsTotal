@@ -34,6 +34,7 @@ from app.routers import (
     comments,
     docs,
     enrichment_admin,
+    explore,
     intel,
     intel_rules,
     intel_tags,
@@ -331,6 +332,8 @@ app.include_router(analysis_confidence.router)
 # nothing in jobs.py is a /{job_id}/{anything} catch-all, so there is nothing for
 # /{job_id}/ai-analysis to be swallowed by, and a test pins that.
 app.include_router(ai.router)
+# Also /jobs/{job_id}/explore…, after jobs and ai for the same reason.
+app.include_router(explore.router)
 app.include_router(intel.router)
 # Registered after intel so intel's literal paths stay first — /intel/tags.json is matched
 # before /intel/tags. Both share intel's /intel prefix, and
