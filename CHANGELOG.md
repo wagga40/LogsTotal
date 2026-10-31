@@ -11,43 +11,42 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ### Added
 
-- Stored execution fingerprints for each analysis: input, effective workflow, engine
-  binary or container, rules and configuration. Historical runs retain unknown provenance.
-- Downloadable analysis reports and comparisons between visible runs of identical file
-  content, grouped by engine and rule identity, with counts and severity changes.
-- Per-engine completion diagnostics and partial results. Usable findings survive malformed
-  output or interrupted engines; incomplete coverage is explicitly labelled.
-
-- A daily database optimisation (04:10 UTC). On SQLite it refreshes planner statistics and
-  returns free pages to the filesystem once they pass `DB_VACUUM_FREELIST_PERCENT`
-  (default 25). The first reclaim is a full `VACUUM`, run automatically only up to 256 MB,
-  that switches the file to incremental auto-vacuum. The development database was 27% free
-  pages (42.9 MB, 31.4 MB after `VACUUM`). The storage page now shows free pages, WAL size,
-  auto-vacuum mode and the last vacuum.
-
-- **Compress Stored Blobs** on the Maintenance tab (`/admin/backfill-compress-db`) encodes
-  the finding events, evidence samples, analytics and rule texts written before they were
-  stored compressed. Run it once after upgrading, then Vacuum.
-
 - **Explore**: a new tab on the job page that lists every event of the upload, not only
   the matched ones. It has free-text and field search with a documented syntax, a
   histogram you can drag to zoom, field values with +/- filters, stacking (combinations of
-  up to three fields, rarest first), sortable and filterable columns, an event panel with the rules that matched, and CSV/NDJSON export. It is for
-  members, admins and a job's own submitter. Cases have it too: every event of every job
-  in the case, as one table with a Source column. Exports are audited and rate limited. See
+  up to three fields, rarest first), sortable and filterable columns, an event panel with
+  the rules that matched it, and CSV/NDJSON export. It is for members, admins and a job's
+  own submitter. Cases have it too: every event of every job in the case, as one table
+  with a Source column. Exports are audited and rate limited. See
   [Explore and event indexes](docs/reference/explore.md).
 - Event indexes, which Explore runs on, **on by default** (`EVENTS_ENABLED`). Every
   upload's events are parsed by LogsTotal itself (EVTX, JSON, winlogbeat, EVTX-XML, Sysmon
   for Linux, auditd, journald, syslog) into Parquet, in a subprocess beside the detection
   tools. An index is built once per file and rebuilt on demand, and can be evicted by
   `EVENTS_RETENTION_DAYS` and `EVENTS_MAX_TOTAL_MB`. A 213 MB EVTX took 6.5 s and became an
-  11.5 MB index. Jobs analysed before this get a **Build event index** button.
-- Uploads can be stored compressed (`UPLOAD_COMPRESSION=zstd`, **off by default**). EVTX
-  compresses about 26x. Analyses, downloads, re-runs and event indexes read a private
-  decompressed copy that is removed afterwards, so tools and downloads see the original
-  bytes. **Compress Uploads** on the Maintenance tab converts the uploads already stored.
+  11.5 MB index. Jobs analysed before this get a **Build event index** button, and their
+  detections are linked to the indexed events from their raw outputs when Explore opens.
 - The process tree on the job page, for Explore users, shows every process the log
   started, with the detected ones marked, instead of the matched ones only.
+- Uploads can be stored compressed (`UPLOAD_COMPRESSION=zstd`, **off by default**). EVTX
+  compresses about 25x. Analyses, downloads, re-runs and event indexes read a private
+  decompressed copy that is removed afterwards, so tools and downloads see the original
+  bytes. **Compress Uploads** on the Maintenance tab converts the uploads already stored.
+- Stored execution fingerprints for each analysis: input, effective workflow, engine
+  binary or container, rules and configuration. Historical runs retain unknown provenance.
+- Downloadable analysis reports and comparisons between visible runs of identical file
+  content, grouped by engine and rule identity, with counts and severity changes.
+- Per-engine completion diagnostics and partial results. Usable findings survive malformed
+  output or interrupted engines; incomplete coverage is explicitly labelled.
+- A daily database optimisation (04:10 UTC). On SQLite it refreshes planner statistics and
+  returns free pages to the filesystem once they pass `DB_VACUUM_FREELIST_PERCENT`
+  (default 25). The first reclaim is a full `VACUUM`, run automatically only up to 256 MB,
+  that switches the file to incremental auto-vacuum. The development database was 27% free
+  pages (42.9 MB, 31.4 MB after `VACUUM`). The storage page now shows free pages, WAL size,
+  auto-vacuum mode and the last vacuum.
+- **Compress Stored Blobs** on the Maintenance tab (`/admin/backfill-compress-db`) encodes
+  the finding events, evidence samples, analytics and rule texts written before they were
+  stored compressed. Run it once after upgrading, then Vacuum.
 
 ### Fixed
 
@@ -106,10 +105,21 @@ backup step, migration ordering, and rollback for each deployment path.
 - Run comparisons open before results load, then fetch 100 rules per page with database
   aggregation and asynchronous pagination instead of loading both runs in full.
 - Python dependencies, same-major browser libraries, and the pinned GitHub Actions
-  updates proposed in PR #10.
+  updates proposed in PR #10. New: DuckDB 2.0 (Explore's query engine), evtx and, before
+  Python 3.14, backports.zstd; all install from wheels on 3.11 to 3.14, AMD64 and ARM64.
+- Every "?" help panel uses the dropdown theme, and its syntax column wraps instead of
+  pushing the explanations past the panel's edge.
 
 ### Upgrade notes
 
+- Event indexes are built for every new upload from the first analysis after the upgrade.
+  An index costs about 5% of an EVTX upload on disk, a worker thread and up to 1 GB of
+  memory (`EVENTS_BUILD_MEMORY_MB`) while it builds; on a busy worker host, add one to
+  `HUEY_WORKERS`. `EVENTS_ENABLED=false` turns indexing and Explore off. See
+  [Explore and event indexes](docs/reference/explore.md) and [Scaling](docs/scaling.md).
+- Migrations `0c7d4e9a2b61`, `4b8e2f1c9a07` and `9d2e6b1f4c58` add the per-job results
+  table, the event index table and the two Explore switches. They are additive; their
+  downgrades drop only derived data.
 - Migration `b8d46f1e932a` adds the `PARTIAL` task status, which older workers cannot read.
   `./logstotal upgrade` stops every worker before migrating; stop them yourself if you
   upgrade any other way.
