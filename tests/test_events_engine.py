@@ -275,3 +275,22 @@ def test_the_drawer_reads_only_its_family_columns(store):
     fields = eng.event(narrow, 1)["fields"]
     assert fields["Image"].endswith("whoami.exe") and "Score" not in fields, "Score is not a sysmon|1 column"
     assert "Score" in eng.event(narrow, 4)["fields"], "an event of an unlisted family reads every column"
+
+
+def test_an_export_cannot_hold_its_slot_forever(store, monkeypatch):
+    """A heavy export query is interrupted, and a slow reader is cut off past the cap."""
+    eng, view, schema, _ = store
+    eng.timeout_seconds = 0.2
+    heavy = StoreView(view.root, view.manifest, GEN)
+    monkeypatch.setattr(eng, "_matched", lambda *a: ([], "SELECT a.range AS _lt_time, a.range AS _lt_uid FROM range(100000000) a, range(1000) b WHERE a.range % 7 = b.range", []))
+    with pytest.raises(EngineTimeout):
+        next(eng.export(heavy, _q(schema, ""), ["_lt_uid"], max_rows=10))
+    monkeypatch.undo()
+    monkeypatch.setattr(engine_mod, "EXPORT_MAX_SECONDS", -1)
+    monkeypatch.setattr(engine_mod, "EXPORT_BATCH", 2)
+    stream = eng.export(view, _q(schema, ""), ["_lt_uid"], max_rows=10)
+    assert len(next(stream)) == 2
+    with pytest.raises(EngineTimeout):
+        next(stream)
+    monkeypatch.setattr(engine_mod, "EXPORT_MAX_SECONDS", 300)
+    assert [r[0] for b in eng.export(view, _q(schema, ""), ["_lt_uid"], max_rows=1) for r in b] == [TIME_ORDER[0]], "both slots were released"

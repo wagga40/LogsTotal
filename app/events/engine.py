@@ -33,6 +33,7 @@ import hashlib
 import logging
 import os
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass
@@ -55,6 +56,8 @@ FACET_MAX = 50
 STACK_MAX = 1000
 STACK_FIELDS_MAX = 3
 EXPORT_BATCH = 5000
+#: A whole export stream, slow readers included; past it the stream ends and the slot frees.
+EXPORT_MAX_SECONDS = 300
 MATCHES_MAX_BYTES = 512 << 20
 _COUNT_TTL = 7 * 86_400
 _TIME_ORDER = "_lt_time NULLS LAST, _lt_uid"
@@ -403,19 +406,38 @@ class Engine:
 
         One export at a time per process (`EngineBusy` otherwise). The slot and the cursor are
         released when the generator closes — including when the client goes away mid-stream,
-        which Starlette signals by closing it.
+        which Starlette signals by closing it. Two time limits, so neither a heavy query nor a
+        slow reader can hold the slot: the query is interrupted if its first batch takes
+        longer than the query timeout, and the stream ends with `EngineTimeout` past
+        EXPORT_MAX_SECONDS in all.
         """
         names = [view.column(c) for c in dict.fromkeys(columns)]
         if not self._export_slot.acquire(blocking=False):
             raise EngineBusy("an export is already running")
         cur = None
+        timer = None
+        deadline = time.monotonic() + EXPORT_MAX_SECONDS
         try:
             ctes, sql, params = self._matched(view, compiled, ", ".join(map(_ident, names)))
             cur = self._con.cursor()
-            cur.execute(f"{_with(ctes)}{sql} ORDER BY {_TIME_ORDER} LIMIT ?", [*params, int(max_rows)])
-            while batch := cur.fetchmany(EXPORT_BATCH):
+            timer = threading.Timer(self.timeout_seconds, cur.interrupt)
+            timer.daemon = True
+            timer.start()
+            try:
+                cur.execute(f"{_with(ctes)}{sql} ORDER BY {_TIME_ORDER} LIMIT ?", [*params, int(max_rows)])
+                batch = cur.fetchmany(EXPORT_BATCH)
+            except self._duckdb.InterruptException as exc:
+                raise EngineTimeout(f"the export query ran past {self.timeout_seconds:g} s") from exc
+            finally:
+                timer.cancel()
+            while batch:
                 yield batch
+                if time.monotonic() > deadline:
+                    raise EngineTimeout(f"the export ran past {EXPORT_MAX_SECONDS} s")
+                batch = cur.fetchmany(EXPORT_BATCH)
         finally:
+            if timer is not None:
+                timer.cancel()
             if cur is not None:
                 with contextlib.suppress(Exception):
                     cur.close()
