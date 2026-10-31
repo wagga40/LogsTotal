@@ -105,6 +105,7 @@
               <span class="badge-base
                 {%- if ts == 'running' %} badge-running
                 {%- elif ts == 'completed' %} badge-completed
+                {%- elif ts == 'partial' %} badge-partial
                 {%- elif ts == 'failed' %} badge-failed
                 {%- elif ts == 'cancelled' %} badge-cancelled
                 {%- else %} badge-pending{% endif %}">{{ tr.tool_name }}</span>

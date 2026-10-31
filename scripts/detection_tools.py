@@ -8,7 +8,6 @@ Keep the previous directory under backups/. Container pins are changed separatel
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import os
 import platform
@@ -19,6 +18,7 @@ import subprocess
 import sys
 import tarfile
 import tempfile
+import urllib.parse
 import urllib.request
 import zipfile
 from datetime import UTC, datetime
@@ -27,6 +27,8 @@ from pathlib import Path
 # This script also runs before PDM is installed. The catalog has no app imports.
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from app.tools.catalog import TOOLS
+from app.tools.digests import file_digest as sha256
+from app.tools.digests import tree_digest
 from app.tools.runtime import resolve_task_config
 from scripts.tool_runtime_inventory import workflow_task_scalars
 
@@ -55,22 +57,6 @@ def read_json(path: Path):
 
 def write_json(path: Path, value) -> None:
     path.write_text(json.dumps(value, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
-
-
-def sha256(path: Path) -> str:
-    with path.open("rb") as stream:
-        return hashlib.file_digest(stream, "sha256").hexdigest()
-
-
-def tree_digest(path: Path) -> str:
-    """Include filenames as well as content, so missing/renamed rules are detected."""
-    digest = hashlib.sha256()
-    for file in sorted(p for p in path.rglob("*") if p.is_file()):
-        digest.update(str(file.relative_to(path)).encode())
-        digest.update(b"\0")
-        digest.update(sha256(file).encode())
-        digest.update(b"\n")
-    return digest.hexdigest()
 
 
 def api(endpoint: str):
@@ -268,9 +254,9 @@ def rsigma_rules(source: Path, stage: Path) -> None:
     write_json(stage / "config" / "rsigma.yml", {"version": 1})
 
 
-def stage_rules(tool: str, release: dict, stage: Path, work: Path) -> dict:
+def stage_rules(tool: str, release: dict, stage: Path, work: Path, *, ref: str = "HEAD") -> dict:
     repo = RULE_REPOS[tool]
-    commit = api(f"{repo}/commits/HEAD")
+    commit = api(f"{repo}/commits/{urllib.parse.quote(ref, safe='')}")
     source = snapshot(repo, commit["sha"], work, "rule-source")
     if tool == "chainsaw":
         sigma_subset(source, stage / "sigma")
@@ -326,8 +312,9 @@ def breaking_update(tool: str, have: str, want: str) -> bool:
     return old[0] != new[0] or (TOOLS[tool].minor_is_breaking and old[0] == 0 and old[:2] != new[:2])
 
 
-def update(root: Path, tool: str, allow_major: bool) -> None:
-    release = api(f"{REPOS[tool]}/releases/latest")
+def update(root: Path, tool: str, allow_major: bool, *, version: str | None = None, rules_ref: str | None = None) -> None:
+    release_ref = "tags/" + urllib.parse.quote(version, safe="") if version else "latest"
+    release = api(f"{REPOS[tool]}/releases/{release_ref}")
     have, want = local_version(root, tool), release["tag_name"]
     if have and version_tuple(have) > version_tuple(want):
         raise ValueError(f"refusing to downgrade {tool}: {have} -> {want}")
@@ -339,7 +326,7 @@ def update(root: Path, tool: str, allow_major: bool) -> None:
         stage = work / "staged"
         shutil.copytree(root / "tools" / tool, stage)
         hashes = stage_binaries(tool, release, stage, work)
-        rules = stage_rules(tool, release, stage, work)
+        rules = stage_rules(tool, release, stage, work, **({"ref": rules_ref} if rules_ref else {}))
         write_json(stage / MANIFEST, {"repo": REPOS[tool], "version": want, "binaries": hashes, "rules": rules})
         backup = install(root, tool, stage)
     print(f"Installed {tool} rules" + (" and binaries" if hashes else "") + f"; previous files: {backup}")
@@ -399,7 +386,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("tools", nargs="*")
     parser.add_argument("--strict", action="store_true", default=os.environ.get("TOOLS_STRICT") == "1")
     parser.add_argument("--allow-major", action="store_true", default=os.environ.get("TOOLS_ALLOW_MAJOR") == "1")
+    parser.add_argument("--version", help="Exact upstream release tag (single-tool update only)")
+    parser.add_argument("--rules-ref", help="Rules commit, tag or branch; resolved to an immutable commit (single-tool update only)")
     args = parser.parse_intermixed_args(argv)
+    if (args.version or args.rules_ref) and (args.action != "update" or len(args.tools) != 1):
+        parser.error("--version and --rules-ref require an update of exactly one tool")
     if unknown := set(args.tools) - REPOS.keys():
         parser.error(f"unknown tool(s): {', '.join(sorted(unknown))}")
     if args.action == "update" and not args.tools:
@@ -418,7 +409,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.action == "check":
             return check(root, args.tools or list(REPOS), args.strict)
         for tool in dict.fromkeys(args.tools):
-            update(root, tool, args.allow_major)
+            update(root, tool, args.allow_major, **({"version": args.version} if args.version else {}), **({"rules_ref": args.rules_ref} if args.rules_ref else {}))
         return 0
     except (OSError, ValueError, KeyError, tarfile.TarError, zipfile.BadZipFile, subprocess.SubprocessError) as error:
         print(f"ERROR: {error}", file=sys.stderr)

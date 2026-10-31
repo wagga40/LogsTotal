@@ -7,10 +7,10 @@
   },
   "rules": {
     "repo": "SigmaHQ/sigma",
-    "commit": "2e8fd89f82d9104c1b30321a307254ddeea17de2",
-    "committed_at": "2026-09-15T11:45:27Z",
+    "commit": "b7920ed31356fb7f6a9275b34737d8604c65bac3",
+    "committed_at": "2026-10-18T01:48:48Z",
     "trees": {
-      "rules": "5b7869bd30dde16d261b500b5c2f83d1b5910bc7589a87625c94a670d914e93b",
+      "rules": "5cf0e5637288d36e02cd986a679d903a7ab5ac67d528bdb2f0bb9a0f54326d4e",
       "mappings": "3a24e4aecaef32e5b2c1ac99d81bd5e7b414fe9d91bffc962e233ca9e1b6b566"
     }
   }

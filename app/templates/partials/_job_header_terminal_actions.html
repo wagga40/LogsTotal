@@ -12,6 +12,12 @@
 </form>
 {% endif %}
 {% if is_terminal %}
+{% if comparison_baseline_id %}
+<a href="/jobs/{{ job.id }}/compare"
+   class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition">Compare runs</a>
+{% endif %}
+<a href="/jobs/{{ job.id }}/analysis.json"
+   class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition">Analysis report</a>
 <a href="/jobs/{{ job.id }}/mitre-layer" target="_blank"
    class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition"
    title="Download MITRE ATT&CK Navigator layer JSON for this job">
@@ -21,23 +27,27 @@
 {% endif %}
 {% if user and user.is_superuser and is_terminal %}
 <div class="relative" @click.outside="show = false"
-  x-data="{ show: false, mitre: true, timeline: true, entities: true, threats: true, get exportUrl() { let s = [this.mitre && 'mitre', this.timeline && 'timeline', this.entities && 'entities', this.threats && 'threats'].filter(Boolean); return '/jobs/{{ job.id }}/analytics.json' + (s.length < 4 ? '?sections=' + s.join(',') : ''); } }">
-  <button type="button" @click="show = !show"
+  @focusout="if (!$el.contains($event.relatedTarget)) show = false"
+  @keydown.escape="if (show) { show = false; $refs.trigger.focus(); $event.stopPropagation(); }"
+  x-data="{ show: false, mitre: false, timeline: false, entities: false, threats: false, get exportUrl() { let s = [this.mitre && 'mitre', this.timeline && 'timeline', this.entities && 'entities', this.threats && 'threats'].filter(Boolean); return '/jobs/{{ job.id }}/analytics.json' + (s.length < 4 ? '?sections=' + s.join(',') : ''); } }">
+  <button type="button" x-ref="trigger" @click="show = !show"
+    aria-expanded="false" :aria-expanded="show" aria-controls="job-analytics-menu"
     class="inline-flex items-center gap-1.5 text-xs bg-gray-800 hover:bg-gray-700 border border-gray-700 rounded-lg px-3 py-1.5 text-gray-300 hover:text-white transition">
     <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 19v-6a2 2 0 00-2-2H5a2 2 0 00-2 2v6a2 2 0 002 2h2a2 2 0 002-2zm0 0V9a2 2 0 012-2h2a2 2 0 012 2v10m-6 0a2 2 0 002 2h2a2 2 0 002-2m0 0V5a2 2 0 012-2h2a2 2 0 012 2v14a2 2 0 01-2 2h-2a2 2 0 01-2-2z"/></svg>
     Analytics
     <svg class="w-3 h-3 transition-transform" :class="show && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
   </button>
-  <div x-show="show" x-cloak class="lt-menu lt-menu--flush absolute right-0 mt-1 w-56 p-3 space-y-2">
+  <div id="job-analytics-menu" x-show="show" x-cloak class="lt-menu lt-menu--flush absolute right-0 mt-1 w-56 p-3 space-y-2">
     <p class="text-xs text-gray-500 font-medium mb-1">Include sections</p>
     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" x-model="mitre" class="accent-blue-500 rounded"> MITRE ATT&amp;CK</label>
     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" x-model="timeline" class="accent-blue-500 rounded"> Timeline</label>
     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" x-model="entities" class="accent-blue-500 rounded"> Entities</label>
     <label class="flex items-center gap-2 text-sm text-gray-300 cursor-pointer"><input type="checkbox" x-model="threats" class="accent-blue-500 rounded"> Threat Detection</label>
-    <a :href="exportUrl" @click="show = false" :class="!(mitre || timeline || entities || threats) && 'pointer-events-none opacity-40'"
-      class="lt-btn lt-btn--primary lt-btn--block mt-2">
+    <button id="job-analytics-download" type="button" disabled :disabled="!(mitre || timeline || entities || threats)"
+      @click="if (mitre || timeline || entities || threats) { window.location.href = exportUrl; show = false; }"
+      class="lt-btn lt-btn--primary lt-btn--block mt-2 disabled:opacity-40 disabled:cursor-not-allowed">
       Download JSON
-    </a>
+    </button>
   </div>
 </div>
 <form method="POST" action="/jobs/{{ job.id }}/recalculate-analytics" class="inline">

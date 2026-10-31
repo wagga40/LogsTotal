@@ -27,6 +27,7 @@ from app.routers import (
     admin,
     ai,
     ai_admin,
+    analysis_confidence,
     api_tokens_admin,
     case_ai,
     cases,
@@ -324,6 +325,7 @@ app.include_router(
 app.include_router(upload.router)
 app.include_router(submission_api.router)
 app.include_router(jobs.router)
+app.include_router(analysis_confidence.router)
 # Shares jobs' /jobs prefix, like intel_rules below shares /intel. Registered after
 # jobs.router so its literal second segments keep precedence;
 # nothing in jobs.py is a /{job_id}/{anything} catch-all, so there is nothing for

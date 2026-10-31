@@ -321,7 +321,7 @@ def test_zircolite_version_includes_profile_pin(tmp_path):
     workflows = tmp_path / "workflows"
     workflows.mkdir()
     (workflows / "windows.yml").write_text("tasks:\n  - tool: zircolite\n    profile: windows\n")
-    assert updater.local_version(tmp_path, "zircolite") == "4.0.0"
+    assert updater.local_version(tmp_path, "zircolite") == "4.7.0"
 
 
 def test_legacy_zircolite_override_version_still_discovered(tmp_path):
@@ -337,3 +337,24 @@ def test_profile_pin_and_different_legacy_version_report_conflict(tmp_path):
     (workflows / "windows.yml").write_text("tasks:\n  - tool: zircolite\n    profile: windows\n  - tool: zircolite\n    docker_image: wagga40/zircolite:3.8.1\n")
     with pytest.raises(ValueError, match="inconsistent"):
         updater.local_version(tmp_path, "zircolite")
+
+
+def test_explicit_version_selects_release_tag(installed, monkeypatch):
+    endpoints = []
+
+    def api(endpoint):
+        endpoints.append(endpoint)
+        return {"tag_name": "v2.17.1"}
+
+    monkeypatch.setattr(updater, "api", api)
+    monkeypatch.setattr(updater, "stage_binaries", lambda *_: {})
+    monkeypatch.setattr(updater, "stage_rules", lambda *_, **kw: {"ref": kw.get("ref")})
+    updater.update(installed, "chainsaw", False, version="v2.17.1", rules_ref="a" * 40)
+    assert endpoints == ["WithSecureOpenSource/chainsaw/releases/tags/v2.17.1"]
+    assert updater.read_json(installed / "tools/chainsaw/upstream.json")["rules"]["ref"] == "a" * 40
+
+
+@pytest.mark.parametrize("args", [["check", "chainsaw", "--version", "v2.17.1"], ["update", "chainsaw", "hayabusa", "--rules-ref", "HEAD"]])
+def test_pins_require_single_tool_update(args):
+    with pytest.raises(SystemExit):
+        updater.main(args)

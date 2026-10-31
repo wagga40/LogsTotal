@@ -256,3 +256,62 @@ def test_a_snapshot_never_carries_certs_or_generated_env_files(tmp_path: Path):
     assert not (snap / "certs").exists()
     assert not (snap / "deploy-envs").exists()
     assert not (snap / ".env").exists()
+
+
+# ── Schema guard ─────────────────────────────────────────────────────────────
+#
+# upgrade.sh's single-host rollback refused to cross a migration; the fleet's restored the
+# snapshot regardless, leaving a control plane that could not start and no code left to
+# downgrade with. The guard runs on the control plane before any host is touched.
+
+
+def _guard_body() -> str:
+    return _extract(r'remote "\$cp" bash -s <<EOS && return 0\n(.*?)\nEOS\n')
+
+
+def _stub_docker(tmp_path: Path, *, exit_code: int) -> tuple[Path, Path]:
+    """A PATH shim for docker, standing in for the database check; it records its argv."""
+    bin_dir = tmp_path / "dockerbin"
+    bin_dir.mkdir()
+    calls = tmp_path / "docker-calls"
+    shim = bin_dir / "docker"
+    shim.write_text(f'#!/usr/bin/env bash\necho "$*" >> "{calls}"\nexit {exit_code}\n')
+    shim.chmod(0o755)
+    return bin_dir, calls
+
+
+def _release(d: Path, *migrations: str, snapshot: tuple[str, ...] | None) -> Path:
+    (d / "alembic" / "versions").mkdir(parents=True)
+    for name in migrations:
+        (d / "alembic" / "versions" / name).write_text("")
+    if snapshot is not None:
+        snap = d / "backups" / "releases" / "20260101-000000-0.1.0"
+        (snap / "alembic" / "versions").mkdir(parents=True)
+        for name in snapshot:
+            (snap / "alembic" / "versions" / name).write_text("")
+    return d
+
+
+def test_the_guard_asks_the_database_when_the_rollback_crosses_a_migration(tmp_path: Path):
+    d = _release(tmp_path / "srv", "0001_base.py", "0002_new.py", snapshot=("0001_base.py",))
+    stub, calls = _stub_docker(tmp_path, exit_code=1)
+    result = _run(_guard_body(), deploy_dir=d, stub_bin=stub)
+    assert result.returncode != 0
+    assert "0002_new.py" in result.stderr
+    assert "db_target.py rollback backups/releases/20260101-000000-0.1.0 --context host" in calls.read_text()
+
+
+def test_the_guard_passes_once_the_schema_was_downgraded(tmp_path: Path):
+    d = _release(tmp_path / "srv", "0001_base.py", "0002_new.py", snapshot=("0001_base.py",))
+    stub, _ = _stub_docker(tmp_path, exit_code=0)
+    result = _run(_guard_body(), deploy_dir=d, stub_bin=stub)
+    assert result.returncode == 0, result.stdout + result.stderr
+
+
+@pytest.mark.parametrize("snapshot", [("0001_base.py",), None], ids=["same-migrations", "no-snapshot"])
+def test_the_guard_leaves_the_database_alone_when_nothing_is_crossed(tmp_path: Path, snapshot):
+    d = _release(tmp_path / "srv", "0001_base.py", snapshot=snapshot)
+    stub, calls = _stub_docker(tmp_path, exit_code=1)
+    result = _run(_guard_body(), deploy_dir=d, stub_bin=stub)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert not calls.exists()

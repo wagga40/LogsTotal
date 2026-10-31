@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload, undefer
 
 from app import activity, job_watch
+from app.analysis_comparison import comparison_baseline_id
 from app.auth.users import MEMBER_ROLES, current_member_or_above, current_superuser, current_user_optional, current_user_required
 from app.comments import comment_counts_for
 from app.config import settings
@@ -672,6 +673,7 @@ async def job_detail(
             "workflows": workflows,
             "is_duplicate": bool(request.query_params.get("dup")),
             "can_resubmit": await _can_resubmit(db, job.file_id, user),
+            "comparison_baseline_id": await comparison_baseline_id(db, job, user),
             "tlsh_hash": tlsh_hash,
             "site_settings": site_settings,
             "member_cases": member_cases,
@@ -825,6 +827,7 @@ async def job_status_partial(
             "queue_position": queue_position,
             "estimated_remaining": estimated_remaining,
             "can_resubmit": await _can_resubmit(db, job.file_id, user),
+            "comparison_baseline_id": await comparison_baseline_id(db, job, user),
         },
         status_code=286 if is_terminal else 200,
     )
@@ -1212,32 +1215,32 @@ async def job_findings_json(
     user: User | None = Depends(current_user_optional),
 ):
     """Download all findings as JSON."""
-    job = await _load_job_full(db, job_id, with_blobs=True)
+    job = await _load_job_full(db, job_id, blobs=(Finding.details, Finding.rule_content))
     if not job:
         raise HTTPException(404)
     if not _can_view_private(job, user):
         raise HTTPException(404)
     await activity.record("export.job_findings", request=request, user=user, target_type="job", target_id=str(job_id))
 
-    export = []
-    for tr in job.task_results:
-        for f in tr.findings:
-            export.append(
-                {
-                    "tool": tr.tool_name,
-                    "rule_id": f.rule_id,
-                    "rule_name": f.rule_name,
-                    "severity": enum_val(f.severity),
-                    "count": f.count,
-                    "tags": json_loads(f.tags or "[]"),
-                    "details": json_loads(f.details or "[]"),
-                    "rule_signature": f.rule_signature,
-                    # Detection Rule License 1.1: match output keeps the rule author.
-                    "rule_author": rule_author(tr.tool_name, f.rule_id, f.rule_content),
-                }
-            )
-
+    export = [
+        {"tool": tr.tool_name, **_finding_export(tr.tool_name, f), "details": json_loads(f.details or "[]"), "rule_signature": f.rule_signature}
+        for tr in job.task_results
+        for f in tr.findings
+    ]
     return JSONResponse(export, headers={"Content-Disposition": f"attachment; filename=job_{job_id}_findings.json"})
+
+
+def _finding_export(tool_name: str, f: Finding) -> dict:
+    """The rule-level fields every findings export shares (also /jobs/{id}/analysis.json)."""
+    return {
+        "rule_id": f.rule_id,
+        "rule_name": f.rule_name,
+        "severity": enum_val(f.severity),
+        "count": f.count,
+        "tags": json_loads(f.tags or "[]"),
+        # Detection Rule License 1.1: match output keeps the rule author.
+        "rule_author": rule_author(tool_name, f.rule_id, f.rule_content),
+    }
 
 
 _ANALYTICS_SECTIONS = {
@@ -1880,17 +1883,17 @@ async def job_delete(
 # ── Helpers ─────────────────────────────────────────────────────────────────────
 
 
-async def _load_job_full(db: AsyncSession, job_id: int, *, with_blobs: bool = False) -> AnalysisJob | None:
+async def _load_job_full(db: AsyncSession, job_id: int, *, blobs: tuple = ()) -> AnalysisJob | None:
     """The job with its task results and findings.
 
     Backs the 3-second job-status poll, so `Finding.details` and `Finding.rule_content`
     stay deferred: the page uses `details` only as a boolean (`Finding.has_details`, a
-    selected expression) and `rule_content` not at all. `with_blobs=True` is for the
-    exports, which genuinely serialise them.
+    selected expression) and `rule_content` not at all. `blobs` names the deferred
+    `Finding` columns an export genuinely serialises.
     """
     findings_loader = selectinload(AnalysisJob.task_results).selectinload(TaskResult.findings)
-    if with_blobs:
-        findings_loader = findings_loader.options(undefer(Finding.details), undefer(Finding.rule_content))
+    if blobs:
+        findings_loader = findings_loader.options(*(undefer(column) for column in blobs))
     result = await db.execute(
         select(AnalysisJob)
         .where(AnalysisJob.id == job_id)
@@ -1985,7 +1988,7 @@ def _compute_live_summary(job: AnalysisJob) -> dict:
         tr_status = enum_val(tr.status)
         if tr_status == "skipped":
             continue
-        if tr_status in ("completed", "failed"):
+        if tr_status in ("completed", "partial", "failed"):
             completed_tools += 1
         if tr.findings:
             tools_with_hits += 1

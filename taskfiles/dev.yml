@@ -805,7 +805,7 @@ tasks:
       # vars: entry. `|-` and not `|`: a plain block scalar leaves a trailing empty
       # line, which the loop would then try to download.
       VENDOR_ASSETS: |-
-        tailwind.js https://cdn.tailwindcss.com/{{.TAILWIND_VERSION}}
+        tailwind.js https://cdn.tailwindcss.com/{{.TAILWIND_CDN_VERSION}}
         htmx.min.js https://unpkg.com/htmx.org@{{.HTMX_VERSION}}/dist/htmx.min.js
         htmx-ext-alpine-morph.js https://unpkg.com/htmx-ext-alpine-morph@{{.HTMX_ALPINE_MORPH_VERSION}}/alpine-morph.js
         alpine-morph.min.js https://unpkg.com/@alpinejs/morph@{{.ALPINE_MORPH_VERSION}}/dist/cdn.min.js
@@ -824,7 +824,16 @@ tasks:
       - for: {var: VENDOR_ASSETS, split: "\n", as: ASSET}
         cmd: |
           set -- {{.ASSET}}
-          curl -fsSL "$2" -o "app/static/vendor/$1" || { echo "ERROR: download failed: $2"; exit 1; }
+          tmp=$(mktemp "app/static/vendor/$1.XXXXXX") || exit 1
+          trap 'rm -f "$tmp"' EXIT
+          curl -fsSL "$2" -o "$tmp" || { echo "ERROR: download failed: $2"; exit 1; }
+          # Play CDN returns HTTP 200 with console.error for unsupported versions.
+          if [ "$1" = "tailwind.js" ] && grep -q 'Unknown Tailwind version:' "$tmp"; then
+            echo "ERROR: unsupported Tailwind Play CDN version: $2"
+            exit 1
+          fi
+          chmod 644 "$tmp" || exit 1
+          mv "$tmp" "app/static/vendor/$1"
       - echo "Vendor assets downloaded to app/static/vendor/"
 
   # ── Tailwind CSS build ───────────────────────────────────────────────────────

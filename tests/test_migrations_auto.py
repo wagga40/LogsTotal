@@ -537,3 +537,37 @@ def test_case_ai_followup_repairs_already_applied_revision(tmp_db, has_source_de
             text("INSERT INTO case_ai_analysis (case_id, provider_name, model, status) VALUES (3, 'New provider', 'new-model', 'PENDING') RETURNING id")
         ).scalar_one()
         assert new_id > (99 if has_autoincrement else 42)
+
+
+def test_analysis_confidence_downgrade_preserves_partial_findings(tmp_db):
+    from alembic import command
+    from app.migrations import _alembic_config, run_auto_migrate
+
+    run_auto_migrate()
+    cfg = _alembic_config()
+    with _connect(tmp_db) as conn:
+        conn.execute(text("INSERT INTO taskresult (id, job_id, tool_name, status, findings_count) VALUES (1, 1, 'hayabusa', 'PARTIAL', 1)"))
+        conn.execute(text("INSERT INTO finding (task_result_id, rule_name, severity, count) VALUES (1, 'Kept', 'HIGH', 1)"))
+        conn.commit()
+    command.downgrade(cfg, "a76e3b9c214d")
+    with _connect(tmp_db) as conn:
+        assert conn.scalar(text("SELECT status FROM taskresult WHERE id=1")) == "FAILED"
+        assert conn.scalar(text("SELECT rule_name FROM finding")) == "Kept"
+    command.upgrade(cfg, "head")
+    with _connect(tmp_db) as conn:
+        assert conn.scalar(text("SELECT diagnostics_json FROM taskresult WHERE id=1")) is None
+
+
+def test_analysis_confidence_migration_tolerates_columns_the_legacy_patcher_added(tmp_db, monkeypatch):
+    """A start with AUTO_MIGRATE=false patches the columns in; turning it back on must still boot."""
+    from alembic import command
+    from app.config import settings
+    from app.migrations import _alembic_config, get_head_revision, run_auto_migrate
+
+    command.upgrade(_alembic_config(), "a76e3b9c214d")
+    monkeypatch.setattr(settings, "auto_migrate", False)
+    run_auto_migrate()
+    monkeypatch.setattr(settings, "auto_migrate", True)
+    run_auto_migrate()
+    with _connect(tmp_db) as conn:
+        assert conn.scalar(text("SELECT version_num FROM alembic_version")) == get_head_revision()

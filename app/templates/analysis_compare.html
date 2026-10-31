@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Compare analysis – LogsTotal{% endblock %}
+{% block content %}
+<div class="space-y-6">
+  <div class="flex items-center justify-between gap-4">
+    <h1 class="text-2xl font-semibold">Compare analysis</h1>
+    <a href="/jobs/{{ job.id }}" class="text-blue-400 hover:text-blue-300">Back to job #{{ job.id }}</a>
+  </div>
+  <p class="text-sm text-gray-400">Compare results for identical file content. Differences can come from rules, engines, configuration, or incomplete analysis; they do not establish that a threat was resolved.</p>
+  {% if baselines %}
+  <form method="get" class="flex flex-wrap items-end gap-3">
+    <label class="text-sm text-gray-300 min-w-0">Compare with
+      <select name="baseline" class="block mt-1 max-w-full bg-gray-900 border border-gray-700 rounded px-3 py-2">
+        {% for run in baselines %}
+        <option value="{{ run.id }}"{% if baseline and run.id == baseline.id %} selected{% endif %}>#{{ run.id }} · {{ run.workflow_name }} · {{ run.created_at.strftime('%Y-%m-%d %H:%M') }} · {{ run.status.value }}</option>
+        {% endfor %}
+      </select>
+    </label>
+    <button type="submit" class="lt-btn lt-btn--primary">Compare</button>
+  </form>
+  {% endif %}
+  {% if not baseline %}
+  <p class="bg-gray-900 rounded-lg p-6 text-gray-400">No earlier visible run of this file is available. Reanalyse the file to compare results.</p>
+  {% else %}
+  <div class="grid grid-cols-1 sm:grid-cols-2 gap-4">
+    {% for label, run, provenance, tasks in [('Baseline', baseline, baseline_provenance, baseline_tasks), ('Current', job, current_provenance, current_tasks)] %}
+    <section class="bg-gray-900 border border-gray-800 rounded-lg p-4 space-y-3">
+      <h2 class="font-semibold">{{ label }}: <a href="/jobs/{{ run.id }}" class="text-blue-400">job #{{ run.id }}</a></h2>
+      <p class="text-sm text-gray-400">{{ run.status.value }} · {{ run.created_at }}</p>
+      {% if run.status.value != 'completed' %}<p class="text-amber-400 text-sm">This run is incomplete. Differences may reflect missing analysis.</p>{% endif %}
+      {% if provenance %}
+      <p class="text-sm">{{ provenance.workflow }} · LogsTotal {{ provenance.logstotal_version }}</p>
+      <p class="text-xs text-gray-500 break-all">Workflow fingerprint: {{ provenance.workflow_sha256 }}</p>
+      {% else %}<p class="text-sm text-gray-500">Provenance unavailable for this historical run.</p>{% endif %}
+      {% for task in tasks %}
+      <div class="border-t border-gray-800 pt-2 text-sm">
+        <strong>{{ task.tool }}</strong> · {{ task.status }}
+        {% if task.provenance %}
+        <p class="text-gray-400">Version {{ task.provenance.engine_version or 'unknown' }}</p>
+        <p class="text-xs text-gray-500 break-all">Rules: {{ task.provenance.rules_revision or task.provenance.rules_sha256 or 'unknown' }}</p>
+        <p class="text-xs text-gray-500 break-all">Configuration: {{ task.provenance.configuration_sha256 or 'unknown' }}</p>
+        {% else %}<p class="text-xs text-gray-500">Provenance unavailable</p>{% endif %}
+      </div>
+      {% endfor %}
+    </section>
+    {% endfor %}
+  </div>
+  {% set results_url = '/jobs/' ~ job.id ~ '/compare?baseline=' ~ baseline.id ~ '&page=' ~ page %}
+  <div x-data="{ loading: !$el.querySelector('[data-comparison-loaded]'), failed: false, loaded: !!$el.querySelector('[data-comparison-loaded]') }"
+       @htmx:before-request="loading = true; failed = false"
+       @htmx:after-request="loading = false; failed = !$event.detail.successful; loaded = loaded || $event.detail.successful"
+       hx-sync="#comparison-results:replace">
+    <p x-show="loading" class="text-sm text-gray-400 mb-3" role="status">Loading comparison…</p>
+    <div x-show="failed" x-cloak class="text-sm text-amber-400 mb-3" role="alert">
+      Could not load the comparison. Try again.
+      <button type="button" id="comparison-retry" x-show="!loaded" class="lt-btn lt-btn--sm ml-2"
+              hx-get="{{ results_url }}" hx-target="#comparison-results" hx-swap="outerHTML">Retry</button>
+    </div>
+    <div id="comparison-results" :aria-busy="loading"
+         hx-get="{{ results_url }}" hx-trigger="load" hx-swap="outerHTML">
+    </div>
+  </div>
+  {% endif %}
+</div>
+{% endblock %}

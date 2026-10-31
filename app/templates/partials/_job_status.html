@@ -73,7 +73,7 @@
       {% elif s == 'partial' %}
       <span class="text-amber-400 text-sm font-medium">No matches in the tools that finished</span>
       {% else %}
-      <span class="text-green-400 text-sm font-medium">No threats detected</span>
+      <span class="text-gray-300 text-sm font-medium">No matches reported by the completed engines</span>
       {% endif %}
       {% endif %}
       {% if not is_terminal %}
@@ -118,11 +118,13 @@
   <div class="space-y-2 mb-6">
     {% for tr in job.task_results %}
     {% set ts = tr.status.value if tr.status.value is defined else tr.status %}
-    <div class="bg-gray-900 border border-gray-800 rounded-lg" x-data="{}">
+    {% set show_analysis_details = tr.tool_name not in ['Computing analytics', 'File similarity'] and is_terminal and ts in ('completed', 'partial') %}
+    <div class="bg-gray-900 border border-gray-800 rounded-lg" x-data="{ analysisOpen: false }">
       <!-- Summary row -->
       <div class="flex items-center gap-4 px-4 py-3 flex-wrap">
         <div class="flex-shrink-0 w-5 text-center">
           {% if ts == 'completed' %}<span class="text-green-400 text-sm">&#10003;</span>
+          {% elif ts == 'partial' %}<span class="text-amber-400 text-sm" title="Incomplete analysis">!</span>
           {% elif ts == 'running' %}<span class="text-blue-400 text-sm animate-pulse">&#9679;</span>
           {% elif ts == 'failed' %}<span class="text-red-400 text-sm">&#10007;</span>
           {% elif ts == 'skipped' %}
@@ -139,10 +141,25 @@
           {{ tr.findings_count }} rule{% if tr.findings_count != 1 %}s{% endif %} matched
         </span>
         {% endif %}
+        {% if ts == 'partial' %}
+        <span class="text-xs text-amber-400">Incomplete analysis — available findings retained</span>
+        {% endif %}
         {% if ts == 'running' and tr.started_at %}
         <span class="text-xs text-blue-400 animate-pulse" title="Running since {{ tr.started_at }}">running...</span>
         {% elif tr.duration_ms is not none and tr.duration_ms > 0 %}
         <span class="text-xs text-gray-500" title="Execution time for this tool">{{ (tr.duration_ms / 1000) | round(2) }}s</span>
+        {% endif %}
+        {% if show_analysis_details or (user and user.is_superuser and is_terminal) %}
+        <div class="ml-auto flex items-center gap-2">
+        {% if show_analysis_details %}
+        <button type="button" id="task-analysis-trigger-{{ tr.id }}"
+          @click="analysisOpen = !analysisOpen"
+          :aria-expanded="analysisOpen"
+          aria-controls="task-analysis-{{ tr.id }}"
+          class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
+          :class="analysisOpen ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
+          Analysis details
+        </button>
         {% endif %}
         {% if user and user.is_superuser and is_terminal %}
         <button type="button"
@@ -151,12 +168,21 @@
           hx-trigger="click once"
           hx-target="#task-log-{{ tr.id }}"
           hx-swap="innerHTML"
-          class="ml-auto text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
+          class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
           :class="($store.openLogs[{{ tr.id }}] || false) ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
           <span x-text="($store.openLogs[{{ tr.id }}] || false) ? 'Hide logs' : 'Show logs'"></span>
         </button>
         {% endif %}
+        </div>
+        {% endif %}
       </div>
+      {# Only a tool that ran has counters and provenance; a skipped or failed row would show a column of unknowns. #}
+      {% if show_analysis_details %}
+      {% set metadata = tr | task_metadata %}
+      <div x-show="analysisOpen" x-cloak id="task-analysis-{{ tr.id }}" role="region" aria-labelledby="task-analysis-trigger-{{ tr.id }}">
+      {% include "partials/_analysis_metadata.html" %}
+      </div>
+      {% endif %}
       {% if ts == 'failed' %}
       {% if user and user.is_superuser %}
       <div class="border-t border-gray-800 px-4 py-3 bg-red-950/20">
@@ -345,9 +371,7 @@
     <p class="text-xl font-semibold">Analysis cancelled</p>
     <p class="text-sm text-gray-500 mt-1">No findings were recorded before cancellation.</p>
   </div>
-  {# Zero findings is a clean verdict only when every tool ran. A failed or partial job
-     wore the green "No threats detected" too, which is the one line an analyst acts on
-     without reading the tool rows underneath it. #}
+  {# Zero matches describes the output, not the safety of the uploaded file. #}
   {% elif s == 'failed' %}
   <div class="text-center py-8 text-red-400">
     <p class="text-xl font-semibold">Analysis failed</p>
@@ -356,12 +380,12 @@
   {% elif s == 'partial' %}
   <div class="text-center py-8 text-amber-400">
     <p class="text-xl font-semibold">No rules matched in the tools that finished</p>
-    <p class="text-sm text-gray-500 mt-1">At least one tool failed, so this is not a clean verdict.</p>
+    <p class="text-sm text-gray-500 mt-1">At least one tool did not complete its analysis. Available results may omit detections.</p>
   </div>
   {% else %}
-  <div class="text-center py-8 text-green-400">
-    <p class="text-xl font-semibold">No threats detected</p>
-    <p class="text-sm text-gray-500 mt-1">All tools completed with 0 rules matched.</p>
+  <div class="text-center py-8 text-gray-300">
+    <p class="text-xl font-semibold">No matches reported</p>
+    <p class="text-sm text-gray-500 mt-1">The completed engines reported 0 rule matches. This does not establish that the file is safe.</p>
   </div>
   {% endif %}
   {% endif %}

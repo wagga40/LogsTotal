@@ -1238,7 +1238,7 @@ def test_filesystem_doctor_resolves_profile_runners(tmp_path, monkeypatch):
     tasks = sources[0][1]
     assert "threads" not in tasks[0]
     assert tasks[0]["tool_path"][system_checks._arch_key()].startswith("tools/hayabusa/")
-    assert tasks[1]["docker_image"].startswith("wagga40/zircolite:4.0.0@sha256:")
+    assert tasks[1]["docker_image"].startswith("wagga40/zircolite:4.7.0@sha256:")
     monkeypatch.setattr(system_checks, "_docker_daemon_reachable", lambda: False)
     checks = system_checks.check_docker_tools(tmp_path)
     assert any(check.level == system_checks.WARN and "windows.yml" in check.name for check in checks)

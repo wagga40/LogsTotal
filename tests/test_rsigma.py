@@ -8,6 +8,7 @@ from pathlib import Path
 
 import pytest
 
+from app.tools.mapping import file_records
 from app.tools.registry import get_adapter
 
 
@@ -85,12 +86,12 @@ def test_invalid_or_unsupported_output_fails(record):
     [
         ("", "Processed 2 events, 0 matches.", 0, True),
         ("not json", "", 0, False),
-        (json.dumps(detection()), "Error parsing JSON on line 1: bad", 0, False),
-        (json.dumps(detection()), "failure", 1, False),
+        (json.dumps(detection()), "Error parsing JSON on line 1: bad", 0, True),
+        (json.dumps(detection()), "failure", 1, True),
         (json.dumps(detection()), "Processed 1 events, 1 matches.", 0, True),
     ],
 )
-def test_execution_only_publishes_complete_output(tmp_path, monkeypatch, payload, stderr, code, success):
+def test_execution_publishes_usable_output(tmp_path, monkeypatch, payload, stderr, code, success):
     a = adapter()
 
     def execute(cmd, timeout, cancel_event, *, stdout_path, env):
@@ -101,8 +102,22 @@ def test_execution_only_publishes_complete_output(tmp_path, monkeypatch, payload
     out = tmp_path / "events_rsigma.json"
     result = a._execute_and_parse(["unused"], out)
     assert result.success is success
-    assert out.exists() is success
+    # Only the validated output survives: the raw stream would be uploaded and exported too.
+    assert [p.name for p in tmp_path.iterdir()] == (["events_rsigma.json"] if success else [])
     assert result.stdout == ""
+
+
+def test_a_failed_run_names_the_engine_error(tmp_path, monkeypatch):
+    a = adapter()
+
+    def execute(cmd, **kw):
+        kw["stdout_path"].write_text("")
+        return 2, "", "Loaded pipeline: logstotal_windows (priority 10)\nerror: unexpected argument '--bogus' found\n\nUsage: rsigma engine eval\n"
+
+    monkeypatch.setattr(a, "_exec", execute)
+    result = a._execute_and_parse(["unused"], tmp_path / "out_rsigma.json")
+    assert not result.success
+    assert result.error.endswith("RSigma reported: error: unexpected argument '--bogus' found")
 
 
 def test_command_sets_input_and_evidence_without_thread_flag():
@@ -403,7 +418,7 @@ def test_source_channel_does_not_overwrite_cleared_channel(real_adapter, tmp_pat
 
 
 @pytest.mark.parametrize("aborted", ["cancelled", "timeout"])
-def test_aborted_output_parsing_does_not_publish(tmp_path, monkeypatch, aborted):
+def test_cancellation_discards_output_but_timeout_retains_evidence(tmp_path, monkeypatch, aborted):
     import threading
 
     import app.tools.rsigma as module
@@ -424,5 +439,45 @@ def test_aborted_output_parsing_does_not_publish(tmp_path, monkeypatch, aborted)
     monkeypatch.setattr(a, "_exec", execute)
     out = tmp_path / "event_rsigma.json"
     result = a._execute_and_parse(["unused"], out)
-    assert not result.success
-    assert not out.exists()
+    if aborted == "cancelled":
+        assert not result.success
+        assert not out.exists()
+    else:
+        assert result.success
+        assert result.diagnostics.completion == "incomplete"
+        assert out.exists()
+
+
+def test_incomplete_execution_retains_valid_records_and_cleans_artifact(tmp_path, monkeypatch):
+    a = adapter()
+
+    def execute(cmd, **kw):
+        kw["stdout_path"].write_text(json.dumps(detection()) + '\n{"truncated":\n')
+        return 0, "", "Warning: skipped event\nProcessed 2 events, 2 matches."
+
+    monkeypatch.setattr(a, "_exec", execute)
+    output = tmp_path / "out_rsigma.json"
+    result = a._execute_and_parse(["unused"], output)
+    assert result.success
+    assert result.diagnostics.completion == "incomplete"
+    assert result.diagnostics.records_skipped == 1
+    assert sum(f.count for f in result.findings) == 1
+    assert len(list(file_records(output, format="jsonl", strict=True))) == 1
+    assert [p.name for p in tmp_path.iterdir()] == ["out_rsigma.json"]
+
+
+def test_timeout_preserves_valid_rsigma_evidence(tmp_path, monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("app.tools.rsigma.time.monotonic", lambda: now[0])
+    a = adapter(timeout=1)
+
+    def execute(cmd, **kw):
+        kw["stdout_path"].write_text(json.dumps(detection()) + "\n")
+        now[0] = 10.0
+        return -1, "", "Command timed out"
+
+    monkeypatch.setattr(a, "_exec", execute)
+    result = a._execute_and_parse(["unused"], tmp_path / "out_rsigma.json")
+    assert result.success
+    assert result.diagnostics.completion == "incomplete"
+    assert result.findings[0].count == 1

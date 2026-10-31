@@ -101,7 +101,9 @@ class ChopChopGoAdapter(ToolAdapter):
         rc, stdout, stderr = self._exec(cmd, timeout=self._timeout_seconds, cancel_event=self._cancel_event)
         duration_ms = int((time.monotonic() - t0) * 1000)
 
-        if rc != 0:
+        events = self._extract_json_events(stdout)
+        cancelled = self._cancel_event is not None and self._cancel_event.is_set()
+        if rc != 0 and (cancelled or not events):
             return ToolOutput(
                 success=False,
                 error=stderr or stdout or (f"Command timed out after {self._timeout_seconds}s" if rc == -1 else f"Exit code {rc}"),
@@ -110,14 +112,16 @@ class ChopChopGoAdapter(ToolAdapter):
                 duration_ms=duration_ms,
             )
 
-        events = self._extract_json_events(stdout)
+        if rc != 0:
+            self._diagnostics.incomplete("The engine exited before completing its analysis.")
         if events is None:
-            return ToolOutput(success=True, findings=[], stdout=stdout, stderr=stderr, duration_ms=duration_ms)
+            return ToolOutput(success=False, error="Missing or invalid ChopChopGo JSON output", stdout=stdout, stderr=stderr, duration_ms=duration_ms)
 
         try:
             output_file.write_text(json_dumps(events), encoding="utf-8")
-            findings = self.normalize(events)
-            return ToolOutput(success=True, findings=findings, stdout=stdout, stderr=stderr, duration_ms=duration_ms)
+            # ChopChopGo prints no counters. It writes one JSON array after the last
+            # event, so a whole array on a zero exit is the evidence that it finished.
+            return self._parse_output(output_file, stdout, stderr, duration_ms, finished=rc == 0)
         except Exception as exc:
             return ToolOutput(
                 success=False,
@@ -140,6 +144,9 @@ class ChopChopGoAdapter(ToolAdapter):
                 parsed = json_loads(candidate)
             except ValueError:
                 continue
+            # Go encodes the nil result slice as null when no rule matches.
+            if parsed is None:
+                return []
             if isinstance(parsed, list):
                 return parsed
         return None

@@ -80,9 +80,19 @@ def test_numeric_severity_is_coerced_rather_than_raising():
 
 
 def test_zircolite_survives_a_non_list_matches_field():
-    findings = ZircoliteAdapter(_cfg()).normalize([{**GOOD_ZIRCOLITE, "matches": "unexpected"}])
-    assert len(findings) == 1
-    assert findings[0].details == []
+    adapter = ZircoliteAdapter(_cfg())
+    findings = adapter.normalize([{**GOOD_ZIRCOLITE, "matches": "unexpected"}])
+    assert findings == []
+    assert adapter._diagnostics.completion == "incomplete"
+    assert adapter._diagnostics.records_skipped == 1
+
+
+def test_zircolite_drops_a_malformed_sample_not_its_rule_block():
+    adapter = ZircoliteAdapter(_cfg())
+    findings = adapter.normalize([{**GOOD_ZIRCOLITE, "count": 40, "matches": [{"Computer": "PC"}, "oops"]}])
+    assert [(f.rule_name, f.count) for f in findings] == [(GOOD_ZIRCOLITE["title"], 40)]
+    assert adapter._diagnostics.completion == "incomplete"
+    assert adapter._diagnostics.records_skipped == 1
 
 
 def test_chainsaw_survives_a_non_dict_document():

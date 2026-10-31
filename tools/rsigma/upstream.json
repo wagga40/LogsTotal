@@ -1,17 +1,17 @@
 {
   "repo": "timescale/rsigma",
-  "version": "v0.23.0",
+  "version": "v0.25.0",
   "binaries": {
-    "rsigma-intel-lin": "c11692e3bfa47edd430deaddda691205e51eb8e3dc7f0c05adb9dfc9d649e7b4",
-    "rsigma-arm-lin": "ad223174fed8f3bde3c0ab127101a9ae9f267b2091a2cf9bbf6d9dd553054974",
-    "rsigma-mac": "e8f0d0fd8947ecefa0a538633aac87e04d62271637b925dacff6249adc8c5685"
+    "rsigma-intel-lin": "60e57297dec6b151071152631418805fb2aeb65c462c428f2e9a3141e90ed15c",
+    "rsigma-arm-lin": "5249034e473068aed5be528cd835552e5cbfdf68c59b7ccab5adfcec85d9caad",
+    "rsigma-mac": "4fd8aa715ed0acebe9327d945c8d8c1c64085a4303da10081761ddea79ab196b"
   },
   "rules": {
     "repo": "SigmaHQ/sigma",
-    "commit": "2e8fd89f82d9104c1b30321a307254ddeea17de2",
-    "committed_at": "2026-09-15T11:45:27Z",
+    "commit": "05d1031f537e830b76da53bae2400c5814c89165",
+    "committed_at": "2026-10-21T03:04:44Z",
     "trees": {
-      "rules": "9b914b3daceab8d23ecc32dfece86a02123dab47402c8a83984e628a7e48308a",
+      "rules": "b70d5d7a48cc6fcd8606bf400d22640c2ca2df7a33f7ff5bae90bff87c1ba9d2",
       "mappings": "0fd3c8a22d52629560f53c4e950a8c2e57f4e15ce3180a6983b632ac939fe3f4",
       "config": "b75b9cee72d802fa67e42ec5bcd5273357a5e61de5affde519ddd093e30f4057"
     }

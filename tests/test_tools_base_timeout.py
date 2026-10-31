@@ -15,7 +15,7 @@ from app.tools.zircolite import ZircoliteAdapter
 
 
 @pytest.mark.parametrize("output", [None, "[]", '[{"title":"Partial hit","level":"high","count":1,"matches":[{}]}]'])
-def test_docker_nonzero_exit_fails_even_with_parseable_output(tmp_path, output):
+def test_docker_nonzero_exit_preserves_only_usable_findings(tmp_path, output):
     output_file = tmp_path / "input_zircolite.json"
     if output is not None:
         output_file.write_text(output)
@@ -29,9 +29,14 @@ def test_docker_nonzero_exit_fails_even_with_parseable_output(tmp_path, output):
     with patch("docker.from_env", return_value=client):
         result = adapter.run(tmp_path / "input.evtx", tmp_path, log_type="evtx")
 
-    assert not result.success
-    assert "Killed during analysis" in result.error
-    assert not result.findings
+    if output and "Partial hit" in output:
+        assert result.success
+        assert result.diagnostics.completion == "incomplete"
+        assert result.findings[0].rule_name == "Partial hit"
+    else:
+        assert not result.success
+        assert "Killed during analysis" in result.error
+        assert not result.findings
 
 
 class _FakeProc:
@@ -135,3 +140,26 @@ class TestExecCancelEvent:
             rc, out, err = ToolAdapter._exec(["sleep", "30"], timeout=5, cancel_event=ev)
         assert (rc, out, err) == (-1, "", CANCELLED_ERROR)
         popen_mock.assert_not_called()
+
+
+def test_docker_timeout_retains_findings(tmp_path, monkeypatch):
+    now = [0.0]
+    monkeypatch.setattr("app.tools.base.time.monotonic", lambda: now[0])
+    output = tmp_path / "input_zircolite.json"
+    output.write_text('[{"title":"Kept","matches":[{"Computer":"host"}]}]')
+    container = MagicMock()
+
+    def wait(**kwargs):
+        now[0] = 10.0
+        raise TimeoutError()
+
+    container.wait.side_effect = wait
+    client = MagicMock()
+    client.containers.create.return_value = container
+    a = ZircoliteAdapter({"docker_image": "test/image", "rules_path": str(tmp_path), "timeout": 1})
+    with patch("docker.from_env", return_value=client):
+        result = a.run(tmp_path / "input.evtx", tmp_path, log_type="evtx")
+    assert result.success
+    assert result.diagnostics.completion == "incomplete"
+    assert result.findings[0].rule_name == "Kept"
+    container.kill.assert_called_once()

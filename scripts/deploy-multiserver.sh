@@ -978,7 +978,48 @@ fi
 EOS
 }
 
+# rollback_schema_guard — refuse a fleet rollback the control plane could not start from.
+#
+# upgrade.sh's single-host rollback has always made this check and the fleet's never did,
+# which is the worse place to lack it: once the snapshot is restored, the code that could
+# still downgrade the schema is gone, and only a database restore gets back. Same test as
+# upgrade.sh::do_rollback — the revision files the restore would remove, and only then the
+# database's own revision through db_target.py — run on the control plane, where the
+# database lives, before any host is stopped or touched. Not `--no-deps`, unlike upgrade.sh:
+# after `deploy:stop` the bundled PostgreSQL is down too, and a check that cannot reach the
+# database refuses rather than passes.
+rollback_schema_guard() {
+  local cp="${HOSTS[0]}"
+  targeted "$cp" || return 0
+  step "${cp} (control-plane): checking the database against the snapshot's migrations"
+  remote "$cp" bash -s <<EOS && return 0
+set -euo pipefail
+cd "${DEPLOY_REMOTE_DIR}" 2>/dev/null || exit 0
+LATEST=\$(ls -d "${SNAPSHOT_ROOT}"/*/ 2>/dev/null | tail -1 | sed 's#/\$##' || true)
+# No snapshot: the restore below says so itself.
+[ -n "\$LATEST" ] || exit 0
+revisions() {
+  for f in "\$1"/alembic/versions/*.py; do
+    [ -e "\$f" ] || continue
+    basename "\$f"
+  done | sort
+}
+LOST=\$(comm -23 <(revisions .) <(revisions "\$LATEST") | tr '\n' ' ')
+[ -n "\${LOST// /}" ] || exit 0
+echo "Migrations the snapshot does not contain: \$LOST" >&2
+docker compose run --rm -T --pull never web python3 scripts/db_target.py rollback "\$LATEST" --context host >&2
+EOS
+  # Also reached when ssh or the check itself fails, so the wording names the refusal, not a cause.
+  die "refusing to roll back: ${cp} could not confirm that its database can run the snapshot's
+       code (the reason is above). A database stamped at a migration the snapshot does not
+       contain leaves the restored control plane unable to start. Nothing was stopped or
+       restored. Downgrade the schema while this code is still installed, or restore the
+       pre-upgrade database, then re-run this.
+       See docs/runbooks/upgrading.md#when-rollback-is-unsafe."
+}
+
 do_rollback() {
+  rollback_schema_guard
   for i in "${!HOSTS[@]}"; do
     local h="${HOSTS[$i]}"
     targeted "$h" || continue

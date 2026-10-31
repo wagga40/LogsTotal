@@ -1,13 +1,13 @@
 {
   "repo": "wagga40/Zircolite",
-  "version": "v4.0.0",
+  "version": "v4.7.0",
   "binaries": {},
   "rules": {
     "repo": "wagga40/Zircolite",
-    "commit": "c292d14a15b98e62e3aedc7f4d7c10c8a5a2caae",
-    "committed_at": "2026-09-20T10:25:35Z",
+    "commit": "a5d868baf76d7c4db2b2b599933af2d9a7a09189",
+    "committed_at": "2026-10-20T10:35:01Z",
     "trees": {
-      "rules": "07dbcf2afacbe2be6c58b0e6c9cb94cba08f7fe48082c4ea2a4e2b2250a49b49"
+      "rules": "d0c676f824f622147dd1cb66c0aad22d4add9d701667d49b107d2332c7885635"
     }
   }
 }

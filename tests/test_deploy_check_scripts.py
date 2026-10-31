@@ -1555,18 +1555,16 @@ def _local_push(tmp_path: Path, remote_dir: Path, extra: dict[str, str] | None =
 
 def test_env_push_really_installs_the_file_at_mode_600(tmp_path: Path):
     remote = tmp_path / "opt"
-    # The staging copy goes in a mktemp directory on the target — for the `local` sentinel,
-    # under this machine's TMPDIR, which is /tmp unless set. So this looks at the shared
-    # /tmp for anything left behind, and it does so as a before/after diff:
-    # a bare glob asserts on every process on the machine, which under `pytest -n auto`
-    # means a sibling worker's in-flight copy fails a test about our own cleanup.
-    before = set(Path("/tmp").glob("logstotal-env.*"))
-    result = _local_push(tmp_path, remote)
+    # Each suite owns its staging directory. A shared /tmp before/after diff
+    # can mistake another Python matrix run's in-flight file for our own leak.
+    staging = tmp_path / "staging"
+    staging.mkdir()
+    result = _local_push(tmp_path, remote, {"TMPDIR": str(staging)})
     assert result.returncode == 0, result.stdout + result.stderr
     installed = remote / ".env"
     assert installed.read_text(encoding="utf-8") == "SECRET_KEY=abc\nSTORAGE_BACKEND=s3\n"
     assert installed.stat().st_mode & 0o077 == 0
-    left_behind = set(Path("/tmp").glob("logstotal-env.*")) - before
+    left_behind = set(staging.iterdir())
     assert not left_behind, f"the staging copy must not be left behind: {sorted(left_behind)}"
 
 

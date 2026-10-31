@@ -141,6 +141,19 @@ class Base(DeclarativeBase):
     pass
 
 
+def _migrate_analysis_confidence(conn):
+    from sqlalchemy import inspect, text
+
+    inspector = inspect(conn)
+    for table, columns in (("taskresult", ("diagnostics_json", "execution_snapshot")), ("analysisjob", ("execution_snapshot",))):
+        existing = {column["name"] for column in inspector.get_columns(table)}
+        for column in columns:
+            if column not in existing:
+                conn.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} TEXT"))
+    if conn.dialect.name == "postgresql":
+        conn.execute(text("ALTER TYPE taskstatus ADD VALUE IF NOT EXISTS 'PARTIAL'"))
+
+
 def _migrate_add_missing_columns(conn):
     """Add post-bootstrap columns plus a hand-listed set of indexes (idempotent).
 
@@ -152,6 +165,7 @@ def _migrate_add_missing_columns(conn):
     _true = "TRUE" if is_pg else "1"
     _false = "FALSE" if is_pg else "0"
 
+    _migrate_analysis_confidence(conn)
     inspector = inspect(conn)
     existing = {c["name"] for c in inspector.get_columns("taskresult")}
     if "log_output" not in existing:

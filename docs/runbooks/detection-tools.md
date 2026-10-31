@@ -6,7 +6,7 @@ Which detection engines LogsTotal runs, how to keep them and their rules current
 
 | Tool | Runs as | Log types | Output |
 |------|---------|-----------|--------|
-| [Zircolite](https://github.com/wagga40/Zircolite) | **Docker image**, pinned by digest in `workflows/*.yml` | EVTX, JSON EVTX, Winlogbeat, Windows Event XML, Auditd, Sysmon for Linux, Journald | JSON array |
+| [Zircolite](https://github.com/wagga40/Zircolite) | **Docker image**, pinned by digest in `app/tools/catalog.py` | EVTX, JSON EVTX, Winlogbeat, Windows Event XML, Auditd, Sysmon for Linux, Journald | JSON array |
 | [Chainsaw](https://github.com/WithSecureOpenSource/chainsaw) | Binary | EVTX | JSONL |
 | [Hayabusa](https://github.com/Yamato-Security/hayabusa) | Binary | EVTX | JSONL |
 | [RSigma](https://github.com/timescale/rsigma) | Binary | EVTX, JSON EVTX, Winlogbeat | JSONL with full events |
@@ -37,7 +37,7 @@ Exports come in two layouts: a bare sequence of `<Event>` elements (`wevtutil qe
 
 ### RSigma on Windows logs
 
-Windows Full Analysis includes RSigma **0.23.0**, running locally on Linux x86-64,
+Windows Full Analysis includes RSigma **0.25.0**, running locally on Linux x86-64,
 Linux ARM64 or macOS Apple Silicon. Its Linux x86-64 binary requires **glibc 2.39 or
 newer**; the ARM64 binary requires **glibc 2.34 or newer**. Use the LogsTotal worker image
 on older hosts. RSigma batch evaluation is single-threaded: omit `threads` or set it to `1`.
@@ -201,6 +201,49 @@ These sit beside `tasks:` and describe the workflow:
 It only breaks ties. Dropping a file narrows the list to the workflows whose `log_types` accept the detected type, and the default is chosen from those. The six shipped workflows accept different log types, so the flag matters only once you add a workflow for a type another one already covers.
 
 Ticking it on `/workflows` clears it on every other workflow. Keep `is_default: true` in exactly one file under `workflows/`, because the loader writes the value from each file as it is.
+
+## Analysis confidence and comparisons
+
+A process exiting successfully does not prove that it read every event or loaded every
+rule. Job details show the counts the engine actually reports; absent counters remain
+**unknown**. A run is **complete** when the engine prints its end-of-run summary (for
+ChopChopGo, which prints none, when its JSON output parses whole on a zero exit).
+Malformed detection records, engine-reported errors, interrupted engines and an engine
+that loaded no rules make it **incomplete**: the task is partial and keeps its usable
+findings. Missing or wholly unusable output, or an incomplete run that found nothing,
+fails the task. Zero matches is an observation, not a safety verdict.
+
+Chainsaw cannot load a few hundred of the shipped Sigma rules, the same ones on every
+run. Job details count them, but they do not make a run incomplete.
+
+**Analysis report** downloads `/jobs/<id>/analysis.json` with schema version 1, stored
+execution fingerprints, completion diagnostics and normalized rule results. It excludes
+raw events, local paths and engine command lines. It has the same visibility as the job.
+The worker records its actual executable hash or container image ID and rule fingerprints
+before execution; assets changing during a run make the result incomplete. Engines on
+custom paths may have an unverified version. Older jobs show unavailable provenance;
+viewing a report never substitutes today's installation metadata.
+
+**Compare runs** appears when an earlier visible terminal run with the same input SHA-256
+is available, and selects the most recent such run. The **Compare with** selector lists
+eligible earlier runs with their job number, workflow, date and status. Both jobs must be
+visible to you. Findings are grouped by engine and rule ID (exact title when no ID exists).
+Counts and severity distributions are compared; a title change preserves an ID's identity.
+Absent or incomplete engines are **not comparable**. A rule no longer observed may reflect
+new rules, configuration or coverage, and does not establish that a threat was resolved.
+
+For a reproducible single-tool update, use an exact release tag and rules commit:
+
+```bash
+./logstotal tools:update -- rsigma --version v0.25.0 --rules-ref 05d1031f537e830b76da53bae2400c5814c89165 --allow-major
+```
+
+The updater resolves refs to commits and records checksums. `--allow-major` also applies
+to RSigma's pre-1.0 minor releases. Zircolite's container pin is changed separately after
+sample validation. Zircolite's engine and compiled rules are pinned to the `v4.7.0`
+release. Its image uses the multi-platform manifest digest
+`sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f`
+for AMD64 and ARM64.
 
 ---
 
