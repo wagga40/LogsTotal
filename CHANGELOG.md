@@ -9,6 +9,8 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+## [1.2.0] — 2026-10-31
+
 ### Added
 
 - **Explore**: a new tab on the job page that lists every event of the upload, not only
@@ -322,6 +324,7 @@ side, with the context an analyst needs to act on it.
   directory.
 - `./logstotal deploy:env-scaffold` generates the Garage secrets.
 
-[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v1.1.0...HEAD
+[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v1.2.0...HEAD
+[1.2.0]: https://github.com/wagga40/LogsTotal/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/wagga40/LogsTotal/compare/v1.0.0...v1.1.0
 [1.0.0]: https://github.com/wagga40/LogsTotal/releases/tag/v1.0.0
