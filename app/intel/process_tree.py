@@ -114,7 +114,7 @@ def build_job_forest_sync(job_id: int, *, entity_type: str = "", entity_value: s
     return forest
 
 
-async def load_job_forest(job_id: int, *, db=None, entity_type: str = "", entity_value: str = "") -> dict:
+async def load_job_forest(job_id: int, *, db=None, entity_type: str = "", entity_value: str = "", full: bool = False) -> dict:
     """Async wrapper — one `run_in_threadpool` hop around `build_job_forest_sync`.
 
     With *db*, the stored forest is fetched on the async session first and handed over as
@@ -127,5 +127,22 @@ async def load_job_forest(job_id: int, *, db=None, entity_type: str = "", entity
     if db is not None:
         from app import job_artifacts
 
+        if full:
+            # Every process creation in the upload, detections marked; only for a viewer who
+            # may read the whole log (models.can_explore_job). Absent until the overlay ran.
+            stored = await job_artifacts.get_payload(db, job_id, job_artifacts.PROC_FOREST_FULL)
+            if stored is not None:
+                return await run_in_threadpool(full_forest_view, stored, entity_type, entity_value)
         artifact = await job_artifacts.get_payload(db, job_id, job_artifacts.PROC_FOREST)
     return await run_in_threadpool(build_job_forest_sync, job_id, entity_type=entity_type, entity_value=entity_value, artifact=artifact)
+
+
+def full_forest_view(payload: bytes, entity_type: str = "", entity_value: str = "") -> dict:
+    """The stored full forest, pruned to an entity on the whole forest first, then capped for
+    display detection-first — so an entity's process is never cut before the prune sees it."""
+    from app.intel.lineage import select_detection_first
+
+    forest = unpack_artifact(payload) or {"roots": [], "stats": {}}
+    if entity_type and entity_value:
+        forest = prune_to_entity(forest, entity_type, entity_value)
+    return select_detection_first(forest)

@@ -26,6 +26,9 @@ PROC_FOREST = ("proc_forest", 4)
 EVENT_LINKS = ("event_links", 1)
 #: Which store generation and links a job's overlay was built from, plus its per-tool counts.
 EVENT_OVERLAY = ("event_overlay", 1)
+#: The process forest from *every* process creation in the upload's store, detections marked
+#: (hit/det); up to 20,000 processes, selected detection-first for display.
+PROC_FOREST_FULL = ("proc_forest_full", 1)
 
 
 def pack(obj: Any) -> bytes:

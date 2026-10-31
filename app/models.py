@@ -97,6 +97,18 @@ def has_intel_access(user) -> bool:
     return bool(getattr(user, "is_superuser", False)) or getattr(user, "role", "") in ("admin", "member")
 
 
+def can_explore_job(job, user) -> bool:
+    """Whether *user* may read every event of *job*, not only what its tools matched.
+
+    Explore and the full process forest show events no rule fired on, so they are narrower
+    than the job page: admins and members, or the job's own signed-in submitter, always
+    after `can_view_job`. Anonymous viewers of a public job see its findings, never its log.
+    """
+    if job is None or user is None or not getattr(user, "is_active", False) or not can_view_job(job, user):
+        return False
+    return has_intel_access(user) or (job.submitted_by_user_id is not None and job.submitted_by_user_id == user.id)
+
+
 def severity_rank_sql():
     """ORDER BY / MIN() expression that ranks findings most-severe first.
 

@@ -394,8 +394,13 @@ def run_overlay(db, job_id: int) -> str:
         import json
 
         meta = json.loads((out / "overlay.json").read_text())
+        forest_path = out / "proc_forest_full.json"
+        forest = orjson.loads(forest_path.read_bytes()) if forest_path.is_file() else None
+        forest_path.unlink(missing_ok=True)  # per-job data, kept in the DB rather than beside the shared store
         st.put_overlay_sync(sha256, row.gen, job_id, out)
         job_artifacts.put_sync(db, job_id, job_artifacts.EVENT_OVERLAY, {**meta, "gen": row.gen, "links_sha": links_sha, "store_id": row.id})
+        if forest is not None:
+            job_artifacts.put_sync(db, job_id, job_artifacts.PROC_FOREST_FULL, forest)
         db.commit()
         return f"{meta['detected_events']} detected events of {row.event_count}"
     except Exception as exc:

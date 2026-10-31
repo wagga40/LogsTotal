@@ -749,7 +749,7 @@ async def case_process_tree_partial(
     if job and site_settings.show_process_tree:
         if entity:
             # Plain strings resolved before the threadpool hop — never an ORM instance.
-            ctx["forest"] = await load_job_forest(job, db=db, entity_type=entity.entity_type, entity_value=entity.value)
+            ctx["forest"] = await load_job_forest(job, db=db, entity_type=entity.entity_type, entity_value=entity.value, full=True)
             ctx["scope_label"] = f"job #{job} · {entity.value}"
             # The two halves of one question: the tree says how this binary *ran*, the typed
             # edges say what it touched. Same grouping code as the Intel Relationships tab —
@@ -758,7 +758,7 @@ async def case_process_tree_partial(
             groups, total, capped = await fetch_relationship_groups(db, entity.id, job)
             ctx.update(groups=groups, rel_total=total, rel_capped=capped)
         else:
-            ctx["forest"] = await load_job_forest(job, db=db)
+            ctx["forest"] = await load_job_forest(job, db=db, full=True)
     return templates.TemplateResponse(request, "intel/partials/_case_processes.html", ctx)
 
 

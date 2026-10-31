@@ -133,6 +133,9 @@ def test_run_overlay_publishes_beside_the_store_and_is_idempotent(sync_db, ready
     assert {p.name for p in overlay.iterdir()} == {"hits.parquet", "levels.parquet", "overlay.json"}
     meta = job_artifacts.get_sync(sync_db, job.id, job_artifacts.EVENT_OVERLAY)
     assert meta["gen"] == store_dir.name and meta["detected_events"] == 1
+    # The full process forest is per-job data: stored as an artifact, never beside the store.
+    full = job_artifacts.get_sync(sync_db, job.id, job_artifacts.PROC_FOREST_FULL)
+    assert full["stats"]["source"] == "events" and full["stats"]["processes"] >= 1, full["stats"]
     assert run_overlay(sync_db, job.id) == "up to date"
 
 

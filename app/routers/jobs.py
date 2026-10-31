@@ -1090,7 +1090,11 @@ async def job_process_tree(
     if not site_settings.show_process_tree:
         return HTMLResponse("")
 
-    forest = await load_job_forest(job_id, db=db)
+    # The full forest (every process creation in the upload, not just the matched ones) only
+    # for a viewer who may read the whole log; everyone else keeps the hit-anchored tree.
+    from app.models import can_explore_job
+
+    forest = await load_job_forest(job_id, db=db, full=can_explore_job(job, user))
 
     return templates.TemplateResponse(
         request,

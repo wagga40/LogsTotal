@@ -184,6 +184,8 @@ def _parse_auditd_event(fields: dict) -> dict | None:
     node["_parent_guid"] = None
     node["_parent_pid"] = _clean(fields.get("ppid"))
     node["_parent_image_full"] = None
+    if "_lt_uid" in fields:  # a row from the event store; tool events carry none
+        node["uid"] = fields["_lt_uid"]
     return node
 
 
@@ -233,6 +235,8 @@ def _parse_event(event: dict) -> dict | None:
         node["pid"] = _clean(_first(fields, "ProcessId", "PID"))
         node["_parent_pid"] = _clean(_first(fields, "ParentProcessId", "ParentPID"))
     node["_parent_image_full"] = _clean(_first(fields, "ParentImage", "ParentProcessName"))
+    if "_lt_uid" in fields:  # a row from the event store; tool events carry none
+        node["uid"] = fields["_lt_uid"]
     return node
 
 
@@ -440,6 +444,92 @@ def build_process_forest(events: list[dict], *, max_nodes: int = DEFAULT_MAX_NOD
             "max_nodes": max_nodes,
         },
     }
+
+
+# ── Forests from the event store ────────────────────────────────────────────────
+#
+# Built from *every* process creation in the upload, not only the rule-matched ones, so a
+# detected process appears with the parents and siblings no rule fired on. Each node of
+# such a forest carries the store row's `uid`; `mark_detections` turns the overlay's levels
+# into `hit` (detected, or merely context) and `det` (its highest severity rank).
+
+
+def _walk(roots: list[dict]):
+    stack = list(roots)
+    while stack:
+        node = stack.pop()
+        yield node
+        stack.extend(node.get("children") or [])
+
+
+def mark_detections(forest: dict, levels: dict[int, int]) -> dict:
+    """`hit` = the node's event was detected; `det` = its level rank. In place; returns forest."""
+    detected = 0
+    for node in _walk(forest["roots"]):
+        uid = node.get("uid")
+        if uid is None:
+            node["hit"] = False
+            continue
+        rank = levels.get(uid)
+        node["hit"] = rank is not None
+        if rank is not None:
+            node["det"] = rank
+            detected += 1
+    forest["stats"]["detected"] = detected
+    forest["stats"]["source"] = "events"
+    return forest
+
+
+def select_detection_first(forest: dict, max_nodes: int = DEFAULT_MAX_NODES) -> dict:
+    """At most *max_nodes* nodes, chosen so no detection is cut for context.
+
+    Detected nodes first, each with its ancestry (the path that explains it) and its
+    descendants (what it went on to start); then the rest, oldest first. Stats stay truthful:
+    `total_processes` is the forest's size, `shown` what this view keeps.
+    """
+    parent: dict[int, dict | None] = {}
+    order: list[dict] = []
+    for root in sorted(forest["roots"], key=_sort_key):
+        parent[id(root)] = None
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            order.append(node)
+            for child in node.get("children") or []:
+                parent[id(child)] = node
+                stack.append(child)
+    total = len(order)
+    keep: set[int] = set()
+
+    def admit(node: dict) -> None:
+        chain = []
+        cur: dict | None = node
+        while cur is not None and id(cur) not in keep:
+            chain.append(cur)
+            cur = parent[id(cur)]
+        if len(keep) + len(chain) <= max_nodes:
+            keep.update(id(n) for n in chain)
+
+    for node in order:
+        if node.get("hit") and len(keep) < max_nodes:
+            admit(node)
+            for desc in _walk(node.get("children") or []):
+                if len(keep) >= max_nodes:
+                    break
+                admit(desc)
+    for node in sorted(order, key=_sort_key):
+        if len(keep) >= max_nodes:
+            break
+        admit(node)
+
+    def prune(node: dict) -> dict:
+        copy = {k: v for k, v in node.items() if k != "children"}
+        copy["children"] = [prune(c) for c in node.get("children") or [] if id(c) in keep]
+        return copy
+
+    roots = [prune(r) for r in sorted(forest["roots"], key=_sort_key) if id(r) in keep]
+    stats = {**forest["stats"], "total_processes": total, "shown": len(keep), "roots": len(roots), "truncated": forest["stats"].get("truncated") or len(keep) < total}
+    return {"roots": roots, "stats": stats}
 
 
 # ── Entity anchoring ────────────────────────────────────────────────────────────

@@ -85,12 +85,76 @@ def _optional_column(names: set[str], *candidates: str) -> str | None:
     return None
 
 
+#: Fields `lineage` reads from a flattened event, projected from the store when present.
+_LINEAGE_FIELDS = (
+    "EventID",
+    "Computer",
+    "Channel",
+    "Image",
+    "NewProcessName",
+    "ProcessName",
+    "ProcessGuid",
+    "ParentProcessGuid",
+    "ProcessId",
+    "ParentProcessId",
+    "NewProcessId",
+    "CommandLine",
+    "User",
+    "SubjectUserName",
+    "TargetUserName",
+    "UtcTime",
+    "SystemTime",
+    "Hashes",
+    "ParentImage",
+    "ParentProcessName",
+    "OriginalFileName",
+    "exe",
+    "comm",
+    "pid",
+    "ppid",
+    "proctitle",
+    "acct",
+    "auid",
+    "uid",
+    "hostname",
+)
+#: execve and execveat on x86_64 (59, 322) and aarch64 (221, 281): every other syscall
+#: record also carries exe and pid, and would otherwise all read as process creations.
+_EXEC_SYSCALLS = (59, 322, 221, 281)
+
+
+def _full_forest(con, events: str, names: set[str], levels: dict[int, int], max_nodes: int) -> dict:
+    """The process forest from every process creation in the store, detections marked."""
+    from app.intel.lineage import build_process_forest, mark_detections
+
+    present = [f for f in _LINEAGE_FIELDS if f in names and _IDENT.match(f)]
+    where = ["(_lt_eid = 1 AND _lt_channel LIKE '%sysmon%')", "(_lt_eid = 4688 AND _lt_channel = 'security')"]
+    if {"type", "syscall"} <= names:
+        where.append(f"(_lt_channel = 'auditd' AND \"type\" = 'SYSCALL' AND TRY_CAST(\"syscall\" AS BIGINT) IN {_EXEC_SYSCALLS})")
+    columns = ", ".join(["_lt_uid", "_lt_time", "_lt_host", *(f'"{f}"' for f in present)])
+    cursor = con.execute(f"SELECT {columns} FROM read_parquet({events}) WHERE {' OR '.join(where)} ORDER BY _lt_time NULLS LAST, _lt_uid")  # noqa: S608 — names from the store schema, checked
+    keys = ["_lt_uid", "_lt_time", "_lt_host", *present]
+    rows = []
+    while batch := cursor.fetchmany(10_000):
+        for values in batch:
+            event = {k: v for k, v in zip(keys, values, strict=True) if v is not None}
+            when = event.pop("_lt_time", None)
+            host = event.pop("_lt_host", None)
+            if when is not None:
+                event.setdefault("SystemTime", when.isoformat())
+            if host:
+                event.setdefault("Computer", host)
+            rows.append(event)
+    return mark_detections(build_process_forest(rows, max_nodes=max_nodes), levels)
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="app.events.overlay")
     parser.add_argument("--store", required=True, help="the store directory (events.parquet)")
     parser.add_argument("--links", required=True, help="the job's event_links JSON")
     parser.add_argument("--out", required=True)
     parser.add_argument("--memory-mb", type=int, default=512)
+    parser.add_argument("--max-processes", type=int, default=20_000)
     args = parser.parse_args(argv)
     import duckdb
 
@@ -166,6 +230,9 @@ def main(argv: list[str] | None = None) -> int:
             ).fetchall()
         }
         detected = con.execute("SELECT count(*) FROM (SELECT DISTINCT _lt_uid FROM hits)").fetchone()[0]
+        levels = dict(con.execute(f"SELECT _lt_uid, level_rank FROM read_parquet({_lit(out / 'levels.parquet')})").fetchall())  # noqa: S608
+        forest = _full_forest(con, events, names, levels, args.max_processes)
+        (out / "proc_forest_full.json").write_bytes(orjson.dumps(forest))
     finally:
         con.close()
     (out / "links.ndjson").unlink(missing_ok=True)
