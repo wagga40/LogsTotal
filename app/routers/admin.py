@@ -145,6 +145,16 @@ MAINTENANCE_ACTIONS = [
         "confirm_message": "Re-encode every uncompressed blob row in the database?",
     },
     {
+        "key": "compress-outputs",
+        "url": "/admin/backfill-compress-outputs",
+        "param": "backfill_compress_outputs",
+        "title": "Compress Tool Outputs",
+        "description": "Compress the raw tool outputs of jobs that finished before outputs were stored compressed.",
+        "details": ("About 40x on real outputs. Every reader, and the raw ZIP export, handles plain and compressed outputs alike, so this only reclaims disk or bucket space."),
+        "confirm_title": "Compress tool outputs",
+        "confirm_message": "Compress the raw outputs of every finished job?",
+    },
+    {
         "key": "entity-attributes",
         "url": "/admin/backfill-entity-attributes",
         "param": "backfill_entity_attributes",
@@ -712,6 +722,18 @@ async def backfill_compress_db_trigger(
     from app.workers.tasks import backfill_compress_db
 
     return await _queue_background_task(request, db, "Compress Stored Blobs", backfill_compress_db, "backfill_compress_db", user=user)
+
+
+@router.post("/backfill-compress-outputs")
+async def backfill_compress_outputs_trigger(
+    request: Request,
+    db: AsyncSession = Depends(get_async_session),
+    user: User = Depends(current_superuser),
+):
+    """Compress the raw tool outputs of jobs that finished before compression. Admin only."""
+    from app.workers.tasks import backfill_compress_outputs
+
+    return await _queue_background_task(request, db, "Compress Tool Outputs", backfill_compress_outputs, "backfill_compress_outputs", user=user)
 
 
 @router.post("/backfill-entity-attributes")

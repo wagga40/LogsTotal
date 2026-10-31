@@ -1190,9 +1190,18 @@ async def job_export_raw(
         # run. Offloaded like the process-tree route.
         def _build_archive() -> None:
             with zipfile.ZipFile(tmp, "w", zipfile.ZIP_DEFLATED) as zf:
+                from app.tools.output_files import ZST_SUFFIX, logical_name, open_output
+
                 for path in sorted(job_dir.rglob("*")):
-                    if path.is_file():
-                        zf.write(path, str(path.relative_to(job_dir)))
+                    if not path.is_file():
+                        continue
+                    rel = path.relative_to(job_dir)
+                    if path.name.lower().endswith(ZST_SUFFIX):
+                        # Outputs are stored compressed; the archive carries what the tool wrote.
+                        with open_output(path) as source, zf.open(str(rel.with_name(logical_name(path.name))), "w") as sink:
+                            shutil.copyfileobj(source, sink, 1 << 20)
+                    else:
+                        zf.write(path, str(rel))
             tmp.close()
 
         await run_in_threadpool(_build_archive)

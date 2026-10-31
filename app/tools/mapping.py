@@ -12,9 +12,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
-from app.json_utils import load_file, loads
+from app.json_utils import loads
 from app.tools.diagnostics import CompletionDiagnostics
 from app.tools.output import RawMatch, event_timestamp
+from app.tools.output_files import open_output
 
 _MISSING = object()
 _log = logging.getLogger(__name__)
@@ -101,7 +102,8 @@ class RecordStream:
 
 def file_records(path: Path, *, format: Literal["json", "jsonl"], strict: bool = False, diagnostics: CompletionDiagnostics | None = None) -> Iterator[Any]:
     if format == "json":
-        raw = load_file(path)
+        with open_output(path) as stream:
+            raw = loads(stream.read())
         if not isinstance(raw, list):
             if strict or diagnostics is not None:
                 raise ValueError("Invalid detection output: expected a JSON list")
@@ -114,7 +116,7 @@ def file_records(path: Path, *, format: Literal["json", "jsonl"], strict: bool =
             elif diagnostics is not None:
                 diagnostics.skip_record()
         return
-    with path.open("rb") as stream:
+    with open_output(path) as stream:
         for line in stream:
             if not line.strip():
                 continue

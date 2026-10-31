@@ -949,6 +949,15 @@ def run_analysis(job_id: int):  # noqa: C901 — known debt: the job lifecycle (
             # S3 deployment would silently produce empty timelines, entities and threat
             # detection. In a `finally` so a post-processing failure still mirrors the
             # outputs — losing them would take the RAW ZIP export with it.
+            if settings.raw_output_compression:
+                # After analytics (which read them plain, at full speed) and before the sync,
+                # so S3 uploads the compressed files. Never raises; a file it cannot compress
+                # stays plain and readable.
+                from app.tools.output_files import compress_job_outputs
+
+                compressed, saved = compress_job_outputs(output_dir)
+                if compressed:
+                    _log.info("Job %d: compressed %d tool output(s), %d bytes saved", job_id, compressed, saved)
             storage.sync_job_outputs_from_worker(job_id, output_dir)
             # A Processes tab opened while the tools ran cached a partial (often empty) tree
             # for five minutes. The outputs are complete from here on, so drop it.
@@ -1848,6 +1857,56 @@ def backfill_compress_db(bg_task_id: int | None = None):
         _mark_bg_task(db, bg_task_id, "completed", detail=detail)
     except Exception as exc:
         _log.error("backfill_compress_db failed: %s", exc)
+        _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
+    finally:
+        db.close()
+
+
+@huey.task(expires=settings.huey_queue_expiry)
+def backfill_compress_outputs(bg_task_id: int | None = None):
+    """Compress the raw tool outputs of jobs that finished before RAW_OUTPUT_COMPRESSION.
+
+    Terminal jobs only: a pending or running job's directory is still being written, and its
+    own run compresses it at the end. Goes through the storage backend, so S3 objects are
+    rewritten one at a time with the plain key deleted only after its `.zst` twin is stored.
+    No database writes per job, so there is no writer lock to hold.
+    """
+    from app.storage import get_storage
+    from app.workers.utils import humanbytes, plural
+
+    db = get_sync_session()
+    try:
+        _mark_bg_task(db, bg_task_id, "running")
+        st = get_storage()
+        BATCH = 200
+        jobs, files, saved, last_id = 0, 0, 0, 0
+        while True:
+            ids = [
+                row[0]
+                for row in db.query(AnalysisJob.id)
+                .filter(AnalysisJob.id > last_id, AnalysisJob.status.notin_([JobStatus.PENDING, JobStatus.RUNNING]))
+                .order_by(AnalysisJob.id)
+                .limit(BATCH)
+                .all()
+            ]
+            if not ids:
+                break
+            last_id = ids[-1]
+            for job_id in ids:
+                n, b = st.compress_job_outputs_sync(job_id)
+                if n:
+                    jobs += 1
+                    files += n
+                    saved += b
+            _bg_task_progress(db, bg_task_id, f"{plural(files, 'output')} compressed so far…")
+            if _bg_cancel_requested(bg_task_id):
+                _finish_cancelled(db, bg_task_id, f"cancelled after {plural(files, 'output')}")
+                return
+        detail = f"{plural(files, 'output')} in {plural(jobs, 'job')} compressed, {humanbytes(saved)} saved" if files else "nothing to compress"
+        _log.info("backfill_compress_outputs: %s", detail)
+        _mark_bg_task(db, bg_task_id, "completed", detail=detail)
+    except Exception as exc:
+        _log.error("backfill_compress_outputs failed: %s", exc)
         _mark_bg_task(db, bg_task_id, "failed", error=str(exc))
     finally:
         db.close()

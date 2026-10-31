@@ -117,6 +117,14 @@ class StorageBackend(ABC):
         """Remove stored tool outputs for a job. Returns True if anything was removed."""
 
     @abstractmethod
+    def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
+        """Compress a finished job's plain tool outputs in place; return (files, bytes saved).
+
+        For outputs stored before RAW_OUTPUT_COMPRESSION. Never raises for one file: an output
+        it cannot compress stays plain and readable.
+        """
+
+    @abstractmethod
     def iter_objects_sync(self, prefix: str | None = None) -> Iterator[StoredObject]:
         """Every stored object, as ``(key, size_bytes, mtime_epoch)``.
 
@@ -201,6 +209,11 @@ class LocalStorage(StorageBackend):
         existed = target.is_dir()
         shutil.rmtree(target, ignore_errors=True)
         return existed
+
+    def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
+        from app.tools.output_files import compress_job_outputs
+
+        return compress_job_outputs(self._dir / f"job_{job_id}")
 
     def iter_objects_sync(self, prefix: str | None = None) -> Iterator[StoredObject]:
         root = self._dir / prefix if prefix else self._dir
@@ -419,6 +432,31 @@ class S3Storage(StorageBackend):
             removed = True
             self._s3.delete_objects(Bucket=self._bucket, Delete={"Objects": objs})
         return removed
+
+    def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
+        """One object at a time: download, compress, upload `<key>.zst`, then delete the plain
+        key. The plain object is removed only after its compressed twin is stored, so an
+        interrupted run leaves both, never neither, and the readers take either."""
+        from app.tools.output_files import ZST_SUFFIX, compress_output_file, is_tool_output
+
+        files, saved = 0, 0
+        keys = [o.key for o in self.iter_objects_sync(prefix=f"job_{job_id}/") if is_tool_output(o.key.rsplit("/", 1)[-1]) and not o.key.lower().endswith(ZST_SUFFIX)]
+        if keys:
+            self._cache_dir().mkdir(parents=True, exist_ok=True)
+        for key in keys:
+            work = Path(tempfile.mkdtemp(prefix="compress-", dir=self._cache_dir()))
+            try:
+                local = work / key.rsplit("/", 1)[-1]
+                self._s3.download_file(self._bucket, key, str(local))
+                saved += compress_output_file(local)
+                self._s3.upload_file(str(local.with_name(local.name + ZST_SUFFIX)), self._bucket, key + ZST_SUFFIX)
+                self._s3.delete_object(Bucket=self._bucket, Key=key)
+                files += 1
+            except Exception as exc:
+                logger.warning("Could not compress S3 output %s; left as it was: %s", key, exc)
+            finally:
+                shutil.rmtree(work, ignore_errors=True)
+        return files, saved
 
     def iter_objects_sync(self, prefix: str | None = None) -> Iterator[StoredObject]:
         """Every object in the bucket, with the size the listing already carries.

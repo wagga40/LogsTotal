@@ -62,6 +62,10 @@ backup step, migration ordering, and rollback for each deployment path.
 - Finding sample events, relationship evidence samples and job analytics are stored
   zstd-compressed (4.8x and 20x on the development data). Rows written before this read
   unchanged and are compressed when rewritten.
+- Raw tool outputs are stored zstd-compressed once a job's analytics are computed
+  (`RAW_OUTPUT_COMPRESSION`, default on): one development job went from 276 MB to 7 MB.
+  Readers and the raw ZIP export handle plain and compressed outputs alike; **Compress Tool
+  Outputs** on the Maintenance tab compresses existing ones, on local disk or S3.
 - Each rule's source text is stored once in a shared `rule_text` table instead of on every
   finding (1,705 findings shared 496 texts in development). With the compression
   backfill and a vacuum, the development database went from 42.9 MB to 14.6 MB.

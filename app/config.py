@@ -235,6 +235,9 @@ class Settings(BaseSettings):
     # them back to the filesystem: incrementally once the file is in incremental mode, by a
     # full VACUUM up to 256 MB, or only flagged on /admin/storage above that. 0 disables it.
     db_vacuum_freelist_percent: int = 25
+    # Compress each job's raw tool outputs (zstd) once its analytics are computed. Readers
+    # handle plain and compressed files alike, so turning this off only stops new compression.
+    raw_output_compression: bool = True
 
     @model_validator(mode="after")
     def _check_and_derive(self) -> "Settings":

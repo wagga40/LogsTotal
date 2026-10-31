@@ -31,6 +31,7 @@ from app.intel.tactics import (
 )
 from app.tools.catalog import TOOLS, output_tool
 from app.tools.event_fields import EventView
+from app.tools.output_files import logical_name
 from app.tools.registry import get_adapter_class
 
 _log = logging.getLogger(__name__)
@@ -70,8 +71,10 @@ def _local_job_dir(job_id: int) -> Path:
 
 def _iter_output_files(job_dir: Path) -> Iterator[Path]:
     """Yield the raw tool-output files under *job_dir* (recursive, suffix-matched)."""
+    # Matched on the logical name: a finished job's outputs are `<name>.zst`. Missing them
+    # here would make has_raw_output() false, and _cache_analytics then writes nothing.
     for f in job_dir.rglob("*"):
-        if f.is_file() and f.name.lower().endswith(_OUTPUT_SUFFIXES):
+        if f.is_file() and logical_name(f.name).lower().endswith(_OUTPUT_SUFFIXES):
             yield f
 
 
@@ -119,7 +122,8 @@ def parse_single_output_file(
     seen = 0
     max_events = MAX_PARSE_EVENTS if max_events is None else max_events
     meta = rule_meta or {}
-    tool = _TOOL_BY_SUFFIX.get(next((s for s in _OUTPUT_SUFFIXES if output_file.name.lower().endswith(s)), ""), "")
+    name = logical_name(output_file.name).lower()  # a finished job's outputs are `<name>.zst`
+    tool = _TOOL_BY_SUFFIX.get(next((s for s in _OUTPUT_SUFFIXES if name.endswith(s)), ""), "")
 
     def _mark(ts: str | None, tactic: str, rule_name: str, event: dict, level: object = None, raw_rule_id: str = ""):
         if markers is None:
