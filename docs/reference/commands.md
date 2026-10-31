@@ -110,6 +110,7 @@ Development checkout only.
 - `./logstotal test:js` — Node unit tests for the relationship-graph client (`node --test tests/js/`). No `package.json`; skips with a message when node is not installed.
 - `./logstotal docs:build` — build this documentation website into `site/`, in strict mode: a broken link or anchor is an error. Needs `pdm install -G docs`.
 - `./logstotal docs:serve` — preview the website at `http://localhost:8001`, rebuilding on save.
+- `./logstotal test:perf` — the Explore engine's performance budgets, on a 2M-event synthetic store it builds once into `tests/perf/.store/` (skipped by `./logstotal test`; `LOGSTOTAL_PERF_ROWS` shrinks it).
 - `./logstotal test:pg` — the PostgreSQL-only SQL checks, against a throwaway `postgres:16-alpine` container it starts and removes (needs Docker; set `POSTGRES_TEST_URL` to use your own server instead). See [PostgreSQL SQL compatibility](../contribute/development.md#postgresql-sql-compatibility).
 - `./logstotal test:cov` — pytest with coverage
 

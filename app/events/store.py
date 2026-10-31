@@ -247,6 +247,7 @@ async def stores_for_file_async(db, log_file_id: int) -> list[tuple[str, str]]:
 
 
 def delete_store_files(doomed: list[tuple[str, str]]) -> None:
+    from app.events.engine import forget_generation
     from app.storage import get_storage
 
     st = get_storage()
@@ -255,6 +256,7 @@ def delete_store_files(doomed: list[tuple[str, str]]) -> None:
             st.delete_event_store_sync(sha256, gen)
         except Exception:
             logger.warning("Could not remove event store %s/%s; the storage page lists it as an orphan", sha256, gen, exc_info=True)
+        forget_generation(gen)  # its match-sets and cached counts; never raises
 
 
 def sweep_sync(db) -> tuple[list[int], str]:

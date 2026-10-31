@@ -118,6 +118,7 @@ testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
     "slow: marks tests that are slow (e.g., TLSH on large files)",
+    "perf: performance budgets, skipped unless LOGSTOTAL_PERF=1 (./logstotal test:perf)",
 ]
 
 [dependency-groups]

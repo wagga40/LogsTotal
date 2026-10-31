@@ -295,3 +295,9 @@ def test_the_footprint_admits_what_it_cannot_measure():
     source = inspect.getsource(storage_usage.database_footprint_sync)
     assert "dbstat" in source
     assert 'result["note"]' in source
+
+
+def test_the_explore_cache_is_reported_and_never_offered_for_deletion():
+    """Match-sets and S3 store copies trim themselves and may be in use by a query."""
+    report = classify([obj(".events_cache/matches/evtx-b1-0000abcd-0-all-time.parquet", 300, age=10 * 86400), obj(".events_cache/stores/a/b/events.parquet", 700, age=10 * 86400)])
+    assert report.other_bytes == 1000 and report.removable == [] and report.uploads_bytes == 0

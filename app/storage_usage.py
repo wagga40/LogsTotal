@@ -47,6 +47,9 @@ _S3_CACHE_PREFIX = ".s3_cache"
 _HEALTH_PROBE_PREFIX = ".health-probe-"
 _EVENT_STORE_PREFIX = "events"
 _EVENTS_BUILD_PREFIX = ".events_build"
+#: The web tier's Explore cache (match-sets, S3 store copies, DuckDB spill). It trims itself
+#: and may be in use by a query, so it is reported but never offered for deletion.
+_EVENTS_CACHE_PREFIX = ".events_cache"
 _TMP_SPOOL_RE = re.compile(r"^tmp\w*\.upload$")
 
 
@@ -209,6 +212,11 @@ def classify_objects(
             if len(parts) >= 4 and prefix not in known_event_stores:
                 _add(orphan_stores, key, obj.size)
                 report.orphan_event_stores[(parts[1], parts[2])] = report.orphan_event_stores.get((parts[1], parts[2]), 0) + obj.size
+            continue
+
+        if key.startswith(_EVENTS_CACHE_PREFIX + "/"):
+            report.other_bytes += obj.size
+            report.other_count += 1
             continue
 
         if key.startswith(_EVENTS_BUILD_PREFIX + "/"):

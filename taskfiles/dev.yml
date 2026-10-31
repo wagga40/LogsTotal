@@ -447,6 +447,20 @@ tasks:
           echo "SKIP: node not installed — the graph JS unit tests did not run."
         fi
 
+  test:perf:
+    desc: Run the Explore engine's performance budgets on a 2M-event synthetic store
+    summary: |
+      Skipped by `./logstotal test`: they measure wall-clock time, which the parallel suite
+      would make noisy, and they need a synthetic store of about 400 MB, built once into
+      tests/perf/.store/ (well under a minute) and reused. Each interaction is checked
+      against its p95 budget from the Explore plan; -s prints the measured table.
+      LOGSTOTAL_PERF_ROWS=200000 runs a smaller store for a quick look.
+    preconditions: [*needs-pdm]
+    env:
+      LOGSTOTAL_PERF: "1"
+    cmds:
+      - pdm run -- pytest -n0 -s {{.CLI_ARGS | default "tests/perf/"}}
+
   test:cov:
     desc: Run tests with coverage report
     preconditions: [*needs-pdm]

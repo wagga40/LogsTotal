@@ -146,6 +146,10 @@ class StorageBackend(ABC):
         """One store file at a local path: the stored file itself (local) or a download into *dest*."""
 
     @abstractmethod
+    def fetch_overlay_file_sync(self, sha256: str, gen: str, job_id: int, name: str, dest: Path) -> Path | None:
+        """One file of a job's overlay at a local path, or None when the overlay has none."""
+
+    @abstractmethod
     def compress_job_outputs_sync(self, job_id: int) -> tuple[int, int]:
         """Compress a finished job's plain tool outputs in place; return (files, bytes saved).
 
@@ -281,6 +285,12 @@ class LocalStorage(StorageBackend):
         if "/" in name or name.startswith("."):
             raise ValueError(f"not a store file name: {name!r}")
         return self._dir / event_store_prefix(sha256, gen) / name
+
+    def fetch_overlay_file_sync(self, sha256: str, gen: str, job_id: int, name: str, dest: Path) -> Path | None:
+        if "/" in name or name.startswith("."):
+            raise ValueError(f"not an overlay file name: {name!r}")
+        path = self._dir / event_store_prefix(sha256, gen) / "overlays" / f"job_{int(job_id)}" / name
+        return path if path.is_file() else None
 
     def delete_event_store_sync(self, sha256: str, gen: str) -> bool:
         target = self._dir / event_store_prefix(sha256, gen)
@@ -545,6 +555,21 @@ class S3Storage(StorageBackend):
         dest.mkdir(parents=True, exist_ok=True)
         local = dest / name
         self._s3.download_file(self._bucket, f"{event_store_prefix(sha256, gen)}/{name}", str(local))
+        return local
+
+    def fetch_overlay_file_sync(self, sha256: str, gen: str, job_id: int, name: str, dest: Path) -> Path | None:
+        from botocore.exceptions import ClientError
+
+        if "/" in name or name.startswith("."):
+            raise ValueError(f"not an overlay file name: {name!r}")
+        dest.mkdir(parents=True, exist_ok=True)
+        local = dest / name
+        try:
+            self._s3.download_file(self._bucket, f"{event_store_prefix(sha256, gen)}/overlays/job_{int(job_id)}/{name}", str(local))
+        except ClientError as exc:
+            if str(exc.response.get("Error", {}).get("Code")) in ("404", "NoSuchKey", "NotFound"):
+                return None
+            raise
         return local
 
     def delete_event_store_sync(self, sha256: str, gen: str) -> bool:

@@ -253,6 +253,12 @@ class Settings(BaseSettings):
     events_text_index: bool = True
     events_retention_days: int = 0
     events_max_total_mb: int = 0
+    # The web tier's query engine (app/events/engine.py): DuckDB in the web process.
+    events_duckdb_threads: int = 2
+    events_duckdb_memory_mb: int = 768
+    events_max_concurrent_queries: int = 2
+    events_query_timeout_seconds: int = 10
+    events_cache_max_mb: int = 4096
 
     @model_validator(mode="after")
     def _check_and_derive(self) -> "Settings":

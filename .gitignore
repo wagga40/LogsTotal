@@ -111,3 +111,6 @@ certs/*
 /site/
 # An operator's own Compose changes (see docs/security.md). Instance state, never part of a release.
 /docker-compose.override.yml
+
+# Explore performance harness: the generated 2M-event synthetic store
+tests/perf/.store/
