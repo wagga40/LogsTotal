@@ -3285,10 +3285,13 @@ def _optimize_database_periodic_body() -> str:
         if not threshold or threshold <= 0 or space["free_percent"] < threshold:
             return f"statistics refreshed; {summary}"
         if space["auto_vacuum"] == "incremental":
-            # Frees one page per step, so it must be stepped to completion: through
-            # SQLAlchemy it returns no rows and the result is closed after the first step,
-            # which freed 1 page of 752 in the test. fetchall() on the DB-API cursor runs it out.
-            conn.connection.driver_connection.execute("PRAGMA incremental_vacuum").fetchall()
+            # Frees one page per step, so it must be stepped to completion. Through
+            # SQLAlchemy the result is closed after the first step (1 page of 752 freed in
+            # the test), and so is a DB-API cursor's fetchall() on Python 3.11, whose
+            # sqlite3 steps a statement that returns no columns only once (802 → 801,
+            # measured; 3.12+ run it out). executescript() steps every statement to
+            # SQLITE_DONE on all of them; in AUTOCOMMIT its implicit COMMIT has nothing to do.
+            conn.connection.driver_connection.executescript("PRAGMA incremental_vacuum;")
             conn.execute(text("PRAGMA wal_checkpoint(TRUNCATE)"))
             return f"statistics refreshed; returned {humanbytes(space['free_bytes'])} of free pages ({summary})"
         if space["bytes"] > _AUTO_VACUUM_MAX_BYTES:
