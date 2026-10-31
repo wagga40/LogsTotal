@@ -55,7 +55,7 @@
 
   <div class="bg-gray-900 border border-gray-800 rounded-xl p-4"
        x-data='exploreHistogram({{ {"url": base_url ~ "/histogram.json", "qs": state.qs(page=1, ev=None), "colors": colors} | tojson }})'>
-    <canvas x-ref="canvas" class="block w-full h-28 cursor-crosshair select-none" role="img"
+    <canvas x-ref="canvas" class="block w-full h-36 cursor-crosshair select-none" role="img"
             aria-label="Events over time; drag across the chart to zoom into a time range"></canvas>
     <div class="flex items-center justify-between mt-1 text-[11px] text-gray-500">
       <span x-text="label">Loading…</span>
@@ -73,7 +73,7 @@
         <input type="search" class="lt-field lt-field--sm w-full" x-model="filter" aria-label="Filter fields"
                placeholder="Filter {{ '{:,}'.format(field_count) }} fields">
       </div>
-      <div class="lt-scroll lt-scroll--lg">
+      <div class="lt-scroll lt-scroll--xl">
         <ul class="py-1">
           {% for f in fields %}
           <li data-field-name="{{ f.name | lower }}" x-data="{ open: false }"

@@ -34,9 +34,9 @@
        class="lt-help-panel{% if width %} lt-help-panel--{{ width }}{% endif %}{% if align == 'right' %} lt-help-panel--right{% endif %}">
     {% if intro %}<p class="text-gray-200 font-medium mb-2">{{ intro }}</p>{% endif %}
     {% if rows %}
-    <dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1">
+    <dl class="lt-help-rows">
       {% for syntax, meaning in rows %}
-      <dt class="font-mono text-[11px] text-blue-300 whitespace-nowrap">{{ syntax }}</dt>
+      <dt class="font-mono text-[11px] text-blue-300">{{ syntax }}</dt>
       <dd class="text-gray-400">{{ meaning }}</dd>
       {% endfor %}
     </dl>
