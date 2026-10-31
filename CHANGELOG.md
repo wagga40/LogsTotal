@@ -21,6 +21,10 @@ backup step, migration ordering, and rollback for each deployment path.
 ### Fixed
 
 - Missing or unreadable engine output no longer becomes a successful zero-match result.
+- Zircolite matches are dated again in the events timeline and the activity histogram.
+  Zircolite writes the event time as a root `SystemTime`, which was never read, so every
+  match counted as undated. Recalculate analytics, or run the analytics backfill, to
+  re-date existing jobs.
 - Regex timeouts cannot consume the budget granted to later events.
 - Refreshed Sigma files invalidate cached rule metadata, including `.yaml` files.
 - Zero-match reports describe observed results without declaring an input safe.

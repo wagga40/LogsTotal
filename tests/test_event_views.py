@@ -122,6 +122,22 @@ def test_bad_truthy_timestamp_and_host_preserve_fallback_behavior():
     assert _event_computer(event) == "NESTED"
 
 
+def test_zircolite_root_system_time_is_a_timestamp():
+    """Zircolite flattens TimeCreated to a root `SystemTime` and writes no `Timestamp`.
+
+    Reading only `Timestamp` and the nested EVTX path left every Zircolite match
+    undated: counted as undated in the event markers and missing from the histogram.
+    """
+    zircolite = {"SystemTime": "2019-03-19T23:34:25.1234567Z", "Computer": "WIN-1", "EventID": 1, "rule_title": "x"}
+    assert EventView(zircolite).timestamp == "2019-03-19T23:34:25.1234567Z"
+    assert extract_timestamp(zircolite) == "2019-03-19T23:34:25.1234567Z"
+    # An explicit Timestamp still wins over it, and the nested EVTX path still answers last.
+    both = {**zircolite, "Timestamp": "2024-01-01T00:00:00Z"}
+    assert EventView(both).timestamp == "2024-01-01T00:00:00Z"
+    nested = {"Event": {"System": {"TimeCreated_attributes": {"SystemTime": "2024-02-02T02:00:00"}}}}
+    assert EventView(nested).timestamp == "2024-02-02T02:00:00"
+
+
 def test_tactic_priority_and_abbreviation_order_are_preserved():
     event = {"MitreTactics": ["Evas", "Exec"], "MitreTags": ["T1001"], "OtherTags": ["T1002"]}
     assert _resolve_tactic_from_event(event, {"Rule": "impact"}, {"t1001": "discovery"}, "Rule") == "impact"

@@ -79,6 +79,8 @@ class EventProjection:
     excluded_fields: tuple[str, ...] = ("Event", "Details", "EventData", "System")
     timestamp_paths: tuple[FallbackPaths, ...] = (
         (("Timestamp",), ("timestamp",)),
+        # Zircolite flattens TimeCreated to a root SystemTime and writes no Timestamp.
+        (("SystemTime",),),
         (("Event", "System", "TimeCreated_attributes", "SystemTime"),),
     )
     host_paths: tuple[FallbackPaths, ...] = (
