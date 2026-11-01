@@ -9,6 +9,8 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+## [1.2.2] — 2026-11-01
+
 ### Fixed
 
 - The job page's Analytics menu lost its padding in a deployment, so its checkboxes and
@@ -354,7 +356,8 @@ side, with the context an analyst needs to act on it.
   directory.
 - `./logstotal deploy:env-scaffold` generates the Garage secrets.
 
-[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v1.2.1...HEAD
+[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v1.2.2...HEAD
+[1.2.2]: https://github.com/wagga40/LogsTotal/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/wagga40/LogsTotal/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/wagga40/LogsTotal/compare/v1.1.0...v1.2.0
 [1.1.0]: https://github.com/wagga40/LogsTotal/compare/v1.0.0...v1.1.0

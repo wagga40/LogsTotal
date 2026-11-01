@@ -1,6 +1,6 @@
 [project]
 name = "logstotal"
-version = "1.2.1"
+version = "1.2.2"
 description = "Self-hosted multi-engine detection reports for security logs"
 readme = "README.md"
 license = { text = "MIT" }
