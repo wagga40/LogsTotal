@@ -630,14 +630,20 @@
      * LOOKS lives here. `--lt-menu-bg` is themed in themes.css. */
     .lt-menu {
       z-index: 40;
-      padding: .25rem 0;
       border-radius: .75rem;
       border: 1px solid var(--lt-border);
       background-color: var(--lt-menu-bg);
       box-shadow: 0 20px 25px -5px rgb(0 0 0 / .45), 0 8px 10px -6px rgb(0 0 0 / .35);
     }
-    /* For menus whose own content supplies the padding (a form, a swatch grid). */
-    .lt-menu--flush { padding: 0; }
+    /* Padding is only a default here, so it sits at zero specificity: a `p-3` on the same
+     * element has to win in BOTH builds. As a plain class it won only in dev, where the Play
+     * CDN injects after this block. The built sheet is linked before it, so in every
+     * deployment `.lt-menu--flush { padding: 0 }` beat the caller's `p-3`, and the job
+     * page's Analytics menu drew flush against its border. Every .lt-menu is a <div>; on a
+     * <ul> preflight's element selector would outrank :where() too.
+     * `--flush` is for menus whose own content supplies the padding (a form, a swatch grid). */
+    :where(.lt-menu)        { padding: .25rem 0; }
+    :where(.lt-menu--flush) { padding: 0; }
 
 
 

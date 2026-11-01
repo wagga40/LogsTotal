@@ -9,6 +9,16 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+### Fixed
+
+- The job page's Analytics menu lost its padding in a deployment, so its checkboxes and
+  Download button sat flush against the border. Five other panels had the same fault: the
+  Intel dashboard's Saved searches menu, the tag manager's colour picker, the Rules page's
+  `list:` preview, the graph's hover tooltip and the notification bell's loading state. The
+  production stylesheet loads before the app's own styles, so the menu's default padding
+  overrode the padding each menu asked for. It now yields in both the development and
+  production builds.
+
 ## [1.2.1] — 2026-10-31
 
 ### Fixed
