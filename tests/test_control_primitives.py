@@ -331,6 +331,65 @@ def test_a_menu_takes_its_background_from_one_place():
     assert "background-color: var(--lt-menu-bg)" in BASE_HTML.read_text()
 
 
+_CSS_COMMENT = re.compile(r"/\*.*?\*/", re.S)
+_CSS_RULE = re.compile(r"([^{}]+)\{([^{}]*)\}")
+_DECLARES_PADDING = re.compile(r"(?:^|[;\s])padding(?:-[a-z-]+)?\s*:")
+#: `.lt-x` or `tag.lt-x` — a selector at least as specific as a Tailwind utility. A
+#: `:where(.lt-x)` rule is deliberately not matched: zero specificity, so a utility beats it
+#: in either build.
+_CLASS_SPECIFIC_LT = re.compile(r"(?:[a-z]+)?\.(lt-[a-z0-9-]+)")
+_PADDING_UTILITY = re.compile(r"^(?:[\w-]+:)*p[xytrblse]?-")
+_STATIC_CLASS_ATTR = re.compile(r'(?<![:\w-])class="([^"]*)"')
+
+
+def _lt_classes_declaring_padding() -> set[str]:
+    """`.lt-*` classes whose padding is set by an inline `<style>` at class specificity.
+
+    Inline blocks only — base.html's and any template-local one — because those are what the
+    production sheet is linked *before*. themes.css loads ahead of Tailwind in both builds, so
+    a utility beats it either way and the two environments cannot disagree about it.
+    """
+    assert BASE_HTML in _templates()
+    css = "".join(block for path in _templates() for block in _STYLE_BLOCK.findall(path.read_text()))
+    found: set[str] = set()
+    for selectors, body in _CSS_RULE.findall(_CSS_COMMENT.sub("", css)):
+        if not _DECLARES_PADDING.search(body):
+            continue
+        for selector in selectors.split(","):
+            match = _CLASS_SPECIFIC_LT.fullmatch(selector.strip())
+            if match:
+                found.add(match.group(1))
+    return found
+
+
+def test_no_padding_utility_sits_beside_a_primitive_that_sets_padding():
+    """The two builds resolve this pair in opposite directions.
+
+    In dev the Play CDN injects its sheet at runtime, after base.html's `<style>`, so the
+    utility wins. In production `tailwind-built.css` is linked *before* that block, so at equal
+    specificity the primitive wins. The Analytics menu on the job page carried `lt-menu--flush
+    p-3`: padded in dev, and in every deployment its checkboxes and button sat flush against
+    the border, because `.lt-menu--flush { padding: 0 }` won.
+
+    A primitive whose padding a caller may override declares it under `:where()`, which no
+    utility can lose to. One whose padding it owns keeps a plain class, and the caller drops
+    the utility.
+    """
+    owners = _lt_classes_declaring_padding()
+    assert {"lt-btn", "lt-field"} <= owners, "the CSS scan found nothing — the guard would pass vacuously"
+    offenders: list[str] = []
+    for path in _templates():
+        text = path.read_text()
+        for match in _STATIC_CLASS_ATTR.finditer(text):
+            classes = match.group(1).split()
+            primitives = [c for c in classes if c in owners]
+            utilities = [c for c in classes if _PADDING_UTILITY.match(c)]
+            if primitives and utilities:
+                line = text.count("\n", 0, match.start()) + 1
+                offenders.append(f"{path.relative_to(REPO_ROOT)}:{line}: {' '.join(primitives)} + {' '.join(utilities)}")
+    assert not offenders, "These elements pair a primitive that sets padding with a padding utility. Dev and production disagree about which one wins:\n  " + "\n  ".join(offenders)
+
+
 # ── The count pill ────────────────────────────────────────────────────────────
 
 #: The pill's five palettes live in one macro file. Everything else that wants one imports
