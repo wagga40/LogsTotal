@@ -5,7 +5,7 @@
 # is tested rather than assumed. It is not here for speed — an analysis spends its wall
 # clock in the detection binaries, the subprocesses around them and the database, and the
 # interpreter only shows up in the pure-Python passes (analytics, lineage, markers).
-FROM python:3.14-slim AS deps
+FROM python:3.15-slim AS deps
 
 WORKDIR /app
 
