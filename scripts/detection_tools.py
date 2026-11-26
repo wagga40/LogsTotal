@@ -50,6 +50,13 @@ CHAINSAW_SIGMA_KEEP = (
     "README.md",
 )
 
+# The compiled Zircolite rulesets the shipped profiles load (app/tools/catalog.py). Any other
+# `rules_*.json` in the vendored directory is removed on refresh: the stage starts as a copy of
+# the installed tree, so a ruleset the profiles stopped naming would otherwise ship forever.
+ZIRCOLITE_RULESETS = ("rules_windows_all.json", "rules_linux.json")
+# Finder metadata. Never part of a snapshot, and recorded once it would fail every clone's check.
+IGNORED_FILES = (".DS_Store",)
+
 
 def read_json(path: Path):
     return json.loads(path.read_text(encoding="utf-8"))
@@ -254,6 +261,47 @@ def rsigma_rules(source: Path, stage: Path) -> None:
     write_json(stage / "config" / "rsigma.yml", {"version": 1})
 
 
+def zircolite_manifest_digests(source: Path) -> dict[str, str]:
+    """Published file → SHA-256, from the release manifest Zircolite's `-U` also checks."""
+    manifest = read_json(source / "rules" / "release-manifest.json")
+    digests: dict[str, str] = {}
+    for group in ("aggregates", "sources"):
+        for entry in (manifest.get(group) or {}).values():
+            digests.update(entry.get("artifacts") or {})
+    return digests
+
+
+def zircolite_rules(source: Path, stage: Path) -> None:
+    """Vendor the compiled rulesets the profiles load, and the licence of every rule source."""
+    digests = zircolite_manifest_digests(source)
+    rules = stage / "rules"
+
+    def verified(name: str) -> Path:
+        path = source / "rules" / name
+        if digests.get(name) != sha256(path):
+            raise ValueError(f"Zircolite {name} does not match rules/release-manifest.json")
+        return path
+
+    for name in ZIRCOLITE_RULESETS:
+        compiled = read_json(verified(name))
+        if not isinstance(compiled, list) or not compiled or any(not isinstance(r, dict) or not r.get("rule") or not r.get("title") for r in compiled):
+            raise ValueError(f"empty/invalid compiled ruleset: {name}")
+        shutil.copyfile(source / "rules" / name, rules / name)
+    for stale in rules.glob("rules_*.json"):
+        if stale.name not in ZIRCOLITE_RULESETS:
+            stale.unlink()
+    # The rulesets mix DRL-1.1, MIT, Apache-2.0, GPL-3.0 and CC0 sources; each text ships.
+    licences = sorted((source / "rules" / "licenses").glob("*.txt"))
+    if not licences:
+        raise ValueError("Zircolite rule snapshot has no licenses/")
+    if (rules / "licenses").exists():
+        shutil.rmtree(rules / "licenses")
+    (rules / "licenses").mkdir()
+    for licence in licences:
+        shutil.copyfile(verified(f"licenses/{licence.name}"), rules / "licenses" / licence.name)
+    # The LogsTotal journald aliases stay beside the compiled bundles.
+
+
 def stage_rules(tool: str, release: dict, stage: Path, work: Path, *, ref: str = "HEAD") -> dict:
     repo = RULE_REPOS[tool]
     commit = api(f"{repo}/commits/{urllib.parse.quote(ref, safe='')}")
@@ -271,12 +319,7 @@ def stage_rules(tool: str, release: dict, stage: Path, work: Path, *, ref: str =
     elif tool == "rsigma":
         rsigma_rules(source, stage)
     else:
-        for name in ("rules_windows_merged.json", "rules_linux.json"):
-            rules = read_json(source / "rules" / name)
-            if not isinstance(rules, list) or not rules or any(not isinstance(r, dict) or not r.get("rule") or not r.get("title") for r in rules):
-                raise ValueError(f"empty/invalid compiled ruleset: {name}")
-            shutil.copyfile(source / "rules" / name, stage / "rules" / name)
-        # Preserve the LogsTotal journald aliases beside the compiled bundles.
+        zircolite_rules(source, stage)
     return {
         "repo": repo,
         "commit": commit["sha"],
@@ -324,7 +367,7 @@ def update(root: Path, tool: str, allow_major: bool, *, version: str | None = No
     with tempfile.TemporaryDirectory(prefix=f".{tool}-", dir=root / "tools") as temporary:
         work = Path(temporary)
         stage = work / "staged"
-        shutil.copytree(root / "tools" / tool, stage)
+        shutil.copytree(root / "tools" / tool, stage, ignore=shutil.ignore_patterns(*IGNORED_FILES))
         hashes = stage_binaries(tool, release, stage, work)
         rules = stage_rules(tool, release, stage, work, **({"ref": rules_ref} if rules_ref else {}))
         write_json(stage / MANIFEST, {"repo": REPOS[tool], "version": want, "binaries": hashes, "rules": rules})

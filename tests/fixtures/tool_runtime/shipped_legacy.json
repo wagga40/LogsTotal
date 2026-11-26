@@ -3,7 +3,7 @@
     "tasks": [
       {
         "tool": "zircolite",
-        "docker_image": "wagga40/zircolite:4.7.0@sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f",
+        "docker_image": "wagga40/zircolite:4.8.0@sha256:fad96829e17738a19281cbf0b770d4d680697e1a796e90eceeebe6d4e8c1b53c",
         "rules_path": "tools/zircolite/rules/rules_linux.json",
         "timeout": 300,
         "extra_args": [],
@@ -30,7 +30,7 @@
     "tasks": [
       {
         "tool": "zircolite",
-        "docker_image": "wagga40/zircolite:4.7.0@sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f",
+        "docker_image": "wagga40/zircolite:4.8.0@sha256:fad96829e17738a19281cbf0b770d4d680697e1a796e90eceeebe6d4e8c1b53c",
         "rules_path": "tools/zircolite/rules/rules_linux.json",
         "timeout": 300,
         "options": {
@@ -111,7 +111,7 @@
     "tasks": [
       {
         "tool": "zircolite",
-        "docker_image": "wagga40/zircolite:4.7.0@sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f",
+        "docker_image": "wagga40/zircolite:4.8.0@sha256:fad96829e17738a19281cbf0b770d4d680697e1a796e90eceeebe6d4e8c1b53c",
         "rules_path": "tools/zircolite/rules/rules_linux.json",
         "timeout": 300,
         "extra_args": [],
@@ -168,8 +168,8 @@
       },
       {
         "tool": "zircolite",
-        "docker_image": "wagga40/zircolite:4.7.0@sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f",
-        "rules_path": "tools/zircolite/rules/rules_windows_merged.json",
+        "docker_image": "wagga40/zircolite:4.8.0@sha256:fad96829e17738a19281cbf0b770d4d680697e1a796e90eceeebe6d4e8c1b53c",
+        "rules_path": "tools/zircolite/rules/rules_windows_all.json",
         "timeout": 300,
         "extra_args": [],
         "docker_options": []
@@ -335,7 +335,7 @@
             "-e",
             "/case/input.log",
             "-r",
-            "/rules/rules_windows_merged.json",
+            "/rules/rules_windows_all.json",
             "-o",
             "/out/result.json"
           ]
@@ -345,7 +345,7 @@
             "-e",
             "/case/input.log",
             "-r",
-            "/rules/rules_windows_merged.json",
+            "/rules/rules_windows_all.json",
             "-o",
             "/out/result.json",
             "-j"
@@ -356,7 +356,7 @@
             "-e",
             "/case/input.log",
             "-r",
-            "/rules/rules_windows_merged.json",
+            "/rules/rules_windows_all.json",
             "-o",
             "/out/result.json",
             "-j"
@@ -581,8 +581,8 @@
     "tasks": [
       {
         "tool": "zircolite",
-        "docker_image": "wagga40/zircolite:4.7.0@sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f",
-        "rules_path": "tools/zircolite/rules/rules_windows_merged.json",
+        "docker_image": "wagga40/zircolite:4.8.0@sha256:fad96829e17738a19281cbf0b770d4d680697e1a796e90eceeebe6d4e8c1b53c",
+        "rules_path": "tools/zircolite/rules/rules_windows_all.json",
         "timeout": 300,
         "extra_args": [],
         "docker_options": []
@@ -595,7 +595,7 @@
             "-e",
             "/case/input.log",
             "-r",
-            "/rules/rules_windows_merged.json",
+            "/rules/rules_windows_all.json",
             "-o",
             "/out/result.json",
             "--evtxtract-input"
