@@ -86,6 +86,27 @@ def test_dedup_same_guid_from_two_tools():
     assert forest["stats"]["hits"] == 1
 
 
+def test_one_process_in_both_evtx_guid_spellings_is_one_node():
+    """evtx 0.15 engines write `{lowercase}` GUIDs and older ones `UPPERCASE`. A job mixing
+    them must still dedup the process and attach the child another engine reported."""
+    old = _sysmon("0197231E-F810-6938-B710-000000000800", "500", r"C:\Windows\cmd.exe", time="t1")
+    new = _sysmon("{0197231e-f810-6938-b710-000000000800}", "500", r"C:\Windows\cmd.exe", time="t1")
+    child = _sysmon(
+        "{0197231e-f811-6938-b710-000000000900}",
+        "600",
+        r"C:\Windows\whoami.exe",
+        pguid="0197231E-F810-6938-B710-000000000800",
+        ppid="500",
+        pimage=r"C:\Windows\cmd.exe",
+        time="t2",
+    )
+    forest = build_process_forest([old, new, child])
+    assert forest["stats"]["hits"] == 2
+    (root,) = forest["roots"]
+    assert root["image"] == "cmd.exe"
+    assert [c["image"] for c in root["children"]] == ["whoami.exe"]
+
+
 def test_siblings_sorted_chronologically():
     events = [
         _sysmon("{P}", "1", r"C:\p.exe", time="2024-01-01 10:00:00"),
