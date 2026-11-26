@@ -9,6 +9,8 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+## [1.3.0] — 2026-11-26
+
 ### Updated
 
 - Chainsaw 2.18.0, Hayabusa 4.4.0, RSigma 0.28.0 and Zircolite 4.8.0 (image pinned by
@@ -386,7 +388,8 @@ side, with the context an analyst needs to act on it.
   directory.
 - `./logstotal deploy:env-scaffold` generates the Garage secrets.
 
-[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v1.2.2...HEAD
+[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v1.3.0...HEAD
+[1.3.0]: https://github.com/wagga40/LogsTotal/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/wagga40/LogsTotal/compare/v1.2.1...v1.2.2
 [1.2.1]: https://github.com/wagga40/LogsTotal/compare/v1.2.0...v1.2.1
 [1.2.0]: https://github.com/wagga40/LogsTotal/compare/v1.1.0...v1.2.0
