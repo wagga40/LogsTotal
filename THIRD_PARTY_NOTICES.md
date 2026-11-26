@@ -18,11 +18,11 @@ Each tool's upstream licence text is committed alongside its binaries in
 
 | Component | Version | Licence | Upstream (corresponding source) |
 |---|---|---|---|
-| **Chainsaw** | 2.16.5 | GPL-3.0-only | <https://github.com/WithSecureOpenSource/chainsaw> |
-| **Hayabusa** | 4.1.0 | AGPL-3.0-only | <https://github.com/Yamato-Security/hayabusa> |
+| **Chainsaw** | 2.18.0 | GPL-3.0-only | <https://github.com/WithSecureOpenSource/chainsaw> |
+| **Hayabusa** | 4.4.0 | AGPL-3.0-only | <https://github.com/Yamato-Security/hayabusa> |
 | **ChopChopGo** | 1.1.0 | GPL-3.0-only | <https://github.com/M00NLIG7/ChopChopGo> |
-| **RSigma** | 0.23.0 | MIT | <https://github.com/timescale/rsigma/tree/v0.23.0> |
-| **Zircolite** | 4.0.0, image `wagga40/zircolite` | LGPL-3.0-only | <https://github.com/wagga40/Zircolite> |
+| **RSigma** | 0.28.0 | MIT | <https://github.com/timescale/rsigma/tree/v0.28.0> |
+| **Zircolite** | 4.8.0, image `wagga40/zircolite` | LGPL-3.0-only | <https://github.com/wagga40/Zircolite> |
 | **Tailwind CSS CLI** (standalone, build-time only) | 3.4.17 | MIT | <https://github.com/tailwindlabs/tailwindcss> |
 
 **Binaries under GPL-3.0 and AGPL-3.0 carry a corresponding-source obligation.** The
@@ -56,7 +56,7 @@ itself does not contain them.
 |---|---|---|---|
 | SigmaHQ rules (Windows + Linux subsets) | `tools/chainsaw/sigma/`, `tools/chopchopgo/rules/`, `tools/hayabusa/rules/`, `tools/zircolite/rules/`, `tools/rsigma/rules/` | Detection Rule License 1.1 (DRL 1.1) | <https://github.com/SigmaHQ/sigma> |
 | Chainsaw rules + EVTX mappings | `tools/chainsaw/rules/`, `tools/chainsaw/mappings/` | GPL-3.0-only | <https://github.com/WithSecureOpenSource/chainsaw> |
-| Hayabusa rules + config | `tools/hayabusa/rules/` | Detection Rule License 1.1 (DRL 1.1) | <https://github.com/Yamato-Security/hayabusa-rules> |
+| Hayabusa rules + config | `tools/hayabusa/rules/`, and compiled into `tools/zircolite/rules/rules_windows_all.json` | Detection Rule License 1.1 (DRL 1.1) | <https://github.com/Yamato-Security/hayabusa-rules> |
 | ChopChopGo mappings | `tools/chopchopgo/mappings/` | GPL-3.0-only | <https://github.com/M00NLIG7/ChopChopGo> |
 
 The full DRL 1.1 text ships at [`LICENSES/DRL-1.1.md`](LICENSES/DRL-1.1.md). It permits use,
@@ -64,6 +64,34 @@ modification, redistribution and commercial use. It requires that anyone sharing
 keeps each rule's author, a link to the rule set and the licence; and that anything
 reporting a match keeps the rule's author — which is why every LogsTotal finding names its
 rule's author, on screen and in `findings.json`.
+
+### Community rule sources in Zircolite's `windows_all` rule set
+
+`tools/zircolite/rules/rules_windows_all.json`, which the Windows workflows load, is compiled
+by [Zircolite](https://github.com/wagga40/Zircolite/tree/master/rules) from the SigmaHQ and
+Hayabusa rules above and from the sources below. Every compiled rule carries its `source`,
+`license` and `author`, and each source's licence text ships as
+`tools/zircolite/rules/licenses/<source>.txt`.
+
+| Source | Licence | Upstream |
+|---|---|---|
+| adpack | MIT | <https://github.com/404SecNotFound/Active-Directory-Pentest-Detection-Pack> |
+| dragon | MIT | <https://github.com/frknaykc/Dragon-ThreatResearchHQ> |
+| hatchepsoute | Apache-2.0 | <https://github.com/Hatchepsoute/sigma-rules> |
+| huntress | MIT | <https://github.com/huntresslabs/threat-intel> |
+| joesecurity | GPL-3.0 | <https://github.com/joesecurity/sigma-rules> |
+| loldrivers | Apache-2.0 | <https://github.com/magicsword-io/LOLDrivers> |
+| lolrmm | Apache-2.0 | <https://github.com/magicsword-io/LOLRMM> |
+| mbabinski | GPL-3.0 | <https://github.com/mbabinski/Sigma-Rules> |
+| mdecrevoisier | CC0-1.0 | <https://github.com/mdecrevoisier/SIGMA-detection-rules> |
+| reversinglabs | MIT | <https://github.com/reversinglabs/reversinglabs-siem-rules> |
+| tsale | GPL-3.0 | <https://github.com/tsale/Sigma_rules> |
+| tyrian | MIT | <https://github.com/zshguy/tyrian-detection-pack> |
+| wrg11 | MIT | <https://github.com/WRG-11/wrg-sigma-rules> |
+
+The GPL-3.0 rules are distributed as data in the compiled rule set and evaluated by a
+separate process, like the GPL-3.0 Chainsaw rules above. Their licence and
+corresponding-source obligations travel with them.
 
 Rule sets are snapshots, not live mirrors. See
 [Detection tools and workflows](docs/runbooks/detection-tools.md#updating-rule-sets) for how to

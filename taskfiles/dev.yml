@@ -758,12 +758,12 @@ tasks:
     cmds:
       - bash scripts/verify-artifacts.sh {{.CLI_ARGS | default "archive"}}
 
-  # ── Detection tools (Zircolite / Chainsaw / Hayabusa / ChopChopGo) ───────────
+  # ── Detection tools (Zircolite / Chainsaw / Hayabusa / ChopChopGo / RSigma) ──
 
   tools:check:
     desc: Are the detection tools and rule sets current?
     summary: |
-      Compares the vendored Chainsaw/Hayabusa/ChopChopGo binaries and the pinned
+      Compares the vendored Chainsaw/Hayabusa/ChopChopGo/RSigma binaries and the pinned
       Zircolite image against each upstream's latest release, then compares rule
       snapshot commits and verifies the recorded binary/rule checksums.
 
@@ -798,7 +798,7 @@ tasks:
       # everything", since each one needs its own verification run afterwards.
       # Without this the prompt fires first and the refusal comes second.
       - sh: 'test -n "{{.CLI_ARGS}}"'
-        msg: "Usage: ./logstotal tools:update -- chainsaw   (name at least one of: chainsaw, hayabusa, chopchopgo, zircolite)"
+        msg: "Usage: ./logstotal tools:update -- chainsaw   (name at least one of: chainsaw, hayabusa, chopchopgo, rsigma, zircolite)"
     cmds:
       - bash scripts/tools.sh update {{.CLI_ARGS}}
 

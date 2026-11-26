@@ -1,5 +1,5 @@
 title: Suspicious Cobalt Strike DNS Beaconing - DNS Client
-id: f0b3a5e9-e4ee-ed23-3b27-4dd30c5974c8
+id: 81044606-0597-3b0d-c000-a976304c9570
 related:
     - id: f356a9c4-effd-4608-bbf8-408afd5cd006
       type: similar
@@ -9,7 +9,7 @@ status: test
 description: Detects a program that invoked suspicious DNS queries known from Cobalt Strike beacons
 references:
     - https://www.icebrg.io/blog/footprints-of-fin7-tracking-actor-patterns
-    - https://www.sekoia.io/en/hunting-and-detecting-cobalt-strike/
+    - https://web.archive.org/web/20211022162145/https://www.sekoia.io/en/hunting-and-detecting-cobalt-strike/
 author: Nasreddine Bencherchali (Nextron Systems)
 date: 2023-01-16
 tags:
@@ -21,7 +21,7 @@ logsource:
     definition: 'Requirements: Microsoft-Windows-DNS Client Events/Operational Event Log must be enabled/collected in order to receive the events.'
 detection:
     dns_client:
-        Channel: Microsoft-Windows-DNS Client Events/Operational
+        Channel: Microsoft-Windows-DNS-Client/Operational
     selection_eid:
         EventID: 3008
     selection_query_1:

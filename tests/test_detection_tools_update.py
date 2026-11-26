@@ -10,6 +10,7 @@ from pathlib import Path
 
 import pytest
 
+from app.tools.catalog import TOOLS
 from scripts import detection_tools as updater
 
 
@@ -185,20 +186,91 @@ def test_exact_binary_is_selected_instead_of_larger_data(tmp_path, monkeypatch):
     assert hashes == {"chainsaw-intel-lin": updater.sha256(stage / "chainsaw-intel-lin")}
 
 
-def test_zircolite_rule_refresh_preserves_journald_aliases(tmp_path, monkeypatch):
+def zircolite_snapshot(tmp_path, monkeypatch, *, tamper: str = ""):
+    """A Zircolite rules/ snapshot whose release manifest lists every published file."""
     stage = tmp_path / "stage"
     source = tmp_path / "source"
-    for directory in (stage, source):
-        (directory / "rules").mkdir(parents=True)
-    aliases = stage / "rules/zircolite_journald.yaml"
-    aliases.write_text("alias:\n  _EXE: Image\n")
-    for name in ("rules_windows_merged.json", "rules_linux.json"):
-        updater.write_json(source / "rules" / name, [{"title": "rule", "rule": ["SELECT * FROM logs"]}])
+    for directory in (stage, source / "rules/licenses"):
+        (directory if directory.name == "licenses" else directory / "rules").mkdir(parents=True, exist_ok=True)
+    published = {"rules_windows_merged.json": None, "rules_windows_all.json": None, "rules_linux.json": None}
+    for name in published:
+        updater.write_json(source / "rules" / name, [{"title": name, "rule": ["SELECT * FROM logs"]}])
+    for licence in ("sigmahq.txt", "tsale.txt"):
+        (source / "rules/licenses" / licence).write_text(f"licence {licence}\n")
+    digests = {name: updater.sha256(source / "rules" / name) for name in published}
+    digests |= {f"licenses/{p.name}": updater.sha256(p) for p in (source / "rules/licenses").iterdir()}
+    if tamper:
+        digests[tamper] = "0" * 64
+    windows_all = {"rules_windows_all.json": digests["rules_windows_all.json"]}
+    sources = {name: digest for name, digest in digests.items() if name not in windows_all}
+    updater.write_json(
+        source / "rules/release-manifest.json",
+        {"schema_version": 1, "aggregates": {"windows_all": {"artifacts": windows_all, "inputs": {}}}, "sources": {"sigmahq": {"artifacts": sources}}},
+    )
     monkeypatch.setattr(updater, "api", lambda *_: {"sha": "abc", "commit": {"committer": {"date": "2026-09-20T00:00:00Z"}}})
     monkeypatch.setattr(updater, "snapshot", lambda *_: source)
+    return stage
+
+
+def test_zircolite_rule_refresh_preserves_journald_aliases(tmp_path, monkeypatch):
+    stage = zircolite_snapshot(tmp_path, monkeypatch)
+    aliases = stage / "rules/zircolite_journald.yaml"
+    aliases.write_text("alias:\n  _EXE: Image\n")
     manifest = updater.stage_rules("zircolite", {}, stage, tmp_path)
     assert aliases.read_text() == "alias:\n  _EXE: Image\n"
     assert manifest["trees"]["rules"] == updater.tree_digest(stage / "rules")
+
+
+def test_zircolite_refresh_vendors_only_the_profile_rulesets_and_drops_stale_ones(tmp_path, monkeypatch):
+    """The stage starts as a copy of the installed tree, so a ruleset no profile loads any
+    more would otherwise ship forever."""
+    stage = zircolite_snapshot(tmp_path, monkeypatch)
+    updater.write_json(stage / "rules/rules_windows_merged.json", [{"title": "old", "rule": ["SELECT 1"]}])
+    updater.stage_rules("zircolite", {}, stage, tmp_path)
+    assert sorted(p.name for p in (stage / "rules").glob("rules_*.json")) == sorted(updater.ZIRCOLITE_RULESETS)
+
+
+def test_zircolite_refresh_ships_every_rule_source_licence(tmp_path, monkeypatch):
+    stage = zircolite_snapshot(tmp_path, monkeypatch)
+    (stage / "rules/licenses").mkdir()
+    (stage / "rules/licenses/retired.txt").write_text("a source no longer shipped")
+    updater.stage_rules("zircolite", {}, stage, tmp_path)
+    assert sorted(p.name for p in (stage / "rules/licenses").iterdir()) == ["sigmahq.txt", "tsale.txt"]
+
+
+@pytest.mark.parametrize("tampered", ["rules_windows_all.json", "rules_linux.json", "licenses/tsale.txt"])
+def test_zircolite_refresh_refuses_a_file_the_release_manifest_disowns(tmp_path, monkeypatch, tampered):
+    stage = zircolite_snapshot(tmp_path, monkeypatch, tamper=tampered)
+    with pytest.raises(ValueError, match="release-manifest"):
+        updater.stage_rules("zircolite", {}, stage, tmp_path)
+
+
+def test_the_vendored_zircolite_rulesets_are_the_ones_the_profiles_load():
+    loaded = {Path(profile.rules_path).name for profile in TOOLS["zircolite"].profiles}
+    assert loaded == set(updater.ZIRCOLITE_RULESETS)
+    shipped = Path(__file__).resolve().parents[1] / "tools/zircolite/rules"
+    assert {p.name for p in shipped.glob("rules_*.json")} == loaded
+
+
+def test_an_update_never_records_finder_metadata(tmp_path, monkeypatch):
+    """A `.DS_Store` copied into the stage lands in the recorded tree digest, and every clone
+    (which never has it) then fails tools:check."""
+    tool = tmp_path / "tools/chopchopgo"
+    (tool / "rules").mkdir(parents=True)
+    (tool / "rules/.DS_Store").write_bytes(b"finder")
+    updater.write_json(tool / updater.MANIFEST, {"version": "v1.1.0", "binaries": {}})
+    seen = {}
+
+    def stage_rules(_tool, _release, stage, _work, **_):
+        seen["files"] = sorted(p.name for p in stage.rglob("*") if p.is_file())
+        return {"repo": "SigmaHQ/sigma", "commit": "abc", "committed_at": "2026-09-20T00:00:00Z", "trees": {}}
+
+    monkeypatch.setattr(updater, "api", lambda *_: {"tag_name": "v1.1.0", "assets": []})
+    monkeypatch.setattr(updater, "local_version", lambda *_: "v1.1.0")
+    monkeypatch.setattr(updater, "stage_binaries", lambda *_: {})
+    monkeypatch.setattr(updater, "stage_rules", stage_rules)
+    updater.update(tmp_path, "chopchopgo", allow_major=False)
+    assert ".DS_Store" not in seen["files"]
 
 
 def test_chainsaw_keeps_only_the_rule_sets_and_their_licence(tmp_path, monkeypatch):
@@ -321,7 +393,8 @@ def test_zircolite_version_includes_profile_pin(tmp_path):
     workflows = tmp_path / "workflows"
     workflows.mkdir()
     (workflows / "windows.yml").write_text("tasks:\n  - tool: zircolite\n    profile: windows\n")
-    assert updater.local_version(tmp_path, "zircolite") == "4.7.0"
+    pinned = TOOLS["zircolite"].docker_image.split("@")[0].rsplit(":", 1)[1]
+    assert updater.local_version(tmp_path, "zircolite") == pinned
 
 
 def test_legacy_zircolite_override_version_still_discovered(tmp_path):

@@ -74,6 +74,20 @@ def _clean(val: object) -> str | None:
     return v
 
 
+def _clean_guid(val: object) -> str | None:
+    """`_clean`, spelled one way: no braces, lowercase.
+
+    Engines built on evtx 0.15 or later (Chainsaw 2.18, Zircolite 4.8, RSigma 0.26) write
+    `{0197231e-…}`, and the others write `0197231E-…`. Nodes and parent links are keyed on
+    this string, so two spellings would split one process into two nodes and leave a child
+    without the parent another engine reported.
+    """
+    v = _clean(val)
+    if v is None:
+        return None
+    return v.strip("{}").strip().lower() or None
+
+
 def _basename(path: str | None) -> str | None:
     """Lowercased basename of a Windows/Unix path; passthrough for bare names."""
     if not path:
@@ -212,7 +226,7 @@ def _parse_event(event: dict) -> dict | None:
         # an un-named node is noise in a lineage tree, so drop it.
         return None
     node = _make_node(hit=True)
-    node["guid"] = _clean(_first(fields, "ProcessGuid", "PGUID"))
+    node["guid"] = _clean_guid(_first(fields, "ProcessGuid", "PGUID"))
     node["image_full"] = image_full
     node["image"] = image
     node["image_alts"] = _image_alts(fields, image)
@@ -227,7 +241,7 @@ def _parse_event(event: dict) -> dict | None:
 
     # PID + parent identity differ by source. Sysmon (EID 1): own=ProcessId,
     # parent=ParentProcessId. Security 4688: own=NewProcessId, parent=ProcessId.
-    node["_parent_guid"] = _clean(_first(fields, "ParentProcessGuid", "ParentPGUID"))
+    node["_parent_guid"] = _clean_guid(_first(fields, "ParentProcessGuid", "ParentPGUID"))
     if eid == 4688:
         node["pid"] = _clean(_first(fields, "NewProcessId", "PID"))
         node["_parent_pid"] = _clean(_first(fields, "ProcessId", "ParentPID"))

@@ -1,18 +1,18 @@
 {
   "repo": "WithSecureOpenSource/chainsaw",
-  "version": "v2.17.1",
+  "version": "v2.18.0",
   "binaries": {
-    "chainsaw-intel-lin": "0cfe9729b4ba190e1d9f5c0bb88346856c618c7dc26ce76fff1c78fff9b0c014",
-    "chainsaw-arm-lin": "65a179b9709bcf25b9183449fb433bf56efc48ebfe56fc203af2df09ad7d6a56",
-    "chainsaw-mac": "58d1eadf8164435e73d746db3bffe6170bc72e40a5fc7cce7b7957f0efa52b7b"
+    "chainsaw-intel-lin": "065324ab79610ad6984a0d4d4989bac5a0979c060dbe944a88dd8611c22ad178",
+    "chainsaw-arm-lin": "e1c27a2e1fe7185876a91716c2d4e4c015a49ecc4ba730a8341b458ab6c0e991",
+    "chainsaw-mac": "9779b56cf90ecec2d5f4ae5da7c1c810849cb6fe33d3dda013072261c8a69b0f"
   },
   "rules": {
     "repo": "SigmaHQ/sigma",
-    "commit": "b7920ed31356fb7f6a9275b34737d8604c65bac3",
-    "committed_at": "2026-10-18T01:48:48Z",
+    "commit": "876eb7b8cfbcce4d690dff8c3439ecdc7dc8175f",
+    "committed_at": "2026-11-25T15:34:00Z",
     "trees": {
-      "rules": "8f34a3b5332636e382a5bdc5a6e807681249c44f5d3b9734b214d80d9e395e77",
-      "sigma": "46f4a8575b7a9d381ba455df9fc0bfb32873c62bf8641962dcbdce828c49b146",
+      "rules": "b531a170f886239d386c3c30b71224b24476232230ab86224a5e422da8cc5ee7",
+      "sigma": "8c0955f6655de1bc8dea12fa3d10a1cd55504a826eb1d675f46b4f79cabd8b2b",
       "mappings": "be188ff83fdda0b1df6428b32fae8d79716471a464e7513379ac8012604cdb0c"
     }
   }

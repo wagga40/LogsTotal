@@ -27,9 +27,10 @@ addresses are RFC 5737 documentation ranges (`198.51.100.0/24`), and nothing was
 downloaded or executed. Only the *shape* of `_CMDLINE` matters, because that is
 what the Sigma process-creation rules key on.
 
-Produces **45 detections across 7 rules** with `linux_journald.yml`
-(Zircolite 4.0.0, September 2026 `rules_linux.json`, `zircolite_journald.yaml` aliases).
-All 181 events parse; the six previous rules and their 37 hits remain present:
+Produces **49 detections across 8 rules** with `linux_journald.yml`
+(Zircolite 4.8.0, November 2026 `rules_linux.json`, `zircolite_journald.yaml` aliases).
+All 181 events parse. Upstream renamed *Local System Accounts Discovery - Linux* and
+added *System Network Connections Discovery - Linux*; the other hits are unchanged:
 
 | Rule | Level | Hits |
 |---|---|---|
@@ -37,7 +38,8 @@ All 181 events parse; the six previous rules and their 37 hits remain present:
 | Execution Of Script Located In Potentially Suspicious Directory | medium | 1 |
 | Bash Interactive Shell | low | 2 |
 | Crontab Enumeration | low | 2 |
-| Local System Accounts Discovery - Linux | low | 27 |
+| Local System Accounts Discovery Attempt - Linux | low | 27 |
+| System Network Connections Discovery - Linux | low | 4 |
 | System Information Discovery | informational | 1 |
 | System Network Discovery - Linux | informational | 4 |
 
