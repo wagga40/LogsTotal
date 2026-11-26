@@ -9,6 +9,36 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+### Updated
+
+- Chainsaw 2.18.0, Hayabusa 4.4.0, RSigma 0.28.0 and Zircolite 4.8.0 (image pinned by
+  digest for AMD64 and ARM64), with fresh rule snapshots for all five engines. ChopChopGo
+  stays at 1.1.0, with refreshed SigmaHQ Linux rules. Chainsaw, ChopChopGo and RSigma read
+  the same SigmaHQ commit.
+- Zircolite's Windows workflows load the `windows_all` rule set: the SigmaHQ Windows rules
+  plus fourteen community sources, 7,676 rules where `windows_merged` had 4,529. Expect
+  more Zircolite findings on the same log. The new sources are MIT, Apache-2.0, GPL-3.0 and
+  CC0 licensed; each licence text ships in `tools/zircolite/rules/licenses/`, and
+  THIRD_PARTY_NOTICES.md lists them.
+
+### Fixed
+
+- The process tree links one process across engines that spell its GUID differently.
+  Engines built on the new EVTX library write `{0197231e-…}`, the others `0197231E-…`,
+  and a job mixing them split the process into two nodes and left its children without a
+  parent.
+- `tools:update` no longer records macOS `.DS_Store` files in a rule snapshot's checksum,
+  which made `tools:check` fail on every other checkout.
+
+### Upgrade notes
+
+- `tools/zircolite/rules/rules_windows_merged.json` is no longer shipped. A custom
+  workflow that names it in `rules_path` fails with "Rules path not found"; use
+  `profile: windows`, or point it at `rules_windows_all.json`.
+- Raw events from Chainsaw, RSigma and Zircolite now spell GUIDs in braces and lowercase,
+  and carry seven fractional digits in timestamps. A search over raw events that matches
+  a whole GUID should allow for both spellings when it spans older and newer jobs.
+
 ## [1.2.2] — 2026-11-01
 
 ### Fixed

@@ -87,13 +87,15 @@ Rule sets are snapshots shipped with each release, not live mirrors: nothing fet
 
 | Tool | Rules live in | Upstream | Refresh with |
 |---|---|---|---|
-| Zircolite | `tools/zircolite/rules/*.json` (compiled) | [Zircolite rules](https://github.com/wagga40/Zircolite/tree/master/rules) | `./logstotal tools:update -- zircolite` |
+| Zircolite | `tools/zircolite/rules/rules_windows_all.json` and `rules_linux.json` (compiled), `tools/zircolite/rules/licenses/` | [Zircolite rules](https://github.com/wagga40/Zircolite/tree/master/rules) | `./logstotal tools:update -- zircolite` |
 | Chainsaw | `tools/chainsaw/sigma/`, `tools/chainsaw/rules/`, `tools/chainsaw/mappings/` | [SigmaHQ](https://github.com/SigmaHQ/sigma), [Chainsaw](https://github.com/WithSecureOpenSource/chainsaw) | `./logstotal tools:update -- chainsaw` |
 | Hayabusa | `tools/hayabusa/rules/`, `tools/hayabusa/config/` | [hayabusa-rules](https://github.com/Yamato-Security/hayabusa-rules) | `./logstotal tools:update -- hayabusa` |
 | ChopChopGo | `tools/chopchopgo/rules/`, `tools/chopchopgo/mappings/` | [SigmaHQ](https://github.com/SigmaHQ/sigma) Linux rules | `./logstotal tools:update -- chopchopgo` |
 | RSigma | `tools/rsigma/rules/`, `tools/rsigma/mappings/`, `tools/rsigma/config/` | [SigmaHQ](https://github.com/SigmaHQ/sigma) Windows rules; LogsTotal Windows mapping | `./logstotal tools:update -- rsigma` |
 
-`./logstotal tools:update -- <tool>` (one or more tool names) downloads the latest release binaries, rules and matching mappings or configuration. Each download must match the SHA-256 digest GitHub publishes for it, the expected executable name and the right architecture; if anything fails, the command exits non-zero before replacing any of that tool's files. The previous files are kept under `backups/tools-<tool>-*/`, and the installed versions are recorded in `tools/<tool>/upstream.json`. For Zircolite it refreshes the compiled rules only (keeping `zircolite_journald.yaml`); the container image is moved separately.
+The Zircolite `windows` profile loads `rules_windows_all.json`, about 7,700 rules: the SigmaHQ Windows rules plus fourteen community sources, among them Hayabusa's native rules, LOLRMM, LOLDrivers and the Huntress and Joe Security rules. Each compiled rule records its `source` and `license`. The sources' licences are MIT, Apache-2.0, GPL-3.0, CC0-1.0 and DRL 1.1, and every text ships in `tools/zircolite/rules/licenses/` (see [THIRD_PARTY_NOTICES.md](https://github.com/wagga40/LogsTotal/blob/main/THIRD_PARTY_NOTICES.md)). The `linux` and `journald` profiles load `rules_linux.json`, SigmaHQ only. A Windows Zircolite run therefore reports more findings than Chainsaw or RSigma on the same log, and some of them repeat a Hayabusa finding, because both engines run Hayabusa's rules.
+
+`./logstotal tools:update -- <tool>` (one or more tool names) downloads the latest release binaries, rules and matching mappings or configuration. Each download must match the SHA-256 digest GitHub publishes for it, the expected executable name and the right architecture; if anything fails, the command exits non-zero before replacing any of that tool's files. The previous files are kept under `backups/tools-<tool>-*/`, and the installed versions are recorded in `tools/<tool>/upstream.json`. For Zircolite it refreshes the two compiled rule sets the profiles load and the licence texts, after checking each against the upstream `release-manifest.json`. It keeps `zircolite_journald.yaml` and removes any other compiled rule set. The container image is moved separately.
 
 Run updates while no job is running, then check each tool against real logs before relying on it: upload the [sample logs](https://github.com/wagga40/LogsTotal/blob/main/samples/README.md) and compare the findings with those from before the update. On larger logs compare the matched events as well as the rule names — an upstream fix can move an event to a more specific rule without losing the detection.
 
@@ -235,14 +237,14 @@ new rules, configuration or coverage, and does not establish that a threat was r
 For a reproducible single-tool update, use an exact release tag and rules commit:
 
 ```bash
-./logstotal tools:update -- rsigma --version v0.25.0 --rules-ref 05d1031f537e830b76da53bae2400c5814c89165 --allow-major
+./logstotal tools:update -- rsigma --version v0.28.0 --rules-ref 876eb7b8cfbcce4d690dff8c3439ecdc7dc8175f --allow-major
 ```
 
 The updater resolves refs to commits and records checksums. `--allow-major` also applies
 to RSigma's pre-1.0 minor releases. Zircolite's container pin is changed separately after
-sample validation. Zircolite's engine and compiled rules are pinned to the `v4.7.0`
+sample validation. Zircolite's engine and compiled rules are pinned to the `v4.8.0`
 release. Its image uses the multi-platform manifest digest
-`sha256:6dba9ac590a699d6d622ad9a7ecd2c7b2e0874decff3bc310d452b33ad45a28f`
+`sha256:fad96829e17738a19281cbf0b770d4d680697e1a796e90eceeebe6d4e8c1b53c`
 for AMD64 and ARM64.
 
 ---
