@@ -9,6 +9,8 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+## [1.4.1] — 2026-11-28
+
 ### Fixed
 
 - Opening the Explore or AI Analysis tab left the pointer showing the busy cursor after the
@@ -439,7 +441,8 @@ side, with the context an analyst needs to act on it.
   directory.
 - `./logstotal deploy:env-scaffold` generates the Garage secrets.
 
-[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v1.4.0...HEAD
+[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v1.4.1...HEAD
+[1.4.1]: https://github.com/wagga40/LogsTotal/compare/v1.4.0...v1.4.1
 [1.4.0]: https://github.com/wagga40/LogsTotal/compare/v1.3.0...v1.4.0
 [1.3.0]: https://github.com/wagga40/LogsTotal/compare/v1.2.2...v1.3.0
 [1.2.2]: https://github.com/wagga40/LogsTotal/compare/v1.2.1...v1.2.2
