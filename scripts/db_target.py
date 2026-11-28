@@ -64,6 +64,9 @@ def check_rollback(snapshot: Path, root: Path, env: dict[str, str], context: str
 
         # On Docker, the entrypoint has resolved the real connection URL already.
         url = env.get("SYNC_DATABASE_URL") or env.get("DATABASE_URL", "").replace("+asyncpg", "+psycopg2")
+        # SQLAlchemy 2.1 maps a bare postgresql:// to psycopg 3, which is not installed.
+        if url.startswith("postgresql://"):
+            url = "postgresql+psycopg2://" + url[len("postgresql://") :]
         if not url or "postgres" not in url:
             raise ValueError("Run the rollback database check inside the web container to resolve PostgreSQL configuration.")
         engine = create_engine(url)

@@ -30,6 +30,18 @@ def version_from_manifest(text: str) -> str | None:
     return None
 
 
+def pin_postgres_driver(url: str) -> str:
+    """Name psycopg2 on a bare `postgresql://` URL; a URL that names its driver is kept.
+
+    SQLAlchemy 2.1 changed which driver the bare scheme selects (psycopg2 → psycopg 3), and
+    only psycopg2 is installed. An operator's hand-written SYNC_DATABASE_URL from before the
+    upgrade would otherwise stop working without a word about why.
+    """
+    if url.startswith("postgresql://"):
+        return "postgresql+psycopg2://" + url[len("postgresql://") :]
+    return url
+
+
 class Settings(BaseSettings):
     """Pydantic-settings model; auto-derives SYNC_DATABASE_URL when not set."""
 
@@ -287,11 +299,13 @@ class Settings(BaseSettings):
         if self.huey_task_timeout is not None:
             self.huey_queue_expiry = self.huey_task_timeout
 
-        # Auto-derive sync URL from database_url when not explicitly set
+        # Auto-derive sync URL from database_url when not explicitly set. The PostgreSQL
+        # driver is always NAMED: a bare postgresql:// meant psycopg2 up to SQLAlchemy 2.0
+        # and means psycopg 3 from 2.1, which is not installed — every Huey worker and every
+        # migration would fail to connect, on PostgreSQL only.
         if self.sync_database_url is None:
-            url = self.database_url
-            url = url.replace("+asyncpg", "").replace("+aiosqlite", "")
-            self.sync_database_url = url
+            self.sync_database_url = self.database_url.replace("+asyncpg", "+psycopg2").replace("+aiosqlite", "")
+        self.sync_database_url = pin_postgres_driver(self.sync_database_url)
 
         # VERSION file (repo root) is the canonical source of app_version when present;
         # `task release:prepare` writes it, and it ships in every release archive.

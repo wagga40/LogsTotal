@@ -386,7 +386,7 @@ tasks:
         set -euo pipefail
         if [ -n "${POSTGRES_TEST_URL:-}" ]; then
           echo "Using POSTGRES_TEST_URL"
-          pdm run -- pytest tests/test_postgres_sql_compat.py -v
+          pdm run -- pytest tests/test_postgres_sql_compat.py tests/test_postgres_migrations.py -v
           exit 0
         fi
         command -v docker >/dev/null 2>&1 || { echo "ERROR: Docker not found, and POSTGRES_TEST_URL is not set."; exit 1; }
@@ -405,7 +405,7 @@ tasks:
           sleep 0.5; echo -n "."
         done
         docker exec "$NAME" pg_isready -h 127.0.0.1 -U pgtest -q || { echo " timeout"; exit 1; }
-        LOGSTOTAL_TEST_DOCKER=1 POSTGRES_TEST_URL="postgresql+psycopg2://pgtest:${PGPW}@127.0.0.1:${PORT}/pgtest" pdm run -- pytest tests/test_postgres_sql_compat.py tests/test_postgres_backup_restore.py -v
+        LOGSTOTAL_TEST_DOCKER=1 POSTGRES_TEST_URL="postgresql+psycopg2://pgtest:${PGPW}@127.0.0.1:${PORT}/pgtest" pdm run -- pytest tests/test_postgres_sql_compat.py tests/test_postgres_backup_restore.py tests/test_postgres_migrations.py -v
 
   docs:build:
     desc: Build the documentation website into site/ — warnings (a broken link or anchor) are errors

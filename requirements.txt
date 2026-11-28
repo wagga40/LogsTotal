@@ -60,7 +60,7 @@ regex==2026.11.25
 requests==2.34.2
 s3transfer==0.19.3
 six==1.17.0
-sqlalchemy[asyncio]==2.0.58
+sqlalchemy[asyncio]==2.1.9
 starlette==1.10.0
 typing-extensions==4.16.0
 typing-inspection==0.4.5

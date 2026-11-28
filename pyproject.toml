@@ -25,7 +25,9 @@ classifiers = [
 dependencies = [
     "fastapi>=0.115.5",
     "uvicorn[standard]>=0.32.1",
-    "sqlalchemy[asyncio]>=2.0.36,<2.1",
+    # 2.1 changed the driver a bare postgresql:// URL selects (psycopg2 → psycopg 3); every
+    # sync URL here names +psycopg2 explicitly — see app/config.py::pin_postgres_driver.
+    "sqlalchemy[asyncio]>=2.1.9,<2.2",
     "aiosqlite>=0.20.0",
     "asyncpg>=0.30.0",
     "psycopg2-binary>=2.9.10",

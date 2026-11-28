@@ -128,7 +128,9 @@ if [ -n "$DATABASE_URL" ]; then
             ;;
     esac
     if [ -z "$SYNC_DATABASE_URL" ]; then
-        SYNC_DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed -e 's/+asyncpg//' -e 's/+aiosqlite//')"
+        # +psycopg2, never a bare postgresql://: SQLAlchemy 2.1 maps the bare scheme to
+        # psycopg 3, which the image does not install (app/config.py::pin_postgres_driver).
+        SYNC_DATABASE_URL="$(printf '%s' "$DATABASE_URL" | sed -e 's/+asyncpg/+psycopg2/' -e 's/+aiosqlite//')"
         export SYNC_DATABASE_URL
     fi
 elif [ "$pg_mode" = true ]; then
