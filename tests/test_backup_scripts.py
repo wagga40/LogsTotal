@@ -401,7 +401,7 @@ def test_postgres_backup_keeps_the_database_url_password_off_argv(tmp_path: Path
 
 def test_postgres_backup_through_the_container_keeps_the_password_off_argv(tmp_path: Path):
     """`docker compose exec` gets `-e PGPASSWORD` by name; the value rides in its environment."""
-    (tmp_path / "docker-compose.yml").write_text("services:\n  postgres:\n    image: postgres:16-alpine\n")
+    (tmp_path / "docker-compose.yml").write_text("services:\n  postgres:\n    image: postgres:19-alpine\n")
     shim = tmp_path / "shim"
     docker = _recording_stub(
         shim,

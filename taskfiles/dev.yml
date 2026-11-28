@@ -331,7 +331,7 @@ tasks:
         for f in scripts/*.sh scripts/lib/*.sh; do
           shellcheck -x "$f"
         done
-        shellcheck -x docker-entrypoint.sh garage-entrypoint.sh logstotal
+        shellcheck -x docker-entrypoint.sh garage-entrypoint.sh postgres-migrate.sh logstotal
         shellcheck -x -e SC1001 docker-caddy-entrypoint.sh
 
   check:
@@ -376,7 +376,7 @@ tasks:
       A compile-only test cannot catch that — both dialects render identical SQL text and the
       difference is the bind parameter's type. The statements have to actually execute.
 
-      Starts postgres:16-alpine on a spare port, runs tests/test_postgres_sql_compat.py
+      Starts postgres:19-alpine on a spare port, runs tests/test_postgres_sql_compat.py
       against it, also exercises backup/restore in a separate disposable database,
       and removes the containers afterwards whatever happens. Point at your own server with
       POSTGRES_TEST_URL and the container is skipped.
@@ -398,7 +398,7 @@ tasks:
         # pgtest is the container's superuser: a fresh password each run, and loopback only —
         # a bare -p publishes on every interface, past ufw.
         PGPW="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-        POSTGRES_PASSWORD="$PGPW" docker run -d --rm --name "$NAME" -e POSTGRES_PASSWORD -e POSTGRES_USER=pgtest -e POSTGRES_DB=pgtest -p "127.0.0.1:${PORT}:5432" postgres:16-alpine >/dev/null
+        POSTGRES_PASSWORD="$PGPW" docker run -d --rm --name "$NAME" -e POSTGRES_PASSWORD -e POSTGRES_USER=pgtest -e POSTGRES_DB=pgtest -p "127.0.0.1:${PORT}:5432" postgres:19-alpine >/dev/null
         echo -n "Waiting for PostgreSQL on :${PORT}"
         for _ in $(seq 1 40); do
           if docker exec "$NAME" pg_isready -h 127.0.0.1 -U pgtest -q 2>/dev/null; then echo " ready"; break; fi

@@ -20,7 +20,7 @@ def test_postgres_backup_restores_rows_into_empty_database(tmp_path):
     docker = shutil.which("docker")
     assert docker
     (tmp_path / "docker-compose.yml").write_text(
-        "services:\n  postgres:\n    image: postgres:16-alpine\n    environment:\n      POSTGRES_PASSWORD: test-only\n      POSTGRES_USER: logstotal\n      POSTGRES_DB: logstotal\n"
+        "services:\n  postgres:\n    image: postgres:19-alpine\n    environment:\n      POSTGRES_PASSWORD: test-only\n      POSTGRES_USER: logstotal\n      POSTGRES_DB: logstotal\n"
     )
     env = {key: value for key, value in os.environ.items() if not key.startswith(("POSTGRES", "DATABASE", "SYNC_DATABASE", "COMPOSE", "BACKUP", "DEPLOY", "FORCE"))}
     env.update(POSTGRES_PASSWORD="test-only", POSTGRES_USER="logstotal", POSTGRES_DB="logstotal", POSTGRES_HOST="postgres")

@@ -94,7 +94,7 @@ jobs:
           docker rm -f "$name" >/dev/null 2>&1 || true
           docker run -d --name "$name" -p 127.0.0.1::5432 \
             -e POSTGRES_USER=pgtest -e POSTGRES_PASSWORD=pgtest -e POSTGRES_DB=pgtest \
-            postgres:16-alpine >/dev/null
+            postgres:19-alpine >/dev/null
           for _ in $(seq 1 40); do
             docker exec "$name" pg_isready -U pgtest -q 2>/dev/null && break
             sleep 1

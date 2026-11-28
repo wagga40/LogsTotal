@@ -558,7 +558,8 @@ tasks:
     desc: "DESTRUCTIVE — stop containers, remove volumes, images, and networks for LogsTotal"
     summary: |
       Stops and removes all LogsTotal containers, deletes named volumes (redis_data,
-      postgres_data, etc.), removes images built/used by this project, and removes
+      postgres19_data, the pre-1.4 postgres_data, etc.), removes images built/used by this
+      project, and removes
       the project network. Use when you want a full Docker reset.
       Next ./logstotal docker:up will rebuild and recreate everything.
     prompt: "Remove all LogsTotal containers, volumes, images, and networks?"

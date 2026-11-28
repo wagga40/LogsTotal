@@ -169,6 +169,42 @@ On a single host, the upgrade stops `web` and `worker` before migrating, because
 <!-- destructive-migrations -->
 Five migrations rename or remove something, so older code cannot run on the database they leave: `a3c7e2f91d04` renames `workerpolicy.pickup_weight` to `max_concurrent_jobs`, `c9d4e1f7a2b3` drops the threat-landscape tables, `e23ff92ada52` drops the `watchlist_event` table, `c8f24a1b6d90` drops the `user.theme` column, and `f3a91c2e7d40` moves each finding's rule text into a shared `rule_text` table and drops `finding.rule_content`. Rolling back across any of them needs the pre-upgrade database backup, which is one reason `./logstotal upgrade` always takes one. The last one's own downgrade is lossless (`pdm run -- alembic downgrade e064602640a4` writes every finding's rule text back, decoding compressed rows), but it runs from the new code, before the old code is installed.
 
+## PostgreSQL 19
+
+Releases before 1.4 bundled PostgreSQL 16, in the `postgres_data` volume. The bundled
+server is now PostgreSQL 19, in a new volume, `postgres19_data`. A PostgreSQL data
+directory cannot be opened by a newer major version, so the move is a dump and a restore,
+and it happens by itself the first time the new release starts:
+
+1. The `postgres-migrate` service starts first, in the PostgreSQL 16 image. It dumps the
+   database from the old cluster — through the running PostgreSQL 16 server if there still
+   is one, otherwise through a private server it starts on the old volume — and checks that
+   the dump is complete.
+2. The PostgreSQL 19 server initialises `postgres19_data` and loads that dump, in one
+   transaction, before it accepts connections. The web service waits for it.
+
+Nothing is written to `postgres_data`, so it stays a working PostgreSQL 16 cluster: it is
+what [`./logstotal upgrade:rollback`](#rollback) returns to. Every later start finds the new
+cluster in place and skips the move. It only concerns the bundled server
+(`COMPOSE_PROFILES=postgres`); an external PostgreSQL is yours to upgrade. CI tests the
+app against PostgreSQL 19.
+
+- **Let `./logstotal upgrade` do it.** It stops `web` and `worker` first, so nothing writes
+  to PostgreSQL 16 while it is being dumped. If the old server is still answering when the
+  move starts and other clients are connected to it, the move refuses rather than dump a
+  database that is still changing.
+- **It takes as long as a dump and a restore of your database.** The new server is not
+  healthy until the restore finishes, and the app waits for it.
+- **If the restore fails, PostgreSQL 19 refuses to start** rather than serve an empty
+  database, with a message saying so. `docker compose up -d` discards the incomplete
+  cluster and moves the data again; the PostgreSQL 16 volume is unchanged throughout.
+- **The old volume stays until you remove it.** `./logstotal doctor` mentions it. Once you
+  will not roll back past this release, delete it:
+
+  ```bash
+  docker volume rm logstotal_postgres_data   # the prefix is your compose project name
+  ```
+
 ## Rollback
 
 **Rolling back the code restores a local snapshot. Rolling back the database means restoring a backup.** They are separate steps, and most rollbacks need only the first.

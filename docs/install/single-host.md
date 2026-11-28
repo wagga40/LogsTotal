@@ -116,7 +116,9 @@ POSTGRES_PASSWORD=set-a-strong-password
 
 Then run `./logstotal docker:up`. Both lines are required; with only the password, the stack
 stays on SQLite and warns. `POSTGRES_USER` and `POSTGRES_DB` are optional and default to
-`logstotal`. The data lives in the `postgres_data` Docker volume. See
+`logstotal`. The bundled server is PostgreSQL 19, and its data lives in the `postgres19_data`
+Docker volume (releases before 1.4 used PostgreSQL 16 in `postgres_data`; the first start
+of a newer release moves it — see [PostgreSQL 19](../runbooks/upgrading.md#postgresql-19)). See
 [Docker Compose profiles](../configuration.md#docker-compose-profiles) for the password
 characters to avoid.
 

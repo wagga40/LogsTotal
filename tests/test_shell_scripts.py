@@ -19,7 +19,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 
 # Repo-root entrypoints run in Docker (POSIX /bin/sh); they are covered by the
 # same syntax gate as the extracted scripts/ helpers.
-_ROOT_ENTRYPOINTS = (PROJECT_ROOT / "docker-entrypoint.sh", PROJECT_ROOT / "docker-caddy-entrypoint.sh", PROJECT_ROOT / "garage-entrypoint.sh")
+_ROOT_ENTRYPOINTS = (
+    PROJECT_ROOT / "docker-entrypoint.sh",
+    PROJECT_ROOT / "docker-caddy-entrypoint.sh",
+    PROJECT_ROOT / "garage-entrypoint.sh",
+    PROJECT_ROOT / "postgres-migrate.sh",
+)
 
 SHELL_SCRIPTS = sorted((*PROJECT_ROOT.glob("scripts/*.sh"), *PROJECT_ROOT.glob("scripts/lib/*.sh"), *_ROOT_ENTRYPOINTS))
 

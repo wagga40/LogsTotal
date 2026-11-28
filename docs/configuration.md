@@ -44,7 +44,7 @@ Paste the basic-auth hash into `BASIC_AUTH_HASH` with **single quotes**, so Dock
 
 | Profile | Adds | Used by |
 |---------|------|---------|
-| `postgres` | Bundled PostgreSQL (Docker volume `postgres_data`) | [With PostgreSQL](install/single-host.md#with-postgresql), fleets |
+| `postgres` | Bundled PostgreSQL 19 (Docker volume `postgres19_data`) | [With PostgreSQL](install/single-host.md#with-postgresql), fleets |
 | `s3` | Bundled Garage S3-compatible object storage | Fleets |
 | `proxy` | Caddy with automatic TLS (+ optional basic auth) | [HTTPS with Caddy](install/https.md) |
 | `workers` | socat relays that publish Redis, PostgreSQL and Garage on the `REDIS_EXPOSE`, `POSTGRES_EXPOSE` and `GARAGE_EXPOSE` addresses, for remote workers. Each defaults to loopback (`127.0.0.1`) | [Fleet installation](install/fleet.md) |

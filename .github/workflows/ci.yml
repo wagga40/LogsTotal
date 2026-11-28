@@ -81,7 +81,7 @@ jobs:
       # and Huey's queue at MemoryStorage, so nothing in the suite reaches a broker. A real
       # Redis is exercised by the deploy-smoke job below, against the real stack.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:19-alpine
         env:
           POSTGRES_USER: pgtest
           POSTGRES_PASSWORD: pgtest

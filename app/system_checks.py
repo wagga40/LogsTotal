@@ -749,6 +749,42 @@ def _docker_socket_present() -> bool:
     return Path("/var/run/docker.sock").exists()
 
 
+def _docker_volume_names() -> list[str] | None:
+    """Every Docker volume name on this host, or None when the CLI cannot answer. A seam."""
+    try:
+        done = subprocess.run(["docker", "volume", "ls", "--format", "{{.Name}}"], capture_output=True, text=True, timeout=10, check=False)
+    except Exception:
+        return None
+    return done.stdout.split() if done.returncode == 0 else None
+
+
+def check_postgres_legacy_volume(*, in_container: bool = False) -> CheckResult | None:
+    """INFO: the PostgreSQL 16 volume the bundled database moved off is still on disk.
+
+    The move to PostgreSQL 19 (postgres-migrate.sh) copies the data out of `postgres_data`
+    and never deletes it, because that volume is what `upgrade:rollback` returns to. Once
+    the operator is sure they will not roll back, it is a whole second copy of the database
+    taking up disk — and nothing else would ever mention it. Host only: the web container
+    has no Docker CLI, and the answer is about this machine's volumes.
+    """
+    if in_container or _running_in_container():
+        return None
+    names = _docker_volume_names()
+    if not names:
+        return None
+    current = {name.removesuffix("_postgres19_data") for name in names if name.endswith("_postgres19_data")}
+    legacy = sorted(name for name in names if name.endswith("_postgres_data") and name.removesuffix("_postgres_data") in current)
+    if not legacy:
+        return None
+    return CheckResult(
+        "Database",
+        INFO,
+        "PostgreSQL 16 volume",
+        f"{', '.join(legacy)} still holds the PostgreSQL 16 cluster the database moved off — kept so upgrade:rollback can return to it",
+        f"once you will not roll back past the move to PostgreSQL 19: docker volume rm {' '.join(legacy)} — {docs_url('runbooks/upgrading.md', 'postgresql-19')}",
+    )
+
+
 def check_docker_tools(project_root: Path = PROJECT_ROOT, *, in_container: bool = False) -> list[CheckResult]:
     """Can the workflows that need a container actually run one?
 
@@ -1201,6 +1237,9 @@ def run_all() -> list[CheckResult]:
     results.extend(check_disk())
     results.extend(check_tool_binaries())
     results.extend(check_docker_tools())
+    legacy_pg = check_postgres_legacy_volume()
+    if legacy_pg is not None:
+        results.append(legacy_pg)
     return results
 
 

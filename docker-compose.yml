@@ -31,21 +31,71 @@ services:
         max-size: "10m"
         max-file: "3"
 
+  # PostgreSQL 19. Its data lives in postgres19_data, mounted where the 18+ images expect it
+  # (/var/lib/postgresql; PGDATA is /var/lib/postgresql/19/docker). postgres_data, the
+  # PostgreSQL 16 cluster earlier releases ran, is never written by this service: it is
+  # what an upgrade:rollback returns to, and what postgres-migrate reads once.
   postgres:
-    image: ${REGISTRY_PREFIX:-}postgres:16-alpine
+    image: ${REGISTRY_PREFIX:-}postgres:19-alpine
     restart: unless-stopped
     profiles: [postgres]
     environment:
       POSTGRES_USER: ${POSTGRES_USER:-logstotal}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
       POSTGRES_DB: ${POSTGRES_DB:-logstotal}
+    # A restore that failed leaves an initialised data directory with no data in it, and
+    # the image would serve that as an empty database on its next start — the app would
+    # then migrate an empty schema into it and look like every job had vanished. While the
+    # restore-pending marker says the restore did not finish, refuse to start instead; the
+    # next `docker compose up -d` re-runs postgres-migrate, which discards and retries.
+    entrypoint:
+      - /bin/sh
+      - -c
+      - >-
+        if [ -e /var/lib/postgresql/.logstotal-restore-pending ] && [ -s "$$PGDATA/PG_VERSION" ]; then
+        echo "postgres: the move from PostgreSQL 16 did not finish; run 'docker compose up -d' to retry it (the PostgreSQL 16 volume is unchanged)" >&2;
+        exit 1;
+        fi;
+        exec docker-entrypoint.sh "$$@"
+      - --
+    command: ["postgres"]
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      - postgres19_data:/var/lib/postgresql
+      - postgres_migration:/docker-entrypoint-initdb.d:ro
+    depends_on:
+      postgres-migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-logstotal} -d ${POSTGRES_DB:-logstotal}"]
+      # -h 127.0.0.1: the image's first-start server (initdb, then the restore) listens on
+      # its socket only, so a socket check would report healthy while a restore still runs.
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U ${POSTGRES_USER:-logstotal} -d ${POSTGRES_DB:-logstotal}"]
       interval: 5s
       timeout: 3s
       retries: 5
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+  # One-shot, before `postgres` may start: moves a PostgreSQL 16 cluster (postgres_data) onto
+  # PostgreSQL 19 the first time this release starts, and does nothing on every start
+  # after. See postgres-migrate.sh. Runs in the 16 image because only a 16 server can read
+  # a 16 data directory.
+  postgres-migrate:
+    image: ${REGISTRY_PREFIX:-}postgres:16-alpine
+    restart: "no"
+    profiles: [postgres]
+    entrypoint: ["/bin/sh", "/postgres-migrate.sh"]
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-logstotal}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-}
+      POSTGRES_DB: ${POSTGRES_DB:-logstotal}
+    volumes:
+      - ./postgres-migrate.sh:/postgres-migrate.sh:ro
+      - postgres_data:/old
+      - postgres19_data:/new
+      - postgres_migration:/out
     logging:
       driver: "json-file"
       options:
@@ -268,7 +318,12 @@ services:
 
 volumes:
   redis_data:
+  # The PostgreSQL 16 cluster from before 1.4 — read once by postgres-migrate, then kept
+  # for upgrade:rollback. `docker volume rm <project>_postgres_data` once you no longer
+  # need to roll back.
   postgres_data:
+  postgres19_data:
+  postgres_migration:
   caddy_data:
   caddy_config:
   garage_meta:
