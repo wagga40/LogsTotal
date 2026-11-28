@@ -23,7 +23,7 @@ Each tool's upstream licence text is committed alongside its binaries in
 | **ChopChopGo** | 1.1.0 | GPL-3.0-only | <https://github.com/M00NLIG7/ChopChopGo> |
 | **RSigma** | 0.28.0 | MIT | <https://github.com/timescale/rsigma/tree/v0.28.0> |
 | **Zircolite** | 4.8.0, image `wagga40/zircolite` | LGPL-3.0-only | <https://github.com/wagga40/Zircolite> |
-| **Tailwind CSS CLI** (standalone, build-time only) | 3.4.17 | MIT | <https://github.com/tailwindlabs/tailwindcss> |
+| **Tailwind CSS CLI** (standalone, build-time only) | 3.4.19 | MIT | <https://github.com/tailwindlabs/tailwindcss> |
 
 **Binaries under GPL-3.0 and AGPL-3.0 carry a corresponding-source obligation.** The
 binaries in `tools/chainsaw/`, `tools/hayabusa/` and `tools/chopchopgo/` are unmodified
@@ -104,13 +104,13 @@ declared in `Taskfile.yml` and refreshed with `./logstotal vendor:update`.
 
 | Component | Version | Licence |
 |---|---|---|
-| htmx | 2.0.3 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx>) |
-| htmx-ext-alpine-morph | 2.0.0 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx-extensions>) |
-| Alpine.js | 3.15.8 | MIT (<https://github.com/alpinejs/alpine>) |
-| Alpine Morph plugin | 3.15.8 | MIT (<https://github.com/alpinejs/alpine>) |
-| Tailwind CSS | 3.4.17 | MIT (<https://github.com/tailwindlabs/tailwindcss>) |
-| Prism.js (+ json/sql/yaml, Tomorrow theme) | 1.29.0 | MIT (<https://github.com/PrismJS/prism>) |
-| Mermaid | 11.16.0 | MIT (<https://github.com/mermaid-js/mermaid>) |
+| htmx | 2.0.11 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx>) |
+| htmx-ext-alpine-morph | 2.0.2 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx-extensions>) |
+| Alpine.js | 3.17.4 | MIT (<https://github.com/alpinejs/alpine>) |
+| Alpine Morph plugin | 3.17.4 | MIT (<https://github.com/alpinejs/alpine>) |
+| Tailwind CSS (Play CDN build, dev mode only) | 3.4.17 | MIT (<https://github.com/tailwindlabs/tailwindcss>) |
+| Prism.js (+ json/sql/yaml, Tomorrow theme) | 1.30.0 | MIT (<https://github.com/PrismJS/prism>) |
+| Mermaid | 11.17.2 | MIT (<https://github.com/mermaid-js/mermaid>) |
 | Sigma.js | 3.0.3 | MIT (<https://github.com/jacomyal/sigma.js>) |
 | graphology | 0.26.0 | MIT (<https://github.com/graphology/graphology>) |
 | graphology-library | 0.8.0 | MIT (<https://github.com/graphology/graphology>) |

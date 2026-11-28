@@ -27,7 +27,7 @@ at the top of `Taskfile.yml`, which is also where the shared preconditions and t
 | `alpine.min.js`, `alpine-morph.min.js` | every page |
 | `tailwind.js` / `tailwind-built.css` | dev / production CSS (see above) |
 | `prism*.js`, `prism-tomorrow.min.css` | syntax highlighting |
-| `mermaid.min.js` | `/docs` diagrams |
+| `mermaid.min.js` | `/docs` diagrams, and diagrams in analyst prose (comments, notes, AI analyses) — fetched lazily, only on a page that has one |
 | `graphology.umd.min.js`, `graphology-library.min.js`, `sigma.min.js` | the relationship graph, loaded only on `/intel/entities/…` and `/intel/cases/…` |
 
 **Our own scripts must be listed before `alpine.min.js` in `base.html`.** Alpine evaluates

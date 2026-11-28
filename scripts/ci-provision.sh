@@ -34,9 +34,10 @@ SQLITE_VERSION="3460100"
 SQLITE_YEAR="2024"
 SEVENZIP_VERSION="2301"
 JQ_VERSION="1.7.1"
-# Kept in step with Taskfile.yml's TAILWIND_VERSION; a mismatch only changes the CSS
-# build, never correctness, so this is a soft duplicate rather than a shared source.
-TAILWIND_VERSION="3.4.17"
+# Kept in step with Taskfile.yml's TAILWIND_VERSION and the Dockerfile ARG — this one
+# compiles the CSS shipped in every release archive. tests/test_version_pins.py holds the
+# three copies together (they had drifted: 3.4.17 here, 3.4.19 elsewhere).
+TAILWIND_VERSION="3.4.19"
 
 fail() { echo "::error::$1" >&2; exit 1; }
 

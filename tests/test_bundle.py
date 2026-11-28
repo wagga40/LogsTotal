@@ -112,9 +112,11 @@ def test_the_image_list_is_read_from_the_files_that_declare_it():
     ).stdout.split()
 
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    for image in re.findall(r"^\s+image: ([a-z0-9./:-]+)$", compose, re.M):
-        if image.startswith("logstotal"):
-            continue
+    # Every third-party image carries the ${REGISTRY_PREFIX:-} mirror prefix. A pattern
+    # without it matched NO image at all, so this loop asserted nothing for months.
+    third_party = [image for image in re.findall(r"^\s+image: (?:\$\{REGISTRY_PREFIX:-\})?([a-z0-9./:@-]+)$", compose, re.M) if not image.startswith("logstotal")]
+    assert len(third_party) >= 4, f"the compose image pattern stopped matching: {third_party}"
+    for image in third_party:
         assert image in listed, f"{image} is in compose and would not be bundled"
 
 
