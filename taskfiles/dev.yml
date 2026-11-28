@@ -230,9 +230,9 @@ tasks:
         # no auth at all — protected-mode refuses non-loopback commands in that state,
         # but there is no reason to be listening for them.
         if [ -n "${REDIS_PASSWORD:-}" ]; then
-          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:7-alpine redis-server --requirepass "$REDIS_PASSWORD"
+          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:8-alpine redis-server --requirepass "$REDIS_PASSWORD"
         else
-          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:7-alpine
+          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:8-alpine
         fi
 
   release:prepare:

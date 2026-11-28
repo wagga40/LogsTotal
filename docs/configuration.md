@@ -32,7 +32,7 @@ To generate a single value instead, run one of these anywhere `python3` or Docke
 | `POSTGRES_PASSWORD`, `REDIS_PASSWORD`, `S3_SECRET_KEY`, `GARAGE_RPC_SECRET` | 64 hex chars | `python3 -c "import secrets; print(secrets.token_hex(32))"` |
 | `S3_ACCESS_KEY` | `GK` + 24 hex chars | `python3 -c "import secrets; print(f'GK{secrets.token_hex(12)}')"` |
 | `GARAGE_ADMIN_TOKEN` | opaque bearer token, not hex | `python3 -c "import secrets; print(secrets.token_urlsafe(24))"` |
-| `BASIC_AUTH_HASH` | bcrypt, with `COMPOSE_PROFILES=proxy` | `docker run --rm caddy:2-alpine caddy hash-password --plaintext 'yourpassword'` — or let `./logstotal proxy:enable` / `./logstotal deploy` do it (they pass the password over stdin, keeping it out of `ps`) |
+| `BASIC_AUTH_HASH` | bcrypt, with `COMPOSE_PROFILES=proxy` | `docker run --rm caddy:2-alpine caddy hash-password --algorithm bcrypt --plaintext 'yourpassword'` — or let `./logstotal proxy:enable` / `./logstotal deploy` do it (they pass the password over stdin, keeping it out of `ps`) |
 
 Paste the basic-auth hash into `BASIC_AUTH_HASH` with **single quotes**, so Docker Compose does not treat `$` as variable expansion.
 

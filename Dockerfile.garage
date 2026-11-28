@@ -1,5 +1,9 @@
-FROM alpine:3.21
-COPY --from=dxflrs/garage:v2.2.0 /garage /garage
+FROM alpine:3.24
+COPY --from=dxflrs/garage:v2.6.0 /garage /garage
+# Read by garage-entrypoint.sh, which keeps one copy of the metadata as the last release
+# before 2.5 left it: 2.5 migrated the metadata format one way, and that copy is what
+# `./logstotal upgrade:rollback` restores. Keep in step with the COPY line above.
+ENV LOGSTOTAL_GARAGE_VERSION=v2.6.0
 COPY garage-entrypoint.sh /garage-entrypoint.sh
 RUN chmod +x /garage-entrypoint.sh
 ENTRYPOINT ["/bin/sh", "/garage-entrypoint.sh"]

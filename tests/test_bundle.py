@@ -598,5 +598,5 @@ def test_bundle_builds_legacy_archive_without_runtime_inventory_helper(tmp_path,
     extracted = subprocess.run(["7z", "x", "-so", str(bundle), "bundle-manifest.json"], capture_output=True, text=True, check=True)
     manifest = json.loads(extracted.stdout)
     assert ("example/legacy:1" in manifest["images"]) is container_tool
-    assert "redis:7-alpine" in manifest["images"]
+    assert "redis:8-alpine" in manifest["images"]
     assert (shim / "build-contexts").read_text().splitlines() == ["version: 1.2.3"] * 2

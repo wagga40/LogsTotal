@@ -4,7 +4,7 @@ services:
     # Docker Hub, but a mirror of its own, sets REGISTRY_PREFIX=registry.internal in .env
     # and every pull goes there instead. Empty by default: pulls go to Docker Hub.
     # The other answer for a closed network is `task bundle`, which needs no registry.
-    image: ${REGISTRY_PREFIX:-}redis:7-alpine
+    image: ${REGISTRY_PREFIX:-}redis:8-alpine
     restart: unless-stopped
     environment:
       REDIS_PASSWORD: ${REDIS_PASSWORD:-}
@@ -149,7 +149,7 @@ services:
     command: huey_consumer app.workers.huey_app.huey -w ${HUEY_WORKERS:-2} -k thread
 
   redis-expose:
-    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.0.3
+    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.1.1
     restart: unless-stopped
     profiles: [workers]
     command: TCP-LISTEN:6379,fork,reuseaddr TCP-CONNECT:redis:6379
@@ -165,7 +165,7 @@ services:
         max-file: "3"
 
   postgres-expose:
-    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.0.3
+    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.1.1
     restart: unless-stopped
     profiles: [workers]
     command: TCP-LISTEN:5432,fork,reuseaddr TCP-CONNECT:postgres:5432
@@ -216,7 +216,7 @@ services:
         max-file: "3"
 
   garage-expose:
-    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.0.3
+    image: ${REGISTRY_PREFIX:-}alpine/socat:1.8.1.1
     restart: unless-stopped
     profiles: [workers]
     command: TCP-LISTEN:3900,fork,reuseaddr TCP-CONNECT:garage:3900

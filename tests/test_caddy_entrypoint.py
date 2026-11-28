@@ -122,9 +122,11 @@ def test_basic_auth_composes_with_the_tls_mode(mode, first_line):
         BASIC_AUTH_HASH="$2a$14$abc",
     )
     assert rendered.splitlines()[0] == first_line
-    assert "    basicauth * {\n        ops $2a$14$abc\n    }" in rendered
-    # basicauth must precede the upstream, or unauthenticated requests are proxied.
-    assert rendered.index("basicauth") < rendered.index("reverse_proxy")
+    assert "    basic_auth * {\n        ops $2a$14$abc\n    }" in rendered
+    # basic_auth must precede the upstream, or unauthenticated requests are proxied.
+    assert rendered.index("basic_auth") < rendered.index("reverse_proxy")
+    # The deprecated alias, never: Caddy 2.x may drop it, and the image tag floats.
+    assert "basicauth" not in rendered
 
 
 # ── refusals: every one of these is a crash loop if it renders instead ───────

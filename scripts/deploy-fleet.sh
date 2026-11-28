@@ -263,7 +263,7 @@ write_deploy_env() {
     # A bcrypt hash is literal $ sigils; single quotes keep the shell out of it.
     # shellcheck disable=SC2016
     _knob DEPLOY_BASIC_AUTH_HASH '$2a$14$...' \
-      "The hash itself, if you would rather produce it: docker run --rm -i caddy:2-alpine caddy hash-password. Set, it skips the hashing step and no plaintext is stored anywhere."
+      "The hash itself, if you would rather produce it: docker run --rm -i caddy:2-alpine caddy hash-password --algorithm bcrypt. Set, it skips the hashing step and no plaintext is stored anywhere."
 
     _knob_section "Sizing and retention"
     _knob DEPLOY_HUEY_WORKERS 4 "Analysis workers per host. ./logstotal recommend-scaling sizes it from CPU and RAM."
@@ -402,7 +402,10 @@ if [ -n "${DEPLOY_BASIC_AUTH_PASSWORD:-}" ] && [ -z "${DEPLOY_BASIC_AUTH_HASH:-}
     # reads like "Docker is not running there".
     # Caddy strips the newline before hashing: the result verifies against the password
     # itself, not the password plus a newline (checked with bcrypt.checkpw).
-    HASHED=$(printf '%s\n' "$DEPLOY_BASIC_AUTH_PASSWORD" | host_exec "$CP" "docker run --rm -i caddy:2-alpine caddy hash-password" 2>/dev/null | tr -d '\r' | tail -1 | tr -d '[:space:]' || true)
+    # --algorithm bcrypt, explicitly: the check below accepts only a bcrypt hash, and Caddy's
+    # own help already recommends argon2id — the day its default follows, an unpinned call
+    # would turn every deploy with basic auth into "not bcrypt. Nothing was deployed."
+    HASHED=$(printf '%s\n' "$DEPLOY_BASIC_AUTH_PASSWORD" | host_exec "$CP" "docker run --rm -i caddy:2-alpine caddy hash-password --algorithm bcrypt" 2>/dev/null | tr -d '\r' | tail -1 | tr -d '[:space:]' || true)
     # A failure here is FATAL. Carrying on without it would deploy a control plane the
     # operator believes is behind HTTP auth and which is not — the deploy would report
     # success, the smoke check would pass, and the only sign would be one warning in a
@@ -412,10 +415,10 @@ if [ -n "${DEPLOY_BASIC_AUTH_PASSWORD:-}" ] && [ -z "${DEPLOY_BASIC_AUTH_HASH:-}
     case "$HASHED" in
       '$2a$'* | '$2b$'* | '$2y$'*) ;;
       '')
-        die "Could not hash the basic-auth password on ${CP}. Nothing was deployed.\nSee the reason by running it there by hand:  ssh ${CP} \"printf '%s\\n' <password> | docker run --rm -i caddy:2-alpine caddy hash-password\"\nOr supply DEPLOY_BASIC_AUTH_HASH yourself." ;;
+        die "Could not hash the basic-auth password on ${CP}. Nothing was deployed.\nSee the reason by running it there by hand:  ssh ${CP} \"printf '%s\\n' <password> | docker run --rm -i caddy:2-alpine caddy hash-password --algorithm bcrypt\"\nOr supply DEPLOY_BASIC_AUTH_HASH yourself." ;;
       *)
         # Do not print $HASHED: whatever it is, it came from a command fed the password.
-        die "The basic-auth hash returned by ${CP} is not bcrypt. Nothing was deployed. Run it by hand to see what happened:  docker run --rm -i caddy:2-alpine caddy hash-password" ;;
+        die "The basic-auth hash returned by ${CP} is not bcrypt. Nothing was deployed. Run it by hand to see what happened:  docker run --rm -i caddy:2-alpine caddy hash-password --algorithm bcrypt" ;;
     esac
     DEPLOY_BASIC_AUTH_HASH="$HASHED"
     info "hashed (the plaintext is never written anywhere)"

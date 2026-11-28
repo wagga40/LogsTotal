@@ -370,7 +370,7 @@ def _basic_auth_findings(g) -> list[Finding]:
                 WARN,
                 ("DEPLOY_BASIC_AUTH_HASH",),
                 "DEPLOY_BASIC_AUTH_HASH is still the template placeholder — it looks like bcrypt, so nothing rejects it, and no password will ever match it.",
-                "Generate one: docker run --rm -i caddy:2-alpine caddy hash-password",
+                "Generate one: docker run --rm -i caddy:2-alpine caddy hash-password --algorithm bcrypt",
             )
         )
     if password and bhash:

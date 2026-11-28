@@ -138,7 +138,7 @@ _GUARD_EXEMPT = {
     # tests/test_scripts_robustness.py::test_setup_tasks_guard_missing_pdm extracts
     # from the raw task body — an anchored precondition would be invisible to it.
     ("setup", "pdm"),
-    # The string is the CONTAINER's command (`redis:7-alpine redis-server
+    # The string is the CONTAINER's command (`redis:8-alpine redis-server
     # --requirepass ...`), not a host binary. Its real requirement is docker,
     # which it does declare.
     ("redis:docker", "redis-server"),

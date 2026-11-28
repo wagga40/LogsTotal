@@ -115,6 +115,26 @@ declared in `Taskfile.yml` and refreshed with `./logstotal vendor:update`.
 | graphology | 0.26.0 | MIT (<https://github.com/graphology/graphology>) |
 | graphology-library | 0.8.0 | MIT (<https://github.com/graphology/graphology>) |
 
+## Service images
+
+`docker-compose.yml` pulls these at install time; this repository does not contain them.
+An offline bundle (`./logstotal bundle`) **does** redistribute them — saved with `docker
+save` — and the self-built `logstotal-garage` image carries the Garage binary on an Alpine
+base, so anyone handing a bundle on inherits these terms too.
+
+| Image | Version | Licence | Upstream (corresponding source) |
+|---|---|---|---|
+| Garage (built into the S3 image by `Dockerfile.garage`) | 2.6.0 | AGPL-3.0-only | <https://git.deuxfleurs.fr/Deuxfleurs/garage/src/tag/v2.6.0> |
+| Redis (`redis`) | 8.x | RSALv2, SSPLv1 or AGPL-3.0, at the recipient's choice | <https://github.com/redis/redis> |
+| PostgreSQL (`postgres`) | see `docker-compose.yml` | PostgreSQL Licence | <https://www.postgresql.org/ftp/source/> |
+| Caddy (`caddy`) | 2.x | Apache-2.0 | <https://github.com/caddyserver/caddy> |
+| socat (`alpine/socat`) | 1.8.1.1 | GPL-2.0-only | <http://www.dest-unreach.org/socat/> |
+| Alpine Linux base | 3.24 | per package (`apk info -L`) | <https://gitlab.alpinelinux.org/alpine/aports> |
+
+They run unmodified, as separate processes reached over the network; none is linked into
+LogsTotal's code. Redis 7.4, which the stack ran before 8.x, was RSALv2/SSPLv1 only — 8.x
+adds AGPL-3.0, an OSI-approved option.
+
 ## Python dependencies
 
 Installed from PyPI at build time, not vendored — see `requirements.txt` (generated) and
