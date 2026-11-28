@@ -1275,6 +1275,9 @@ tasks:
            database backup first.
         2. rsync the snapshot back with --delete, so files the newer release ADDED are
            removed. .env, data/, uploads/ and backups/ are excluded and never touched.
+        2b. Refuse, unless ROLLBACK_DATA=previous, when a bundled service's data was changed
+           one way since the snapshot (PostgreSQL 16 → 19, Redis 7 → 8, Garage → 2.5+) —
+           then set it back: scripts/lib/service_data.sh.
         3. docker compose build && up -d — no code is bind-mounted, so restoring the tree
            alone would leave the containers running the newer image.
         4. health:remote against ${HEALTH_URL} (default http://localhost:8000).
@@ -1287,6 +1290,7 @@ tasks:
       FLEET_FROM: '{{.FLEET_FROM}}'
       FLEET_REFRESH: '{{.FLEET_REFRESH}}'
       HEALTH_URL: '{{.HEALTH_URL | default "http://localhost:8000"}}'
+      ROLLBACK_DATA: '{{.ROLLBACK_DATA}}'
     cmds:
       - bash scripts/upgrade.sh rollback {{.CLI_ARGS}}
 

@@ -111,6 +111,9 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/service_data.sh
+. "$SCRIPT_DIR/lib/service_data.sh"
 
 # ── Load deploy.env defaults (env vars from caller take precedence) ─────────
 
@@ -1018,8 +1021,47 @@ EOS
        See docs/runbooks/upgrading.md#when-rollback-is-unsafe."
 }
 
+# rollback_service_data_guard — the fleet twin of upgrade.sh's service-data check
+# (scripts/lib/service_data.sh). Run on the control plane, which runs Redis, PostgreSQL and
+# Garage, before any host is stopped or touched. Sets ROLLBACK_CROSSINGS for do_rollback,
+# which sets the data back on the control plane before restoring its files.
+ROLLBACK_CROSSINGS=""
+rollback_service_data_guard() {
+  local cp="${HOSTS[0]}" out
+  targeted "$cp" || return 0
+  if truthy "$DEPLOY_DRY_RUN"; then
+    info "dry run: would check ${cp}'s bundled service data against the snapshot"
+    return 0
+  fi
+  step "${cp} (control-plane): checking bundled service data against the snapshot"
+  out=$(remote "$cp" bash -s <<EOS
+set -euo pipefail
+cd "${DEPLOY_REMOTE_DIR}" 2>/dev/null || exit 0
+LATEST=\$(ls -d "${SNAPSHOT_ROOT}"/*/ 2>/dev/null | tail -1 | sed 's#/\$##' || true)
+[ -n "\$LATEST" ] || exit 0
+[ -f scripts/lib/service_data.sh ] || exit 0
+. scripts/lib/service_data.sh
+service_data_crossings "\$LATEST" .
+EOS
+  ) || die "refusing to roll back: ${cp}'s bundled service data could not be checked (the reason
+       is above). Nothing was stopped or restored."
+  # Only the three words the check can print; anything else on the channel is not an answer.
+  ROLLBACK_CROSSINGS=$(printf '%s\n' "$out" | grep -xE 'postgres|redis|garage' | tr '\n' ' ' || true)
+  ROLLBACK_CROSSINGS="${ROLLBACK_CROSSINGS% }"
+  [ -n "$ROLLBACK_CROSSINGS" ] || return 0
+  if [ "${ROLLBACK_DATA:-}" != previous ]; then
+    # shellcheck disable=SC2086  # one word per crossing
+    die "refusing to roll back: on ${cp}, the snapshot crosses one-way changes to service data:
+$(service_data_explain $ROLLBACK_CROSSINGS)
+       Nothing was stopped or restored. Re-run with ROLLBACK_DATA=previous to accept that,
+       or move forward instead. See docs/runbooks/upgrading.md#service-data."
+  fi
+  info "${cp}: service data will be set back: ${ROLLBACK_CROSSINGS} (ROLLBACK_DATA=previous)"
+}
+
 do_rollback() {
   rollback_schema_guard
+  rollback_service_data_guard
   for i in "${!HOSTS[@]}"; do
     local h="${HOSTS[$i]}"
     targeted "$h" || continue
@@ -1030,6 +1072,17 @@ do_rollback() {
 
     if truthy "$DEPLOY_STOP"; then
       remote_stop "$h" "$i"
+    fi
+
+    # From the CURRENT tree, before it is restored over: its compose file still names the
+    # services whose volumes are being set back.
+    if [[ "$i" -eq 0 && -n "$ROLLBACK_CROSSINGS" ]]; then
+      remote "$h" bash -s <<SERVICE_DATA
+set -euo pipefail
+cd "${DEPLOY_REMOTE_DIR}"
+. scripts/lib/service_data.sh
+service_data_revert ${ROLLBACK_CROSSINGS}
+SERVICE_DATA
     fi
 
     remote "$h" bash -s <<EOS

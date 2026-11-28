@@ -237,6 +237,27 @@ Without a snapshot (the upgrade ran with `SKIP_SNAPSHOT=true`, or the snapshots 
 ./logstotal upgrade ARCHIVE=/path/to/logstotal-<previous-version>.7z
 ```
 
+### Service data
+
+Three bundled services keep data a newer release changed in a way the older one cannot
+read back. Rolling back across one of them is refused until you say the data written since
+the upgrade may go:
+
+```bash
+ROLLBACK_DATA=previous ./logstotal upgrade:rollback
+```
+
+| Crossing | What `ROLLBACK_DATA=previous` does |
+|---|---|
+| PostgreSQL 16 → 19 (1.4) | The older release runs on `postgres_data` again, the database as it was when 1.4 first started. Rows written since stay in `postgres19_data`, unused; the 19 cluster is marked superseded, so the next upgrade copies `postgres_data` across afresh instead of reviving them. |
+| Redis 7 → 8 (1.4) | Redis 7 cannot read Redis 8's data file, so it is set aside as `dump.rdb.from-redis-8` and Redis starts empty. Queued jobs are dropped and fail once `HUEY_QUEUE_EXPIRY` passes; caches rebuild themselves. |
+| Garage → 2.5 or later (1.4) | Its metadata goes back to the copy `garage-entrypoint.sh` took before Garage 2.5 first ran; the newer metadata is kept beside it as `meta/.from-garage-2.5`. Objects stored since the upgrade — the uploads and tool outputs of jobs run after it — are no longer listed, though their bytes stay in `garage_data`. |
+
+It applies only to services the host runs: an SQLite install with local storage only meets
+the Redis row. On a fleet, the check runs on the control plane before any host is stopped,
+and the data is set back there before its files are restored. If you need what was written
+since, move forward rather than back.
+
 ### Restore the database
 
 Only needed if the upgrade applied migrations you need undone. Stop the stack, then restore the backup the upgrade took:
@@ -276,7 +297,11 @@ On a fleet, stop it with `./logstotal deploy:stop`, open the control plane's ins
 
 The downgrade turns partial tasks into failed ones and keeps their findings. It drops the provenance and diagnostics columns. PostgreSQL keeps the unused `PARTIAL` enum label, which older code never reads.
 
-Uploaded files and the object store are never changed by a rollback or a database restore. Files uploaded after the restored backup stay in storage without a database row; `/admin/storage` reports them as orphans — see [Storage and retention](storage.md#orphaned-files).
+Uploaded files are never changed by a rollback or a database restore, and neither is the
+object store — except Garage's metadata when a rollback crosses Garage 2.5 with
+`ROLLBACK_DATA=previous` (see [Service data](#service-data)). Files uploaded after the
+restored backup stay in storage without a database row; `/admin/storage` reports them as
+orphans — see [Storage and retention](storage.md#orphaned-files).
 
 ## After you upgrade
 

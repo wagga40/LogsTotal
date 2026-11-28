@@ -17,8 +17,9 @@
 #
 # States, decided from the volumes alone, so every `docker compose up` re-runs this safely:
 #   new cluster present, no pending marker  → migrated (or a fresh 19 install): clean up, exit 0
-#   new cluster present, pending marker     → an earlier restore did not finish: discard the
-#                                             new cluster and migrate again
+#   new cluster present, pending marker     → an earlier restore did not finish, or a
+#                                             rollback superseded it: discard the new cluster
+#                                             and migrate again
 #   no old cluster                          → fresh install, nothing to migrate: exit 0
 #   otherwise                               → dump the old cluster and publish it
 set -eu
@@ -54,7 +55,9 @@ if [ -s "$NEW_PGDATA/PG_VERSION" ] && [ ! -e "$PENDING" ]; then
 fi
 
 if [ -s "$NEW_PGDATA/PG_VERSION" ] && [ -e "$PENDING" ]; then
-  log "a previous restore into PostgreSQL 19 did not complete; discarding it and starting over"
+  # Set by an unfinished restore, or by upgrade:rollback (scripts/lib/service_data.sh),
+  # which leaves this cluster behind as no longer current.
+  log "the PostgreSQL 19 cluster is not current (an unfinished restore, or a rollback since); discarding it and moving the PostgreSQL 16 data again"
   rm -rf "$NEW_PGDATA"
 fi
 
