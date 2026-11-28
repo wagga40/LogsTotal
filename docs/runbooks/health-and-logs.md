@@ -11,7 +11,7 @@ Every deployment serves `GET /health` without authentication. An administrator w
 ```json
 {
   "app":        "ok",
-  "version":    "1.3.0",
+  "version":    "1.4.0",
   "database":   "ok",
   "redis":      "ok",
   "storage":    "ok (local)",
