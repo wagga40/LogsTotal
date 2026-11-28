@@ -91,6 +91,17 @@ def test_a_long_banner_does_not_defeat_the_tailwind_check(tmp_path):
     assert "tailwind: cached" in r.stdout
 
 
+def test_a_coloured_banner_still_matches(tmp_path):
+    """Every workflow sets CI=true, and the Tailwind CLI colours its banner whenever CI is
+    set — which put colour codes between "tailwindcss" and the version, so the first
+    Forgejo run of the version check failed the artifacts job."""
+    banner = f"\x1b[3m\x1b[1m\x1b[34m≈\x1b[39m\x1b[22m\x1b[23m tailwindcss \x1b[34mv{_pin('TAILWIND_VERSION')}\x1b[39m\n\nUsage:"
+    _stub(tmp_path / "tools" / "tailwind" / "tailwindcss", banner)
+    r = _run(tmp_path, "tailwind")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert "tailwind: cached" in r.stdout
+
+
 def test_an_unknown_tool_is_refused(tmp_path):
     r = _run(tmp_path, "nonesuch")
     assert r.returncode != 0

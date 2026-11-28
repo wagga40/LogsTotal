@@ -99,8 +99,13 @@ pinned() {
 }
 
 tailwind_is_pinned() {
-  local out nl=$'\n'
-  out=$("$1" --help 2>&1 || true)
+  local out nl=$'\n' esc=$'\e'
+  # The CLI colours its banner whenever a CI variable exists (picocolors), and every
+  # workflow sets CI=true, which puts colour codes between "tailwindcss" and the version.
+  # NO_COLOR turns that off; the codes are stripped too, in case a release ignores it.
+  out=$(NO_COLOR=1 "$1" --help 2>&1 || true)
+  shopt -s extglob
+  out=${out//"${esc}["*([0-9;])m/}
   [[ "${nl}${out}${nl}" == *"tailwindcss v${TAILWIND_VERSION}${nl}"* ]]
 }
 
