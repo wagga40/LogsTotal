@@ -287,7 +287,7 @@
   // source. Re-scanning the document is cheap, and
   // `:not([data-mermaid-source])` in the selector makes the work idempotent — an
   // already-rendered diagram is skipped before any DOM is touched.
-  document.body.addEventListener('htmx:after:settle', function () {
+  document.addEventListener('htmx:after:settle', function () {
     renderIn(document.body);
   });
 })();

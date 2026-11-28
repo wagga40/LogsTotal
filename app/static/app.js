@@ -124,15 +124,22 @@ function ltOk(event) {
 }
 window.ltOk = ltOk;
 
+// Every global htmx listener here is on `document`, never `document.body`: htmx 4 fires an
+// event whose element has left the page AT `document` (`trigger()`: `isConnected ? e :
+// document`), and an event dispatched on the document never reaches body. A lazy pane that
+// replaces its own placeholder — Explore, AI analysis — is exactly that case, so a body
+// listener never heard its `finally:request` and the wait cursor stayed until some other
+// request finished.
+//
 // Show loading cursor only for user-initiated HTMX requests, not background polls. The
 // event is dispatched on the requesting element (htmx 4 has no `detail.elt`).
-document.body.addEventListener('htmx:before:request', (e) => {
+document.addEventListener('htmx:before:request', (e) => {
   const trig = (e.target?.getAttribute?.('hx-trigger') || '').toLowerCase();
   if (trig.includes('every') || trig === 'load') return;
   document.body.style.cursor = 'wait';
 });
 // `finally`, so a request that errored (no `after:request`) cannot leave the cursor spinning.
-document.body.addEventListener('htmx:finally:request', () => {
+document.addEventListener('htmx:finally:request', () => {
   document.body.style.cursor = '';
 });
 
@@ -165,7 +172,7 @@ window.dismissHtmxError = () => {
   document.getElementById('htmx-error-toast')?.classList.add('hidden');
 };
 
-document.body.addEventListener('htmx:response:error', (e) => {
+document.addEventListener('htmx:response:error', (e) => {
   const status = e.detail?.ctx?.response?.status;
   const messages = {
     403: 'Not allowed — you may need to sign in again.',
@@ -179,7 +186,7 @@ document.body.addEventListener('htmx:response:error', (e) => {
 // `htmx:error` covers a failed fetch, a timeout and an exception during a swap alike.
 // An aborted request (a newer one replaced it, the page navigated) is not an error to the
 // person looking at the page; htmx 4 already does not report those.
-document.body.addEventListener('htmx:error', (e) => {
+document.addEventListener('htmx:error', (e) => {
   const error = e.detail?.error;
   if (error && error.name === 'TypeError') ltToast('Network error — check your connection and try again.');
   else ltToast('Something went wrong loading that — try again.');
@@ -264,7 +271,7 @@ document.body.addEventListener('htmx:error', (e) => {
     // htmx-driven elements. htmx 4 fires `htmx:confirm` only for a request whose context
     // carries `confirm` (htmx 2 fired it for every request), so a `data-confirm-*` element
     // opts in here first: `config:request` runs before the confirm step reads it.
-    document.body.addEventListener('htmx:config:request', (event) => {
+    document.addEventListener('htmx:config:request', (event) => {
       const elt = event.target;
       if (elt instanceof HTMLElement && elt.dataset.confirmMessage && event.detail?.ctx) {
         event.detail.ctx.confirm ||= elt.dataset.confirmMessage;
@@ -273,7 +280,7 @@ document.body.addEventListener('htmx:error', (e) => {
     // Pause the request and settle it either way: htmx 4 waits on a promise until
     // issueRequest() or dropRequest() is called, and one left pending would hold the
     // element's request queue — its next click would queue behind a dialog long closed.
-    document.body.addEventListener('htmx:confirm', (event) => {
+    document.addEventListener('htmx:confirm', (event) => {
       const elt = event.target;
       if (!(elt instanceof HTMLElement) || !elt.dataset.confirmMessage) return;
       event.preventDefault();

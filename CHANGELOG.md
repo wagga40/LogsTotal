@@ -11,6 +11,8 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ### Fixed
 
+- Opening the Explore or AI Analysis tab left the pointer showing the busy cursor after the
+  tab had loaded, until some other request finished. Since 1.4.0.
 - The notes on each release page broke every sentence where the changelog wraps its lines.
   They now keep each paragraph and list item on one line.
 
