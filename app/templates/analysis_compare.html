@@ -47,9 +47,11 @@
   </div>
   {% set results_url = '/jobs/' ~ job.id ~ '/compare?baseline=' ~ baseline.id ~ '&page=' ~ page %}
   <div x-data="{ loading: !$el.querySelector('[data-comparison-loaded]'), failed: false, loaded: !!$el.querySelector('[data-comparison-loaded]') }"
-       @htmx:before-request="loading = true; failed = false"
-       @htmx:after-request="loading = false; failed = !$event.detail.successful; loaded = loaded || $event.detail.successful"
-       hx-sync="#comparison-results:replace">
+       @htmx:before:request="loading = true; failed = false"
+       {# `finally`, not `after:request`: htmx 4 fires after:request only when a response
+          arrived, so a network failure would have left "Loading…" up for good. #}
+       @htmx:finally:request="loading = false; failed = !window.ltOk($event); loaded = loaded || window.ltOk($event)"
+       hx-sync:inherited="#comparison-results:replace">
     <p x-show="loading" class="text-sm text-gray-400 mb-3" role="status">Loading comparison…</p>
     <div x-show="failed" x-cloak class="text-sm text-amber-400 mb-3" role="alert">
       Could not load the comparison. Try again.

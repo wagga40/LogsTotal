@@ -1,4 +1,7 @@
-"""htmx suppresses the swap on any 4xx/5xx, so a failed request is silent by default.
+"""A failed htmx request is not swapped, so without a toast it is silent.
+
+htmx 4 swaps 4xx/5xx responses by default; base.html's `htmx-config` meta restores htmx 2's
+`noSwap` for them, because this app's error answers are not meant to land in a pane.
 
 Without a global handler a lazy-loaded tab keeps its spinner and a rejected form keeps
 its stale content, with nothing shown to the user. These pin the toast's wiring, which
@@ -19,21 +22,24 @@ BASE_HTML = (ROOT / "app" / "templates" / "base.html").read_text(encoding="utf-8
 
 def test_response_and_send_errors_are_both_handled():
     """A 4xx/5xx and a dropped connection are different events; both must surface."""
-    assert "htmx:responseError" in APP_JS
-    assert "htmx:sendError" in APP_JS, "a network failure produces sendError, not responseError"
+    assert "htmx:response:error" in APP_JS
+    assert "'htmx:error'" in APP_JS, "a network failure produces htmx:error, not response:error"
+
+
+def test_error_responses_are_not_swapped_into_the_page():
+    """htmx 4's default is to swap every response but 204/304; the meta restores htmx 2's."""
+    m = re.search(r'<meta name="htmx-config" content=\'([^\']+)\'>', BASE_HTML)
+    assert m, "base.html no longer configures htmx"
+    import json
+
+    assert json.loads(m.group(1))["noSwap"] == [204, 304, "4xx", "5xx"]
+    assert BASE_HTML.index('name="htmx-config"') < BASE_HTML.index("vendor/htmx.min.js"), "htmx reads the meta once, at load"
 
 
 def test_the_toast_container_exists_in_the_base_layout():
     assert 'id="htmx-error-toast"' in BASE_HTML
     assert "data-toast-message" in BASE_HTML
     assert 'role="alert"' in BASE_HTML, "screen readers need the live region"
-
-
-def test_our_stop_polling_status_is_not_reported_as_an_error():
-    """286 is the job-status partial's own 'terminal, stop polling' signal. Treating it
-    as a failure would pop a toast every time a job finished."""
-    handler = APP_JS[APP_JS.index("htmx:responseError") :]
-    assert "286" in handler[:600]
 
 
 def test_toast_classes_are_literal_so_they_survive_a_tailwind_build():
@@ -67,7 +73,7 @@ def test_app_js_still_loads_before_alpine():
 
 @pytest.mark.parametrize("status", ["403", "404", "429", "503"])
 def test_common_failure_statuses_get_a_specific_message(status):
-    handler = APP_JS[APP_JS.index("htmx:responseError") :]
+    handler = APP_JS[APP_JS.index("htmx:response:error") :]
     assert re.search(rf"\b{status}\b", handler[:900]), f"no tailored message for HTTP {status}"
 
 

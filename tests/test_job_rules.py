@@ -579,9 +579,8 @@ class TestAcknowledging:
         Driven from a *second member*, not an admin: an admin legitimately sees every rule,
         so a 404 there would mean the opposite of what this is testing.
         """
-        from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
-
         from app.auth.schemas import UserCreate
+        from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
         from app.auth.users import UserManager
 
         manager = UserManager(SQLAlchemyUserDatabase(async_db, User))

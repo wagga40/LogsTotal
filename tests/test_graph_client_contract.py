@@ -95,6 +95,7 @@ def test_vendor_bundles_precede_first_party_and_alpine():
         "vendor/graphology.umd.min.js",
         "vendor/graphology-library.min.js",
         "vendor/sigma.min.js",
+        "vendor/sigma-node-border.js",
         "static/graph-view.js",
         "static/graph-algo.js",
         "static/graph-render.js",
@@ -129,18 +130,32 @@ def test_vendor_bundles_are_present_and_expose_what_we_call():
         "sigma.min.js": [
             "nodeReducer",
             "edgeReducer",
-            "createNodeBorderProgram",
-            "EdgeCurveProgram",
-            "EdgeArrowProgram",
-            "EdgeRectangleProgram",
+            # The primitives graph-render.js declares, by their registered names: pathLine()
+            # registers as "straight", and the reducers select paths and heads by name.
+            "layerFill",
+            "sdfCircle",
+            "pathLine",
+            "pathCurved",
+            "pathLoop",
+            "extremityArrow",
+            "layerPlain",
+            'name:"straight"',
+            'name:"curved"',
+            'name:"arrow"',
+            "parallelPath",
+            "itemSizesReference",
+            "enableNodeDrag",
+            "setNodeState",
+            "getWebGLContext",
             "viewportToGraph",
             "preventSigmaDefault",
-            "getCanvases",
             "allowInvalidContainer",
             "enableCameraPanning",
             "hideEdgesOnMove",
             "labelRenderedSizeThreshold",
         ],
+        # Rewritten from an ES module by vendor:update; the renderer reads the global.
+        "sigma-node-border.js": ["window.SigmaNodeBorder = ", "layerBorder", "window.Sigma.rendering"],
     }
     for name, symbols in expectations.items():
         path = VENDOR / name
@@ -219,7 +234,7 @@ def test_reload_keeps_its_abort_discipline():
     """Three behaviours, each of which was a real bug once.
 
     1. A duplicate identical request is collapsed (the pane is initialized twice — Alpine's
-       MutationObserver *and* base.html's htmx:afterSwap hook).
+       MutationObserver *and* base.html's htmx:after:settle hook).
     2. A different query aborts the previous one, or hops 1->3->1 leaves two requests
        racing and the last to resolve wins.
     3. A reload aborts a pending expand but **never the reverse**: an expand sets no

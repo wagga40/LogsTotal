@@ -9,10 +9,10 @@ private job inside a shared case, that its creator could not.
 from __future__ import annotations
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
 from app.auth.api_tokens import generate_token
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.database import utc_now_naive
 from app.json_utils import dumps as json_dumps

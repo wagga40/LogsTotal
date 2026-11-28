@@ -57,7 +57,7 @@ jobs:
           # The version the image ships and the one this is developed on, so a lint that
           # passes here passes locally. Ruff's rules are version-independent; the reason to
           # pin anything at all is reproducibility.
-          python-version: "3.14"
+          python-version: "3.15"
           cache: true
 
       - name: Provision
@@ -81,7 +81,7 @@ jobs:
       # and Huey's queue at MemoryStorage, so nothing in the suite reaches a broker. A real
       # Redis is exercised by the deploy-smoke job below, against the real stack.
       postgres:
-        image: postgres:16-alpine
+        image: postgres:19-alpine
         env:
           POSTGRES_USER: pgtest
           POSTGRES_PASSWORD: pgtest
@@ -98,12 +98,12 @@ jobs:
       fail-fast: false
       matrix:
         # 3.11 is the floor `pyproject.toml` declares and what Debian 12 — a documented
-        # target — ships. 3.14 is the ceiling: `requires-python = ">=3.11"` has no upper
-        # bound, and it is both what this project is developed on and what the Docker image
-        # ships (`Dockerfile`), so the endpoint and the shipped runtime are the same
-        # row. 3.12 stays as the middle — an operator running Path A on a distro's older
-        # interpreter is the case neither endpoint covers.
-        python-version: ["3.11", "3.12", "3.14"]
+        # target — ships. 3.15 is the ceiling: `requires-python = ">=3.11"` has no upper
+        # bound, and it is what the Docker image ships (`Dockerfile`), so the endpoint and
+        # the shipped runtime are the same row. 3.14 stays because it is what this project
+        # is developed on; 3.12 is the middle — an operator running Path A on a distro's
+        # older interpreter is the case neither endpoint covers.
+        python-version: ["3.11", "3.12", "3.14", "3.15"]
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -148,7 +148,7 @@ jobs:
 
       - name: Provide the Tailwind CLI
         # What release.yml does, so the archive checked here is built the way a published
-        # one is: with the compiled stylesheet, not the Play-CDN fallback.
+        # one is: with the compiled stylesheet, not the browser-build fallback.
         run: bash scripts/ci-provision.sh tailwind
 
       - name: Compose parses, image builds, archive builds, neither ships a secret

@@ -3,7 +3,7 @@
  *
  * THREE THINGS THIS FILE EXISTS TO GET RIGHT:
  *
- * 1. The bundle is 3.5 MB. It is fetched **only** when a `pre.mermaid` actually appears, so
+ * 1. The bundle is 5.8 MB (12.4.0). It is fetched **only** when a `pre.mermaid` actually appears, so
  *    a job page with no diagram — which is most of them — pays nothing. `docs/index.html`
  *    loads mermaid eagerly instead, and should: on that page diagrams are the content.
  *
@@ -88,13 +88,21 @@
           // Global, not just `flowchart.htmlLabels` — see note 2. The nested key is kept
           // because it is what the edge and cluster label paths still read.
           htmlLabels: false,
-          flowchart: { curve: 'basis', padding: 16, htmlLabels: false },
+          // Mermaid 12 made ELK the default layout and `neo` the default look. Pinned back
+          // to the 11 rendering: ELK re-lays out every existing diagram, and `neo`'s
+          // rounded, shadowed nodes do not match the rest of the dark theme.
+          layout: 'dagre',
+          look: 'classic',
+          // minNodeWidth: 0 — 12 widens every flowchart node to at least 120px plus padding,
+          // so short labels sat in identical oversized boxes; 0 sizes them to the text as 11 did.
+          flowchart: { curve: 'basis', padding: 16, htmlLabels: false, minNodeWidth: 0 },
           // Replaces mermaid's default secure list, so all of it is repeated here. From
           // `theme` on are the additions; everything before is what the default protected.
           // `themeCSS` goes into the diagram's <style>, and its `&` selector is the <svg>
           // itself, so a directive could pin the diagram over the whole page; the font and
           // theme variables feed the same stylesheet. `htmlLabels` is note 2's hardening,
-          // which a directive could otherwise switch back on.
+          // which a directive could otherwise switch back on. `layout` and `look` are new
+          // in 12; secured so a diagram cannot switch on the ELK engine or another look.
           secure: [
             'secure',
             'securityLevel',
@@ -108,7 +116,9 @@
             'fontFamily',
             'altFontFamily',
             'htmlLabels',
-            'dompurifyConfig'
+            'dompurifyConfig',
+            'layout',
+            'look'
           ],
           // Suppresses mermaid's own error diagram; we render our own fallback, which keeps
           // the source readable instead of replacing it with a red cross.
@@ -213,7 +223,7 @@
   //
   // `data-mermaid-source` marks a diagram that has been rendered — but it is only set once
   // `renderOne` runs, which is *after* `ensureMermaid()` resolves. On the first diagram that
-  // means after a 3.5 MB script fetch, and every htmx swap arriving in that window re-entered
+  // means after a 5.8 MB script fetch, and every htmx swap arriving in that window re-entered
   // `renderIn`, found the same still-unmarked node, and queued another render of it. Lazy
   // tabs, a comment thread and a polling region make several swaps in a few hundred
   // milliseconds routine, so one diagram got drawn repeatedly and flickered as each chain
@@ -266,7 +276,7 @@
   }
 
   // Prose arrives by htmx more often than by page load: the AI pane, comment threads and
-  // case notes are all swapped in. afterSettle rather than afterSwap so the nodes are in
+  // case notes are all swapped in. after:settle rather than after:swap so the nodes are in
   // their final position before mermaid measures them.
   //
   // Scanned from `document.body`, NOT from `ev.detail.target`. Under `hx-swap="outerHTML"`,
@@ -277,7 +287,7 @@
   // source. Re-scanning the document is cheap, and
   // `:not([data-mermaid-source])` in the selector makes the work idempotent — an
   // already-rendered diagram is skipped before any DOM is touched.
-  document.body.addEventListener('htmx:afterSettle', function () {
+  document.body.addEventListener('htmx:after:settle', function () {
     renderIn(document.body);
   });
 })();

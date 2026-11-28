@@ -17,36 +17,19 @@
   <link rel="stylesheet" href="/static/themes.css?v={{ asset_version('app/static/themes.css') }}">
   <link rel="stylesheet" href="/static/vendor/prism-tomorrow.min.css?v={{ app_version }}">
   <!-- TAILWIND:START -->
+  <script type="text/plain" id="lt-tailwind-source">{% include "partials/_tailwind.css" %}</script>
+  <script>(function (src) { var s = document.createElement("style"); s.type = "text/tailwindcss"; s.textContent = src.textContent; src.replaceWith(s); })(document.getElementById("lt-tailwind-source"));</script>
   <script src="/static/vendor/tailwind.js"></script>
-  <script>
-    // Dev mode (Play CDN). Mirror the palette in tailwind.config.js so
-    // gray-* utilities resolve through the theme CSS vars.
-    tailwind.config = {
-      theme: {
-        extend: {
-          colors: {
-            brand: { 500: '#3b82f6', 600: '#2563eb' },
-            gray: {
-              50:  'rgb(var(--ui-gray-50)  / <alpha-value>)',
-              100: 'rgb(var(--ui-gray-100) / <alpha-value>)',
-              200: 'rgb(var(--ui-gray-200) / <alpha-value>)',
-              300: 'rgb(var(--ui-gray-300) / <alpha-value>)',
-              400: 'rgb(var(--ui-gray-400) / <alpha-value>)',
-              500: 'rgb(var(--ui-gray-500) / <alpha-value>)',
-              600: 'rgb(var(--ui-gray-600) / <alpha-value>)',
-              700: 'rgb(var(--ui-gray-700) / <alpha-value>)',
-              800: 'rgb(var(--ui-gray-800) / <alpha-value>)',
-              900: 'rgb(var(--ui-gray-900) / <alpha-value>)',
-              950: 'rgb(var(--ui-gray-950) / <alpha-value>)',
-            }
-          }
-        }
-      }
-    }
-  </script>
   <!-- TAILWIND:END -->
+  {# htmx 4 swaps 4xx/5xx responses by default. This app's error pages are full documents
+     and its failed partials are not meant to land in a pane — app.js raises a toast for
+     them instead (`htmx:response:error`) — so restore htmx 2's answer: no swap on errors. #}
+  <meta name="htmx-config" content='{"noSwap": [204, 304, "4xx", "5xx"]}'>
   <script src="/static/vendor/htmx.min.js?v={{ app_version }}"></script>
-  <script src="/static/vendor/htmx-ext-alpine-morph.js?v={{ app_version }}"></script>
+  {# Registers on load, so it follows htmx. It keeps Alpine state through htmx 4's own
+     `outerMorph` swap and defers Alpine's mutation handling across each swap; it replaced
+     both htmx-ext-alpine-morph and the @alpinejs/morph plugin. #}
+  <script src="/static/vendor/hx-alpine-compat.js?v={{ app_version }}"></script>
   {# Our own JS MUST come before alpine.min.js.
 
      Alpine's CDN build ends with `queueMicrotask(() => Alpine.start())`, and the HTML
@@ -64,7 +47,7 @@
   <script defer src="/static/account-menu.js?v={{ asset_version('app/static/account-menu.js') }}"></script>
   {% endif %}
   {# Renders ```mermaid blocks in analyst prose (AI analyses, case notes, comments).
-     `data-mermaid-src` is how the 3.5 MB vendor bundle gets its versioned URL without the
+     `data-mermaid-src` is how the 5.8 MB vendor bundle gets its versioned URL without the
      script guessing at one — it is fetched lazily, only when a diagram is actually present,
      so a page without one pays nothing. docs/index.html loads mermaid eagerly instead;
      there, diagrams are the content. #}
@@ -72,8 +55,8 @@
           src="/static/mermaid-render.js?v={{ asset_version('app/static/mermaid-render.js') }}"
           data-mermaid-src="/static/vendor/mermaid.min.js?v={{ app_version }}"></script>
   {# Relationship graph — entity detail and case detail only. ONE block, in dependency
-     order: the vendor bundles first (our modules read `window.Sigma` / `window.graphology`
-     / `window.graphologyLibrary`), then our four files, then Alpine.
+     order: the vendor bundles first (our modules read `window.Sigma` / `window.SigmaNodeBorder`
+     / `window.graphology` / `window.graphologyLibrary`), then our four files, then Alpine.
 
      Deferred scripts run in document order, so one list is the whole ordering guarantee;
      two blocks drift. #}
@@ -81,6 +64,8 @@
   <script defer src="/static/vendor/graphology.umd.min.js?v={{ app_version }}"></script>
   <script defer src="/static/vendor/graphology-library.min.js?v={{ app_version }}"></script>
   <script defer src="/static/vendor/sigma.min.js?v={{ app_version }}"></script>
+  {# Reads window.Sigma, so it follows sigma.min.js; the renderer reads window.SigmaNodeBorder. #}
+  <script defer src="/static/vendor/sigma-node-border.js?v={{ app_version }}"></script>
   <script defer src="/static/graph-view.js?v={{ asset_version('app/static/graph-view.js') }}"></script>
   <script defer src="/static/graph-algo.js?v={{ asset_version('app/static/graph-algo.js') }}"></script>
   <script defer src="/static/graph-render.js?v={{ asset_version('app/static/graph-render.js') }}"></script>
@@ -92,14 +77,13 @@
   <script defer src="/static/timeline-canvas.js?v={{ asset_version('app/static/timeline-canvas.js') }}"></script>
   <script defer src="/static/explore.js?v={{ asset_version('app/static/explore.js') }}"></script>
   {% endif %}
-  <script defer src="/static/vendor/alpine-morph.min.js?v={{ app_version }}"></script>
   <script defer src="/static/vendor/alpine.min.js?v={{ app_version }}"></script>
   <script>
     document.addEventListener('alpine:init', () => {
       // State that must survive an HTMX swap of the element that renders it lives in a
       // store, not in the DOM: `openLogs` keeps task-log disclosures open across the job
       // page's 3s morph poll, and `jobSelection` keeps jobs-list checkboxes ticked across
-      // the 5s tbody swap. The global htmx:afterSwap -> Alpine.initTree below re-binds
+      // the 5s tbody swap. The global htmx:after:settle -> Alpine.initTree below re-binds
       // the new nodes against these stores.
       Alpine.store('openLogs', {});
       Alpine.store('jobSelection', {
@@ -300,7 +284,7 @@
      *
      * Colour comes from the --lt-* vars in /static/themes.css, so a control never
      * hard-codes a palette value. This block is inline in base.html (like .badge-base
-     * and .severity-*), which means it works in BOTH dev (Play CDN) and prod
+     * and .severity-*), which means it works in BOTH dev (browser build) and prod
      * (css:build) with no rebuild — and it sidesteps the Tailwind scanner and safelist
      * entirely.
      *
@@ -311,8 +295,9 @@
      *
      * RULE: when you add .lt-btn/.lt-field, delete every utility it replaces
      * (px-* py-* text-xs|text-sm rounded* border inline-flex items-center gap-*).
-     * The Play CDN injects its sheet at runtime, so a leftover utility can win at
-     * equal specificity. tests/test_control_primitives.py enforces this. */
+     * Both builds place Tailwind's sheet before this block, so at equal specificity the
+     * leftover loses — dead code that reads as though it sized the control.
+     * tests/test_control_primitives.py enforces this. */
     .lt-bar { display: flex; flex-wrap: wrap; align-items: center; gap: 0.5rem; }
 
     .lt-btn {
@@ -391,10 +376,9 @@
     .lt-field--sm { --lt-h: 1.5rem;   --lt-px: .5rem;   --lt-fs: .6875rem; --lt-radius: .375rem; }
     .lt-field--lg { --lt-h: 2.125rem; --lt-px: .75rem;  --lt-fs: .875rem; }
     /* Room for an absolutely-positioned clear button. A Tailwind `pr-8` alongside
-     * .lt-field would resolve differently in dev and prod: the Play CDN injects its
-     * sheet at runtime (so the utility wins), but the built stylesheet is linked
-     * BEFORE this <style> block (so .lt-field's shorthand `padding` wins and silently
-     * eats the reserved space). Own it here instead. */
+     * .lt-field loses: both builds place Tailwind's sheet BEFORE this <style> block, so
+     * .lt-field's shorthand `padding` wins and silently eats the reserved space. Own it
+     * here instead. */
     .lt-field--clearable   { padding-right: 2rem; }
     .lt-field:focus        { border-color: var(--lt-accent); box-shadow: 0 0 0 1px var(--lt-accent); }
     .lt-field::placeholder { color: var(--lt-fg-muted); }
@@ -498,8 +482,9 @@
     }
     .lt-cond__input::selection { background: var(--lt-active-bg); -webkit-text-fill-color: var(--lt-fg-strong); }
     /* Token colours. Literal class names, declared here rather than assembled in the
-       template — `tailwind.config.js` scans templates, so `text-{{ kind }}-300` renders
-       unstyled in a production CSS build however well it works against the dev CDN. */
+       template — the production build scans templates for complete class names, so
+       `text-{{ kind }}-300` renders unstyled there however well it works in dev, where the
+       browser build reads the live page. */
     .lt-cond-key   { color: #93c5fd; }
     .lt-cond-val   { color: #e5e7eb; }
     .lt-cond-str   { color: #fcd34d; }
@@ -560,7 +545,7 @@
     .lt-combo-pill button { line-height: 1; cursor: pointer; }
 
     /* `rounded border-gray-700 bg-gray-950 text-blue-600` is INERT on a native
-     * checkbox: tailwind.config.js has plugins: [], so there is no @tailwindcss/forms
+     * checkbox: no Tailwind plugin is loaded, so there is no @tailwindcss/forms
      * and none of those properties reach the UA-rendered control. Eleven call sites
      * were styling nothing. accent-color is what actually works. */
     .lt-check {
@@ -676,10 +661,11 @@
      *     reach "Next".
      *  2. `overflow-hidden` and .lt-scroll NEVER share an element. `overflow-hidden`
      *     (used for rounded-corner clipping on almost every card here) sets BOTH axes,
-     *     so which one wins is stylesheet-order dependent — and dev disagrees with
-     *     prod, because the Play CDN injects at runtime while the built sheet is
-     *     linked before this <style>. Always: outer `rounded-* overflow-hidden`,
-     *     inner .lt-scroll. tests/test_control_primitives.py enforces this.
+     *     so which one wins is stylesheet-order dependent — .lt-scroll today, because
+     *     both builds link Tailwind before this <style>, and a box that scrolls only
+     *     because of load order is one reordering from clipping its rows. Always:
+     *     outer `rounded-* overflow-hidden`, inner .lt-scroll.
+     *     tests/test_control_primitives.py enforces this.
      *
      * `overscroll-behavior: contain` stops a list that has hit its end from scrolling
      * the page behind it. */
@@ -695,9 +681,9 @@
      * Rendered Markdown for notes and comment threads. This exists because Tailwind's
      * preflight resets `ul` to no bullets, `h1`-`h6` to body size and `blockquote` to
      * nothing — so without it, Markdown renders as one run-together paragraph and looks
-     * broken rather than unstyled. @tailwindcss/typography would do this, but
-     * tailwind.config.js has `plugins: []` and adding one would mean a build step in the
-     * dev (Play CDN) path too. Twenty lines here work in both modes, like .lt-btn.
+     * broken rather than unstyled. @tailwindcss/typography would do this, but the
+     * browser build that serves development cannot load plugins, so adding one would
+     * mean a build step there too. Twenty lines here work in both modes, like .lt-btn.
      *
      * Deliberately restrained: this is an incident note, not a blog. Headings step down
      * gently, there is no drop-cap styling, and the whole thing inherits its colour from
@@ -790,7 +776,7 @@
   <!-- Nav -->
   <nav class="bg-gray-900 border-b border-gray-800 px-6 py-3">
     <div class="flex items-center gap-6">
-      <a href="/" class="text-xl font-bold text-blue-400 tracking-tight flex-shrink-0">LogsTotal</a>
+      <a href="/" class="text-xl font-bold text-blue-400 tracking-tight shrink-0">LogsTotal</a>
       <span class="text-gray-600 text-sm">|</span>
       <div class="flex items-center gap-6">
         <a href="/jobs" class="text-sm transition {% if nav_path.startswith('/jobs') %}text-white font-medium{% else %}text-gray-400 hover:text-white{% endif %}">Jobs</a>
@@ -816,7 +802,7 @@
         {# Any logged-in user: job-watch events belong to whoever can view a job, not to Intel. #}
     {% if user %}
         <div x-data="watchlistBell()" x-init="loadCount()" @click.outside="open = false"
-             @htmx:after-request="loadCount()"
+             @htmx:after:request="loadCount()"
              class="relative">
           <button @click="toggle()" class="relative p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-800 transition flex items-center" title="Alerts">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -890,11 +876,16 @@
   <script src="/static/vendor/prism-json.min.js?v={{ app_version }}" defer></script>
   <script src="/static/vendor/prism-sql.min.js?v={{ app_version }}" defer></script>
   <script>
-    // Re-highlight Prism code blocks after HTMX swaps in new content
-    document.addEventListener('htmx:afterSwap', function(e) {
-      if (window.Prism) Prism.highlightAllUnder(e.detail.target);
-      if (window.Alpine && e.detail.target) {
-        Alpine.initTree(e.detail.target);
+    // Re-highlight Prism code blocks and bind Alpine in content an htmx swap put in.
+    // `htmx:after:settle`, not `after:swap`: in htmx 4 only settle carries the inserted
+    // nodes (`newContent`) — after:swap holds the request context, whose target is the
+    // element an outer swap has just removed.
+    document.addEventListener('htmx:after:settle', function(e) {
+      const nodes = (e.detail && e.detail.newContent) || [];
+      for (const node of nodes) {
+        if (!(node instanceof Element) || !node.isConnected) continue;
+        if (window.Prism) Prism.highlightAllUnder(node);
+        if (window.Alpine) Alpine.initTree(node);
       }
       // Selection stores live outside the markup they select, which is what makes them
       // survive a poll — and also what lets them outlive the rows themselves after a

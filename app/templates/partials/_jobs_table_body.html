@@ -19,7 +19,7 @@
     {% if user and (user.is_superuser or user.role == 'member') %}
     {# Selection lives in Alpine.store('jobSelection'), not the DOM: this tbody is
        swapped wholesale every 5s while a job runs, which would otherwise clear the
-       boxes. base.html's htmx:afterSwap -> Alpine.initTree re-binds :checked. #}
+       boxes. base.html's htmx:after:settle -> Alpine.initTree re-binds :checked. #}
     <td class="px-4 py-3" onclick="event.stopPropagation()">
       <input type="checkbox" aria-label="Select job {{ job.id }}" data-job-select="{{ job.id }}"
              :checked="$store.jobSelection.has({{ job.id }})"

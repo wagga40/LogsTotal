@@ -14,18 +14,19 @@
   polling by itself. Getting this backwards leaves every viewer of an old job issuing a
   request every three seconds forever.
 
-  SWAP CONTRACT: `hx-swap="morph"` + `hx-ext="alpine-morph"`. The value is **exactly
-  `morph`**, with no `:outerHTML` suffix, and that is not cosmetic — it is the whole
-  difference between this region updating in place and being rebuilt three times a minute.
+  SWAP CONTRACT: `hx-swap="outerMorph"`, htmx 4's built-in morph of the target itself, with
+  hx-alpine-compat.js (loaded in base.html) carrying Alpine state across it. Not cosmetic —
+  it is the whole difference between this region updating in place and being rebuilt three
+  times a minute.
 
-  `htmx-ext-alpine-morph.js` matches `swapStyle === 'morph'` and nothing else. Give htmx
-  `morph:outerHTML` and the extension declines it, htmx's `default:` branch finds no
-  handler, and it falls through to `htmx.config.defaultSwapStyle` — **innerHTML**. Three
-  things then happen at once, and all three were reported as bugs: every child is destroyed
-  and recreated on each poll (visible flicker), the log <pre> is a brand-new element so its
-  scroll position resets mid-read, and — because innerHTML never touches the *outer*
-  element's attributes — `hx-trigger="every 3s"` survives on a region whose replacement no
-  longer carries it, so the polling never stops until the page is reloaded.
+  The history is why it is pinned. Under htmx 2 this was `morph` via htmx-ext-alpine-morph,
+  and the more precise-looking `morph:outerHTML` fell silently through to innerHTML. Three
+  things then happened at once, all three reported as bugs: every child was destroyed and
+  recreated on each poll (visible flicker), the log <pre> was a brand-new element so its
+  scroll position reset mid-read, and — because innerHTML never touches the *outer*
+  element's attributes — `hx-trigger="every 3s"` survived on a region whose replacement no
+  longer carried it, so the polling never stopped until the page was reloaded. htmx 4 throws
+  on an unknown swap style rather than falling back, which takes the silent half away.
 
   A real morph updates the region in place: node identity survives, so scroll position and
   focus survive with it, and when the run finishes the poll attributes are morphed away and
@@ -43,8 +44,7 @@
      {% if is_active %}
      hx-get="{{ ai_base }}/ai-analysis-partial{% if analysis %}?analysis_id={{ analysis.id }}{% endif %}"
      hx-trigger="every 3s"
-     hx-swap="morph"
-     hx-ext="alpine-morph"
+     hx-swap="outerMorph"
      {% endif %}>
 
   {% if ai_subject == "case" %}
@@ -377,7 +377,7 @@
     {% endif %}
     {% set show_prompt = user and user.is_superuser and analysis.prompt_text and site_settings and site_settings.show_ai_prompt %}
     {% if user and user.is_superuser and (analysis.log_output or show_prompt) %}
-    <div x-data class="mt-4 pt-3 border-t border-gray-800 space-y-2">
+    <div x-data class="mt-4 pt-3 border-t border-gray-800 flex flex-col gap-2">
       <div class="lt-bar">
         {% if analysis.log_output %}
         <button type="button"

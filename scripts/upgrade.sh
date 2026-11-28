@@ -55,6 +55,9 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 # shellcheck source-path=SCRIPTDIR
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
+# shellcheck source-path=SCRIPTDIR
+# shellcheck source=lib/service_data.sh
+. "$SCRIPT_DIR/lib/service_data.sh"
 
 # _source_kind — what the banner calls this run. ONE place, so the outer flow, the staging
 # step and anything that reports on a run cannot describe the same run differently. It reads
@@ -329,7 +332,7 @@ do_stage_code() {
       2) warn "could not reach $(release_repo_url) to check the package for ${REF} — trying anyway." ;;
     esac
     # Require 7z rather than falling back to a source zip. That zip is
-    # the COMMITTED tree, whose base.html is the Play-CDN dev bundle — a JIT compiler running
+    # the COMMITTED tree, whose base.html is in dev mode — Tailwind's compiler running
     # in the browser on every page load. `SOURCE=package` has to mean one artifact, or the
     # word means something different on each flow.
     command -v 7z >/dev/null 2>&1 || die "SOURCE=package needs 7z to open the release asset.
@@ -447,7 +450,7 @@ do_stage_code() {
 
     # On a checkout, keep the tree's OWN base.html and built stylesheet. The archive ships
     # them in production mode (package.sh runs css:build, archives, then restores dev mode)
-    # while HEAD holds the Play-CDN block — so overlaying them leaves the tree permanently
+    # while HEAD holds the dev-mode block — so overlaying them leaves the tree permanently
     # dirty, and the next `SOURCE=git` run dies on the guard above naming no file. It costs
     # nothing: the Dockerfile rebuilds both in its css stage and copies them over whatever
     # `COPY . .` laid down, so what is on disk here never reaches the image.
@@ -697,7 +700,27 @@ do_rollback() {
        then re-run this. See docs/runbooks/upgrading.md#when-rollback-is-unsafe."
   fi
 
+  # The second thing a code restore cannot undo: data a bundled service rewrote one way
+  # (scripts/lib/service_data.sh). Refused before anything is touched, like the migrations
+  # above, unless the operator says the data written since the upgrade may go.
+  local crossings
+  crossings=$(service_data_crossings "$snap" . | tr '\n' ' ')
+  crossings="${crossings% }"
+  if [ -n "$crossings" ] && [ "${ROLLBACK_DATA:-}" != previous ]; then
+    # shellcheck disable=SC2086  # one word per crossing
+    die "rolling back to ${target:-the snapshot} crosses one-way changes to service data:
+$(service_data_explain $crossings)
+       Nothing was changed. Re-run with ROLLBACK_DATA=previous to accept that, or move
+       forward instead. See docs/runbooks/upgrading.md#service-data."
+  fi
+
   command -v rsync >/dev/null 2>&1 || die "rsync is required to restore a snapshot."
+
+  if [ -n "$crossings" ]; then
+    info "service data: ${crossings} (ROLLBACK_DATA=previous)"
+    # shellcheck disable=SC2086  # one word per crossing
+    service_data_revert $crossings
+  fi
 
   # --delete: a rollback that leaves the
   # newer release's files behind has not rolled anything back. The excludes are what keep

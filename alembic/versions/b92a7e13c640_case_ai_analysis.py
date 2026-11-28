@@ -1,10 +1,10 @@
 """Case AI runs and a provider prompt override for case assessments."""
 
 import sqlalchemy as sa
-from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy.dialects import postgresql
 
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision = "b92a7e13c640"
 down_revision = "a72f9b3c610e"

@@ -169,11 +169,16 @@ tasks:
       # Through /docker-entrypoint.sh in env-only mode: an exec'd process does not inherit
       # the DATABASE_URL the entrypoint derived at boot, and would check an empty
       # ./logstotal.db inside the container instead of the real database.
+      #
+      # LT_HOST_DOCKER_VOLUMES: the container has no Docker CLI, so the host lists its
+      # volumes for the check that reports a leftover PostgreSQL 16 volume. `-q`, not
+      # `--format`: go-task would read the format's braces as its own template.
       - |
+        vols=$(docker volume ls -q 2>/dev/null | tr '\n' ' ')
         if docker compose ps --status running web 2>/dev/null | grep -q web; then
-          docker compose exec -t -e LOGSTOTAL_ENTRYPOINT_ENV_ONLY=1 web /docker-entrypoint.sh python3 scripts/doctor.py --in-container
+          docker compose exec -t -e LOGSTOTAL_ENTRYPOINT_ENV_ONLY=1 -e LT_HOST_DOCKER_VOLUMES="$vols" web /docker-entrypoint.sh python3 scripts/doctor.py --in-container
         else
-          docker compose run --rm web python3 scripts/doctor.py --in-container
+          docker compose run --rm -e LT_HOST_DOCKER_VOLUMES="$vols" web python3 scripts/doctor.py --in-container
         fi
 
   gen-secrets:
@@ -558,7 +563,8 @@ tasks:
     desc: "DESTRUCTIVE — stop containers, remove volumes, images, and networks for LogsTotal"
     summary: |
       Stops and removes all LogsTotal containers, deletes named volumes (redis_data,
-      postgres_data, etc.), removes images built/used by this project, and removes
+      postgres19_data, the pre-1.4 postgres_data, etc.), removes images built/used by this
+      project, and removes
       the project network. Use when you want a full Docker reset.
       Next ./logstotal docker:up will rebuild and recreate everything.
     prompt: "Remove all LogsTotal containers, volumes, images, and networks?"
@@ -1274,6 +1280,9 @@ tasks:
            database backup first.
         2. rsync the snapshot back with --delete, so files the newer release ADDED are
            removed. .env, data/, uploads/ and backups/ are excluded and never touched.
+        2b. Refuse, unless ROLLBACK_DATA=previous, when a bundled service's data was changed
+           one way since the snapshot (PostgreSQL 16 → 19, Redis 7 → 8, Garage → 2.5+) —
+           then set it back: scripts/lib/service_data.sh.
         3. docker compose build && up -d — no code is bind-mounted, so restoring the tree
            alone would leave the containers running the newer image.
         4. health:remote against ${HEALTH_URL} (default http://localhost:8000).
@@ -1286,6 +1295,7 @@ tasks:
       FLEET_FROM: '{{.FLEET_FROM}}'
       FLEET_REFRESH: '{{.FLEET_REFRESH}}'
       HEALTH_URL: '{{.HEALTH_URL | default "http://localhost:8000"}}'
+      ROLLBACK_DATA: '{{.ROLLBACK_DATA}}'
     cmds:
       - bash scripts/upgrade.sh rollback {{.CLI_ARGS}}
 
@@ -1297,7 +1307,7 @@ tasks:
       `ARCHIVE=` already installs on a host with no internet: the archive is copied from
       the machine running the deploy, so hosts never reach the release server. What it does
       NOT solve is the images. Every host still runs `docker compose build`, which pulls
-      python:3.14-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI; Compose
+      python:3.15-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI; Compose
       then pulls Redis, PostgreSQL, Caddy and socat; and Zircolite — used by five of the six
       shipped workflows — is pulled LAZILY INSIDE THE FIRST WINDOWS JOB. So a closed-network
       install passes every check, reports healthy, and fails hours later.

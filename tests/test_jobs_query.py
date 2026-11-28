@@ -14,10 +14,10 @@ regression in something people use constantly to buy a search nobody asked for.
 from __future__ import annotations
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy import func, select
 
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.jobs_query import IS_FLAGS, SYNTAX_HELP, apply_jobs_query, describe, parse_jobs_query, query_errors
 from app.models import AnalysisJob, JobStatus, JobTag, LogFile, LogType, User, WorkflowDef

@@ -230,9 +230,9 @@ tasks:
         # no auth at all — protected-mode refuses non-loopback commands in that state,
         # but there is no reason to be listening for them.
         if [ -n "${REDIS_PASSWORD:-}" ]; then
-          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:7-alpine redis-server --requirepass "$REDIS_PASSWORD"
+          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:8-alpine redis-server --requirepass "$REDIS_PASSWORD"
         else
-          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:7-alpine
+          docker run --rm -d -p 127.0.0.1:6379:6379 --name logstotal-redis redis:8-alpine
         fi
 
   release:prepare:
@@ -331,7 +331,7 @@ tasks:
         for f in scripts/*.sh scripts/lib/*.sh; do
           shellcheck -x "$f"
         done
-        shellcheck -x docker-entrypoint.sh garage-entrypoint.sh logstotal
+        shellcheck -x docker-entrypoint.sh garage-entrypoint.sh postgres-migrate.sh logstotal
         shellcheck -x -e SC1001 docker-caddy-entrypoint.sh
 
   check:
@@ -376,7 +376,7 @@ tasks:
       A compile-only test cannot catch that — both dialects render identical SQL text and the
       difference is the bind parameter's type. The statements have to actually execute.
 
-      Starts postgres:16-alpine on a spare port, runs tests/test_postgres_sql_compat.py
+      Starts postgres:19-alpine on a spare port, runs tests/test_postgres_sql_compat.py
       against it, also exercises backup/restore in a separate disposable database,
       and removes the containers afterwards whatever happens. Point at your own server with
       POSTGRES_TEST_URL and the container is skipped.
@@ -386,7 +386,7 @@ tasks:
         set -euo pipefail
         if [ -n "${POSTGRES_TEST_URL:-}" ]; then
           echo "Using POSTGRES_TEST_URL"
-          pdm run -- pytest tests/test_postgres_sql_compat.py -v
+          pdm run -- pytest tests/test_postgres_sql_compat.py tests/test_postgres_migrations.py -v
           exit 0
         fi
         command -v docker >/dev/null 2>&1 || { echo "ERROR: Docker not found, and POSTGRES_TEST_URL is not set."; exit 1; }
@@ -398,14 +398,14 @@ tasks:
         # pgtest is the container's superuser: a fresh password each run, and loopback only —
         # a bare -p publishes on every interface, past ufw.
         PGPW="$(od -An -N16 -tx1 /dev/urandom | tr -d ' \n')"
-        POSTGRES_PASSWORD="$PGPW" docker run -d --rm --name "$NAME" -e POSTGRES_PASSWORD -e POSTGRES_USER=pgtest -e POSTGRES_DB=pgtest -p "127.0.0.1:${PORT}:5432" postgres:16-alpine >/dev/null
+        POSTGRES_PASSWORD="$PGPW" docker run -d --rm --name "$NAME" -e POSTGRES_PASSWORD -e POSTGRES_USER=pgtest -e POSTGRES_DB=pgtest -p "127.0.0.1:${PORT}:5432" postgres:19-alpine >/dev/null
         echo -n "Waiting for PostgreSQL on :${PORT}"
         for _ in $(seq 1 40); do
           if docker exec "$NAME" pg_isready -h 127.0.0.1 -U pgtest -q 2>/dev/null; then echo " ready"; break; fi
           sleep 0.5; echo -n "."
         done
         docker exec "$NAME" pg_isready -h 127.0.0.1 -U pgtest -q || { echo " timeout"; exit 1; }
-        LOGSTOTAL_TEST_DOCKER=1 POSTGRES_TEST_URL="postgresql+psycopg2://pgtest:${PGPW}@127.0.0.1:${PORT}/pgtest" pdm run -- pytest tests/test_postgres_sql_compat.py tests/test_postgres_backup_restore.py -v
+        LOGSTOTAL_TEST_DOCKER=1 POSTGRES_TEST_URL="postgresql+psycopg2://pgtest:${PGPW}@127.0.0.1:${PORT}/pgtest" pdm run -- pytest tests/test_postgres_sql_compat.py tests/test_postgres_backup_restore.py tests/test_postgres_migrations.py -v
 
   docs:build:
     desc: Build the documentation website into site/ — warnings (a broken link or anchor) are errors
@@ -725,8 +725,8 @@ tasks:
       leaves the tree in dev mode too). It does NOT touch VERSION — that is written only by
       ./logstotal release:prepare, so a package build leaves the tree clean.
 
-      With no Tailwind CLI it does NOT flip base.html: the archive serves the Play CDN
-      bundle, which is correct but compiles in the browser. `PACKAGE_USE_COMMITTED_CSS=true
+      With no Tailwind CLI it does NOT flip base.html: the archive serves Tailwind's
+      browser build, which is correct but compiles in the browser. `PACKAGE_USE_COMMITTED_CSS=true
       ./logstotal package` ships the committed app/static/vendor/tailwind-built.css instead —
       an explicit choice, because nothing without the CLI can prove that file matches
       these templates.
@@ -807,10 +807,10 @@ tasks:
   vendor:update:
     desc: Download all vendor JS/CSS assets to app/static/vendor/
     summary: |
-      Downloads pinned versions of Tailwind, HTMX, Alpine.js, Prism, Mermaid, and the
-      relationship-graph stack (graphology + graphology-library + Sigma.js)
-      to app/static/vendor/ for offline/local serving. Committed to the repo so
-      only needed when updating versions.
+      Downloads pinned versions of Tailwind (its browser build, for dev mode), HTMX,
+      Alpine.js, Prism, Mermaid, and the relationship-graph stack (graphology +
+      graphology-library + Sigma.js) to app/static/vendor/ for offline/local serving.
+      Committed to the repo so only needed when updating versions.
     preconditions: [*needs-curl]
     vars:
       # `filename url`, one per line. A list here rather than fourteen near-identical
@@ -819,10 +819,9 @@ tasks:
       # vars: entry. `|-` and not `|`: a plain block scalar leaves a trailing empty
       # line, which the loop would then try to download.
       VENDOR_ASSETS: |-
-        tailwind.js https://cdn.tailwindcss.com/{{.TAILWIND_CDN_VERSION}}
+        tailwind.js https://unpkg.com/@tailwindcss/browser@{{.TAILWIND_VERSION}}/dist/index.global.js
         htmx.min.js https://unpkg.com/htmx.org@{{.HTMX_VERSION}}/dist/htmx.min.js
-        htmx-ext-alpine-morph.js https://unpkg.com/htmx-ext-alpine-morph@{{.HTMX_ALPINE_MORPH_VERSION}}/alpine-morph.js
-        alpine-morph.min.js https://unpkg.com/@alpinejs/morph@{{.ALPINE_MORPH_VERSION}}/dist/cdn.min.js
+        hx-alpine-compat.js https://unpkg.com/htmx.org@{{.HTMX_VERSION}}/dist/ext/hx-alpine-compat.js
         alpine.min.js https://unpkg.com/alpinejs@{{.ALPINE_VERSION}}/dist/cdn.min.js
         prism-tomorrow.min.css https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/themes/prism-tomorrow.min.css
         prism.min.js https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/prism.min.js
@@ -833,6 +832,7 @@ tasks:
         graphology.umd.min.js https://unpkg.com/graphology@{{.GRAPHOLOGY_VERSION}}/dist/graphology.umd.min.js
         graphology-library.min.js https://unpkg.com/graphology-library@{{.GRAPHOLOGY_LIBRARY_VERSION}}/dist/graphology-library.min.js
         sigma.min.js https://unpkg.com/sigma@{{.SIGMA_VERSION}}/dist/sigma.min.js
+        sigma-node-border.js https://unpkg.com/@sigma/node-border@{{.SIGMA_NODE_BORDER_VERSION}}/dist/sigma-node-border.esm.js
     cmds:
       - mkdir -p app/static/vendor
       - for: {var: VENDOR_ASSETS, split: "\n", as: ASSET}
@@ -841,10 +841,23 @@ tasks:
           tmp=$(mktemp "app/static/vendor/$1.XXXXXX") || exit 1
           trap 'rm -f "$tmp"' EXIT
           curl -fsSL "$2" -o "$tmp" || { echo "ERROR: download failed: $2"; exit 1; }
-          # Play CDN returns HTTP 200 with console.error for unsupported versions.
-          if [ "$1" = "tailwind.js" ] && grep -q 'Unknown Tailwind version:' "$tmp"; then
-            echo "ERROR: unsupported Tailwind Play CDN version: $2"
+          # Dev mode compiles the `<style type="text/tailwindcss">` block base.html includes,
+          # and only Tailwind 4's browser build reads it. Anything else — the v3 Play CDN
+          # bundle, an error page served with a 200 — would leave every page unstyled.
+          if [ "$1" = "tailwind.js" ] && ! grep -q 'text/tailwindcss' "$tmp"; then
+            echo "ERROR: not the Tailwind browser build: $2"
             exit 1
+          fi
+          # @sigma/node-border ships only as an ES module importing three sigma namespaces,
+          # and this project loads classic scripts with no bundler. Its imports are all on
+          # the sigma UMD global, so rewrite them to read it, and publish the exports as
+          # window.SigmaNodeBorder. Refuse a file the rewrite did not fully convert.
+          if [ "$1" = "sigma-node-border.js" ]; then
+            perl -0777 -i -pe 's#^import \{([^}]*)\} from .sigma/(rendering|utils|primitives).;\n#const {$1} = window.Sigma.$2;\n#mg; s#^export \{([^}]*)\};\s*\z#window.SigmaNodeBorder = {$1};\n#m; $_ = "// \@sigma/node-border, rewritten from its ES module by ./logstotal vendor:update.\n(function () {\n" . $_ . "})();\n";' "$tmp" || exit 1
+            if grep -qE '^(import|export) ' "$tmp" || ! grep -q 'window.SigmaNodeBorder = ' "$tmp"; then
+              echo "ERROR: could not convert sigma-node-border.js to a classic script"
+              exit 1
+            fi
           fi
           chmod 644 "$tmp" || exit 1
           mv "$tmp" "app/static/vendor/$1"
@@ -881,8 +894,10 @@ tasks:
     desc: Compile Tailwind CSS from templates (production mode)
     summary: |
       Scans all HTML templates and generates a pre-compiled CSS file at
-      app/static/vendor/tailwind-built.css using the Tailwind standalone CLI.
-      Then patches base.html to use the compiled CSS instead of the play CDN JS.
+      app/static/vendor/tailwind-built.css using the Tailwind standalone CLI (input:
+      app/static/tailwind-input.css, which imports the shared
+      app/templates/partials/_tailwind.css). Then patches base.html to link the compiled
+      CSS instead of compiling in the browser.
       Requires: ./logstotal tailwind:install first.
 
       Compile-then-point: the pointing half is `./logstotal css:prod`, which is also usable on
@@ -894,7 +909,7 @@ tasks:
           echo "ERROR: Tailwind CLI not found. Run: ./logstotal tailwind:install"
           exit 1
         fi
-      - tools/tailwind/tailwindcss -i app/static/tailwind-input.css -o app/static/vendor/tailwind-built.css --content "app/templates/**/*.html" --minify
+      - tools/tailwind/tailwindcss -i app/static/tailwind-input.css -o app/static/vendor/tailwind-built.css --minify
       - task: css:prod
 
   css:prod:
@@ -929,20 +944,26 @@ tasks:
         echo "Switched base.html to compiled CSS"
 
   css:dev:
-    desc: Restore base.html to use Tailwind play CDN JS (dev mode)
+    desc: Restore base.html to compile Tailwind in the browser (dev mode)
     summary: |
-      Reverses ./logstotal css:build — restores the play CDN script + inline config
-      in base.html so Tailwind works without a build step during development.
-      Must stay in sync with tailwind.config.js (gray palette is mapped to
-      --ui-gray-* CSS vars for theming).
+      Reverses ./logstotal css:build — restores the block that hands
+      app/templates/partials/_tailwind.css to the vendored browser build, so Tailwind
+      works without a build step during development. Dev and production read that one
+      partial, so there is no palette to keep in sync here.
+
+      The partial is included into a <script type="text/plain"> and moved into the
+      <style type="text/tailwindcss"> the browser build reads by a one-line inline
+      script, rather than written into that <style> directly: Chromium's preload scanner
+      fetches @import URLs out of ANY <style> in the HTML source, whatever its type, so
+      every page fired two 404s at tailwindcss/theme.css relative to its own URL.
     preconditions: [*needs-perl]
     cmds:
       - |
         perl -i -0777 -pe '
-          my $dev = qq{  <script src="/static/vendor/tailwind.js"></script>\n  <script>\n    // Dev mode (Play CDN). Mirror the palette in tailwind.config.js so\n    // gray-* utilities resolve through the theme CSS vars.\n    tailwind.config = {\n      theme: {\n        extend: {\n          colors: {\n            brand: { 500: \x27#3b82f6\x27, 600: \x27#2563eb\x27 },\n            gray: {\n              50:  \x27rgb(var(--ui-gray-50)  / <alpha-value>)\x27,\n              100: \x27rgb(var(--ui-gray-100) / <alpha-value>)\x27,\n              200: \x27rgb(var(--ui-gray-200) / <alpha-value>)\x27,\n              300: \x27rgb(var(--ui-gray-300) / <alpha-value>)\x27,\n              400: \x27rgb(var(--ui-gray-400) / <alpha-value>)\x27,\n              500: \x27rgb(var(--ui-gray-500) / <alpha-value>)\x27,\n              600: \x27rgb(var(--ui-gray-600) / <alpha-value>)\x27,\n              700: \x27rgb(var(--ui-gray-700) / <alpha-value>)\x27,\n              800: \x27rgb(var(--ui-gray-800) / <alpha-value>)\x27,\n              900: \x27rgb(var(--ui-gray-900) / <alpha-value>)\x27,\n              950: \x27rgb(var(--ui-gray-950) / <alpha-value>)\x27,\n            }\n          }\n        }\n      }\n    }\n  </script>\n  };
+          my $dev = qq{  <script type="text/plain" id="lt-tailwind-source">{% include "partials/_tailwind.css" %}</script>\n  <script>(function (src) { var s = document.createElement("style"); s.type = "text/tailwindcss"; s.textContent = src.textContent; src.replaceWith(s); })(document.getElementById("lt-tailwind-source"));</script>\n  <script src="/static/vendor/tailwind.js"></script>\n  };
           s{(<!-- TAILWIND:START -->\n).*?<!-- TAILWIND:END -->}
            {$1$dev<!-- TAILWIND:END -->}s
         ' app/templates/base.html
-        echo "Restored base.html to dev mode (Tailwind play CDN)"
+        echo "Restored base.html to dev mode (Tailwind browser build)"
 
   # ── Shortcuts ────────────────────────────────────────────────────────────────

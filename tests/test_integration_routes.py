@@ -488,8 +488,7 @@ async def test_background_task_status_partial_missing_404(admin_client):
 async def test_job_status_partial(test_client, seed_data):
     job = seed_data["job"]
     resp = await test_client.get(f"/jobs/{job.id}/status-partial")
-    # 286 is HTMX's "stop polling" signal for terminal jobs (completed/failed/partial)
-    assert resp.status_code in (200, 286)
+    assert resp.status_code == 200
 
 
 async def test_jobs_table_partial(test_client, seed_data):
@@ -539,6 +538,6 @@ async def test_the_rerun_button_cannot_stack_clicks(admin_client):
     """No indicator and no disabled state is what made the button read as inert, which is
     what got it clicked repeatedly — each click a full server-side suite."""
     resp = await admin_client.get("/admin/system-checks-partial")
-    assert 'hx-disabled-elt="this"' in resp.text
+    assert 'hx-disable="this"' in resp.text  # htmx 4's name for htmx 2's hx-disabled-elt
     assert "htmx-indicator" in resp.text
     assert "/admin/system-checks-partial?force=1" in resp.text

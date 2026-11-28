@@ -7,10 +7,10 @@ Create Date: 2026-04-12 10:01:25.802840
 
 from typing import Sequence, Union
 
-import fastapi_users_db_sqlalchemy.generics
 import sqlalchemy as sa
 
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = "09db4ba71a7c"
 down_revision: Union[str, None] = None
@@ -91,7 +91,7 @@ def upgrade() -> None:
         sa.Column("display_name", sa.String(length=100), nullable=True),
         sa.Column("role", sa.String(length=20), nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
-        sa.Column("id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+        sa.Column("id", GUID(), nullable=False),
         sa.Column("email", sa.String(length=320), nullable=False),
         sa.Column("hashed_password", sa.String(length=1024), nullable=False),
         sa.Column("is_active", sa.Boolean(), nullable=False),
@@ -118,7 +118,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("file_id", sa.Integer(), nullable=False),
         sa.Column("workflow_id", sa.Integer(), nullable=False),
-        sa.Column("submitted_by_user_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=True),
+        sa.Column("submitted_by_user_id", GUID(), nullable=True),
         sa.Column("submitter_ip", sa.String(length=45), nullable=True),
         sa.Column("status", sa.Enum("PENDING", "RUNNING", "COMPLETED", "FAILED", "PARTIAL", name="jobstatus"), nullable=False),
         sa.Column("score_ratio", sa.String(length=20), nullable=True),

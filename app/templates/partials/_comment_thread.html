@@ -70,7 +70,7 @@
             hx-swap="outerHTML"
             class="space-y-2 mt-1">
         <textarea name="body" rows="3" maxlength="{{ comment_max }}"
-                  class="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none">{{ c.body }}</textarea>
+                  class="w-full bg-gray-950 border border-gray-700 rounded p-2 text-sm text-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-hidden">{{ c.body }}</textarea>
         <div class="flex gap-2">
           <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary">Save</button>
           <button type="button" @click="editingId = null" class="px-3 py-1 rounded text-xs border border-gray-700 bg-gray-800 text-gray-300 hover:text-white">Cancel</button>
@@ -87,11 +87,11 @@
   <form hx-post="/comments/{{ target_type }}/{{ target_id }}"
         hx-target="#comment-thread-{{ target_type }}-{{ target_id }}"
         hx-swap="outerHTML"
-        hx-on::after-request="if (event.detail.successful) this.reset()"
+        hx-on::after:request="if (window.ltOk(event)) this.reset()"
         class="space-y-2">
     <textarea name="body" rows="3" maxlength="{{ comment_max }}"
               placeholder="{{ editor_placeholder(site_settings, 'Write a comment…', comment_max) }}"
-              class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"></textarea>
+              class="w-full bg-gray-950 border border-gray-700 rounded p-3 text-sm text-gray-200 placeholder-gray-500 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-hidden"></textarea>
     <div class="flex justify-end">
       <button type="submit" class="lt-btn lt-btn--primary">Post</button>
     </div>

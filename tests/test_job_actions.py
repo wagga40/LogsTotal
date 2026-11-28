@@ -65,7 +65,7 @@ async def test_compare_action_requires_an_earlier_visible_terminal_run(test_clie
     await async_db.commit()
 
     response = await test_client.get(f"/jobs/{current.id}{suffix}")
-    assert response.status_code in (200, 286)
+    assert response.status_code == 200
     expected = scenario in {"completed", "partial", "failed", "cancelled"}
     assert (f'href="/jobs/{current.id}/compare"' in response.text) is expected
     # Zero findings still permit comparison. Server-generated equal timestamps

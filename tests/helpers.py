@@ -110,9 +110,8 @@ async def create_user(db, email: str, *, role: str = "user", is_superuser: bool 
     Goes through the manager rather than `User(hashed_password=...)` so the row is exactly
     what production writes. `conftest._fast_password_hashing` is what keeps that cheap.
     """
-    from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
-
     from app.auth.schemas import UserCreate
+    from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
     from app.auth.users import UserManager
     from app.models import User
 

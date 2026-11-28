@@ -97,6 +97,17 @@ def test_entrypoint_preserves_explicit_database_urls(tmp_path: Path):
     assert sync_url == "postgresql+psycopg2://worker:pass@10.0.123.1:5432/logstotal"
 
 
+def test_entrypoint_derives_a_sync_url_that_names_psycopg2(tmp_path: Path):
+    """An explicit DATABASE_URL alone (a hand-written .env) gets a +psycopg2 sync URL.
+
+    Stripping +asyncpg — what this used to do — leaves a bare postgresql://, which SQLAlchemy
+    2.1 maps to psycopg 3: not installed in the image, so the worker could not connect.
+    """
+    result = _run_entrypoint(tmp_path, {"DATABASE_URL": "postgresql+asyncpg://worker:pass@10.0.123.1:5432/logstotal"})
+    _async_url, sync_url = _url_lines(result)
+    assert sync_url == "postgresql+psycopg2://worker:pass@10.0.123.1:5432/logstotal"
+
+
 def test_entrypoint_normalizes_relative_sqlite_to_data_volume(tmp_path: Path):
     """Local-dev sqlite+aiosqlite:///./path must map to /data in Docker (appuser cannot write /app)."""
     result = _run_entrypoint(tmp_path, {"DATABASE_URL": "sqlite+aiosqlite:///./logstotal.db"})

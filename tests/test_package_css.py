@@ -11,7 +11,7 @@ already loaded the compiled stylesheet, in which case the archive shipped exactl
 
 The `task` shim is a recorder that also performs a MARKED flip of base.html, so a test can
 tell prod mode from dev mode without re-implementing the Taskfile's perl substitution here
-(that substitution has its own guard in tests/test_tailwind_palette_parity.py). What
+(that substitution has its own guard in tests/test_tailwind_source.py). What
 package.sh owns is the orchestration: which mode it chooses, what it claims, and that the
 tracked template goes back to dev mode on every exit — including a failing one.
 """
@@ -123,7 +123,7 @@ def test_a_tree_that_already_ships_compiled_css_is_not_called_development_css(tm
     assert not any(c.startswith("task css:") for c in _calls(tmp_path)), "no CSS task should run: nothing to build and nothing to restore"
 
 
-def test_without_the_cli_the_default_is_the_play_cdn_and_the_message_names_both_ways_out(tmp_path):
+def test_without_the_cli_the_default_is_the_browser_build_and_the_message_names_both_ways_out(tmp_path):
     """The default is unchanged — correct-but-slow beats fast-and-silently-wrong — but the
     note has to say what the archive DOES contain and how to get the other thing."""
     _tree(tmp_path, mode="dev")

@@ -7,10 +7,10 @@ plus a private-job boundary the thread must not cross.
 from __future__ import annotations
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy import select
 
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.comments import comment_counts_for
 from app.models import (

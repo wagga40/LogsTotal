@@ -55,7 +55,7 @@
 
   <div x-show="error" x-cloak
        class="flex items-start gap-2 px-4 py-3 rounded-lg border border-red-800/40 bg-red-900/20 text-red-300 text-xs">
-    <svg class="w-4 h-4 flex-shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
+    <svg class="w-4 h-4 shrink-0 mt-0.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/></svg>
     <span x-text="error"></span>
   </div>
 
@@ -104,7 +104,7 @@
 
         {# The rest only on a pinned marker: on hover it would be a wall of text chasing the
            cursor, and the lazy panels below must not fire a request per mouse-over. #}
-        <div x-show="selected" x-cloak class="mt-2 space-y-2">
+        <div x-show="selected" x-cloak class="mt-2 flex flex-col gap-2">
           <dl class="grid grid-cols-[auto_1fr] gap-x-4 gap-y-1 text-gray-500">
             <dt>Host</dt><dd class="text-gray-300 font-mono" x-text="it.meta.computer || '—'"></dd>
             <dt>Tool</dt><dd class="text-gray-300" x-text="it.meta.tool || '—'"></dd>

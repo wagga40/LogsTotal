@@ -8,9 +8,9 @@
   `text-xs px-1.5 py-0.5 rounded-full border`, and exempts `border-<colour>-<n>` for
   `lt-chip` specifically. That exemption is what this macro is built on.
 
-  The classes are written out as literals, never assembled from `tone` — `tailwind.config.js`
-  scans `app/templates/**/*.html` for class names, so `bg-{{ tone }}-900/40` renders
-  unstyled in a production CSS build no matter what the safelist says.
+  The classes are written out as literals, never assembled from `tone` — the production
+  build scans `app/templates` for class names, so `bg-{{ tone }}-900/40` renders unstyled
+  there no matter what the safelist in tailwind-input.css says.
 
       {% from "partials/_count_pill.html" import count_pill %}
       {{ count_pill('4 live', 'green') }}

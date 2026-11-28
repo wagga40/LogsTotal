@@ -6,12 +6,14 @@ Set up a development environment with [Path A: Local Development](local-developm
 
 ## Production CSS (Tailwind)
 
-Development serves Tailwind via `app/static/vendor/tailwind.js` (the play CDN bundle, committed to the repo and refreshed by `./logstotal vendor:update` — no Node build). For production, serve compiled CSS instead: run `./logstotal tailwind:install` once per machine (the CLI is gitignored), then `./logstotal css:build` before starting the server. That switches `base.html` to `tailwind-built.css`. Skip it and the app still works, serving the vendor Tailwind JS bundle. Restore dev mode with `./logstotal css:dev`.
+Development compiles Tailwind in the browser with `app/static/vendor/tailwind.js` (Tailwind's browser build, committed to the repo and refreshed by `./logstotal vendor:update` — no Node build). For production, serve compiled CSS instead: run `./logstotal tailwind:install` once per machine (the CLI is gitignored), then `./logstotal css:build` before starting the server. That switches `base.html` to `tailwind-built.css`. Skip it and the app still works, compiling in the browser. Restore dev mode with `./logstotal css:dev`.
+
+Both builds compile one file, `app/templates/partials/_tailwind.css`: the theme (gray mapped onto the `--ui-gray-*` variables in `app/static/themes.css`, Tailwind 3's palette and line heights pinned) and the cascade layers. Change the theme there, never in `base.html`. `app/static/tailwind-input.css` adds only what the production build needs on top: which files to scan for class names, and the entity-chip safelist.
 
 `app/static/vendor/tailwind-built.css` is **tracked**, so every checkout has one — but it is only as current as the last `./logstotal css:build`. Tailwind scans the templates to decide which classes to emit, so a class added to a template after that build is simply absent from the stylesheet, and the elements using it render unstyled with no error anywhere. That is why every consumer keys off `base.html`'s own mode rather than the file merely existing, and why nothing switches you to that stylesheet on your behalf.
 
 - **Docker image (Path B):** run both commands on the host before `docker compose build` / `./logstotal docker:up` so the image bakes in `tailwind-built.css`. A tree that is already in production mode (an extracted release archive) is used as-is instead — that is what makes an air-gapped image build possible.
-- **Packaging:** `./logstotal package` re-runs `./logstotal css:build` automatically when the CLI is present, so the archive ships production CSS. Without the CLI it leaves `base.html` alone and the archive serves the Play CDN bundle: correct, but a ~120 KB gzipped compiler runs in the browser on every page load. To ship the committed stylesheet instead — an air-gapped build, or a checkout you know matches it — run `PACKAGE_USE_COMMITTED_CSS=true ./logstotal package`. It is opt-in because nothing without the CLI can check that the stylesheet matches the templates.
+- **Packaging:** `./logstotal package` re-runs `./logstotal css:build` automatically when the CLI is present, so the archive ships production CSS. Without the CLI it leaves `base.html` alone and the archive serves Tailwind's browser build: correct, but a ~75 KB gzipped compiler runs in the browser on every page load. To ship the committed stylesheet instead — an air-gapped build, or a checkout you know matches it — run `PACKAGE_USE_COMMITTED_CSS=true ./logstotal package`. It is opt-in because nothing without the CLI can check that the stylesheet matches the templates.
 - **Pointing without compiling:** `./logstotal css:prod` is the swap on its own, and `./logstotal css:dev` reverses either one.
 
 ## Front-end assets
@@ -23,11 +25,11 @@ at the top of `Taskfile.yml`, which is also where the shared preconditions and t
 
 | File | What uses it |
 |---|---|
-| `htmx.min.js`, `htmx-ext-alpine-morph.js` | every page |
-| `alpine.min.js`, `alpine-morph.min.js` | every page |
+| `htmx.min.js`, `hx-alpine-compat.js` | every page |
+| `alpine.min.js` | every page |
 | `tailwind.js` / `tailwind-built.css` | dev / production CSS (see above) |
 | `prism*.js`, `prism-tomorrow.min.css` | syntax highlighting |
-| `mermaid.min.js` | `/docs` diagrams |
+| `mermaid.min.js` | `/docs` diagrams, and diagrams in analyst prose (comments, notes, AI analyses) — fetched lazily, only on a page that has one |
 | `graphology.umd.min.js`, `graphology-library.min.js`, `sigma.min.js` | the relationship graph, loaded only on `/intel/entities/…` and `/intel/cases/…` |
 
 **Our own scripts must be listed before `alpine.min.js` in `base.html`.** Alpine evaluates

@@ -97,7 +97,7 @@
 
   Needed because a chip whose colour is only known in the browser cannot use
   `tag_classes(color)` — and must not build `bg-{{ color }}-900/60` at runtime either, since
-  tailwind.config.js scans templates and would find no such class to emit. Spelling all
+  the production build scans templates and would find no such class to emit. Spelling all
   twelve out here keeps every one of them a literal the scanner can see, once.
 
   Usage:  <span class="lt-chip" {{ alpine_tag_classes('t.color') }}>

@@ -19,18 +19,22 @@ classifiers = [
     "Programming Language :: Python :: 3.11",
     "Programming Language :: Python :: 3.12",
     "Programming Language :: Python :: 3.14",
+    "Programming Language :: Python :: 3.15",
     "Topic :: Security",
     "Topic :: System :: Logging",
 ]
 dependencies = [
     "fastapi>=0.115.5",
     "uvicorn[standard]>=0.32.1",
-    # fastapi-users-db-sqlalchemy 7.x requires the SQLAlchemy 2.0 API.
-    "sqlalchemy[asyncio]>=2.0.36,<2.1",
+    # 2.1 changed the driver a bare postgresql:// URL selects (psycopg2 → psycopg 3); every
+    # sync URL here names +psycopg2 explicitly — see app/config.py::pin_postgres_driver.
+    "sqlalchemy[asyncio]>=2.1.9,<2.2",
     "aiosqlite>=0.20.0",
     "asyncpg>=0.30.0",
     "psycopg2-binary>=2.9.10",
-    "fastapi-users[sqlalchemy]>=13.0.0",
+    # The SQLAlchemy adapter lives in app/auth/sqlalchemy_adapter.py, not in the
+    # fastapi-users[sqlalchemy] extra: fastapi-users-db-sqlalchemy 7.0.0 pins sqlalchemy<2.1.
+    "fastapi-users>=15.0.5",
     "huey[redis]>=2.5.2",
     "redis>=5.0",
     "jinja2>=3.1.4",
@@ -51,7 +55,7 @@ dependencies = [
     # advertised features instead. Keep it a runtime dependency.
     "httpx>=0.27",
     "backports-zstd>=1.0; python_version < \"3.14\"",
-    "duckdb<3,>=2.0.0",
+    "duckdb<3,>=2.0.1",
     "evtx>=0.13",
 ]
 
@@ -114,6 +118,9 @@ max-complexity = 25
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Every async fixture here is function-scoped, so this is what already happens; saying so
+# silences pytest-asyncio's warning that the unset default is about to change.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [
@@ -132,6 +139,6 @@ dev = [
     "pytest-xdist>=3.8.0",
 ]
 docs = [
-    "zensical==0.0.65",
+    "zensical==0.1.4",
     "markdown-callouts==0.4.0",
 ]

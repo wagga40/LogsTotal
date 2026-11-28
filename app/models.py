@@ -3,8 +3,6 @@
 import enum
 from datetime import datetime
 
-from fastapi_users_db_sqlalchemy import SQLAlchemyBaseUserTableUUID
-from fastapi_users_db_sqlalchemy.generics import GUID
 from sqlalchemy import (
     BigInteger,
     Boolean,
@@ -26,6 +24,7 @@ from sqlalchemy import (
 from sqlalchemy.ext.hybrid import hybrid_property
 from sqlalchemy.orm import column_property, deferred, relationship
 
+from app.auth.sqlalchemy_adapter import GUID, SQLAlchemyBaseUserTableUUID
 from app.database import Base
 from app.db_types import CompressedText
 

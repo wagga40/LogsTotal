@@ -130,7 +130,10 @@ render_caddyfile() {
     esac
 
     if [ -n "$basic_auth_user" ] && [ -n "$basic_auth_hash" ]; then
-        printf '    basicauth * {\n        %s %s\n    }\n' "$basic_auth_user" "$basic_auth_hash"
+        # `basic_auth`, not `basicauth`: the old spelling has been a deprecated alias since
+        # Caddy 2.8, and the image tag floats on 2.x — a release that drops the alias would
+        # crash-loop the proxy on a config this script wrote.
+        printf '    basic_auth * {\n        %s %s\n    }\n' "$basic_auth_user" "$basic_auth_hash"
     fi
 
     printf '    reverse_proxy web:8000\n}\n'

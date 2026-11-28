@@ -18,7 +18,7 @@
     <button type="button"
             hx-delete="/intel/saved-searches/{{ s.id }}"
             hx-swap="none"
-            hx-on::after-request="document.body.dispatchEvent(new CustomEvent('reloadSavedSearches'))"
+            hx-on::after:request="document.body.dispatchEvent(new CustomEvent('reloadSavedSearches'))"
             data-confirm-title="Delete saved search"
             data-confirm-message="Delete '{{ s.name }}'?"
             data-confirm-accept="Delete"

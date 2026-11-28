@@ -57,6 +57,11 @@
     return floor + Math.min(3.4, Math.log2(1 + (edge.weight || 1)) * 0.9);
   }
 
+  // Sigma 4 antialiases an edge's sides where v3 drew hard rectangles, so the same `size`
+  // reads lighter: measured over one graph, 79% of v3's edge ink. Scaled on screen only —
+  // edgeSize itself is also what the PNG export draws with, which never had the difference.
+  const EDGE_STROKE = 1.25;
+
   function withAlpha(hex, alpha) {
     return typeof hex === 'string' && hex.length === 7 ? hex + alpha : hex;
   }
@@ -118,11 +123,14 @@
       return null;
     }
 
-    function nodeReducer(key, data) {
-      const index = data.index;
+    // Sigma 4 hands a reducer the display data its styles produced, then the element's
+    // *attributes* — `index` and `edge` live there, not in the display data — then its
+    // interaction state. What a reducer returns is merged over the display data.
+    function nodeReducer(key, data, attrs, nodeState) {
+      const index = attrs.index;
       const node = state.decoded ? state.decoded.nodes[index] : null;
       const level = state.decisions ? state.decisions.nodeLevels.get(index) : V.NORMAL;
-      if (!node || level === V.HIDDEN) return Object.assign({}, data, { hidden: true, label: '' });
+      if (!node || level === V.HIDDEN) return Object.assign({}, data, { visibility: 'hidden', label: '' });
 
       const isFocal = V.hasFlag(node, schema, 'focal');
       const muted = level === V.MUTED;
@@ -131,34 +139,60 @@
         label: node.label,
         size: nodeSize(node, isFocal) * (level === V.FOCUS ? 1.25 : 1),
         color: muted ? withAlpha(color, MUTED_ALPHA) : color,
+        labelColor: muted ? schema.colors.ui.mutedLabel || schema.colors.ui.muted : schema.colors.ui.label,
+        // v3's default. Sigma 4's is smaller, measured at 8px of cap height against 10.
+        labelSize: 14,
         zIndex: level,
+        // Above the rest of the graph, labels with it — v3's single zIndex did both.
+        depth: level === V.FOCUS ? 'topNodes' : 'nodes',
+        borderColor: 'transparent',
       });
-      // `forceLabel` is decoupled from level on purpose: a MATCH changes colour and size
+      // A forced label is decoupled from level on purpose: a MATCH changes colour and size
       // only. Forcing it would bypass labelRenderedSizeThreshold / labelDensity /
       // labelGridCellSize — the three settings that bound label cost — so a filter matching
       // 3,000 nodes would force-draw 3,000 labels every frame.
-      if (state.decisions && state.decisions.forced.has(index)) out.forceLabel = true;
-      if (muted) out.labelColor = schema.colors.ui.mutedLabel || schema.colors.ui.muted;
+      if (state.decisions && state.decisions.forced.has(index)) out.labelVisibility = 'visible';
 
+      // The ring is the border layer's outer band. Transparent everywhere else, so the fill
+      // layer beneath shows through and an unringed node is a plain disc.
       const ring = borderColor(index, node);
-      if (ring && !muted) {
-        out.type = 'bordered';
-        out.borderColor = ring;
+      if (ring && !muted) out.borderColor = ring;
+      // Sigma 4's own hover halo is a WHITE backdrop, built for light pages: on this canvas
+      // it turned every hovered name into light-grey text on white. The halo stays, in the
+      // page's own colours.
+      if (nodeState && nodeState.isHovered) {
+        out.backdropColor = schema.colors.ui.bg;
+        out.backdropBorderColor = schema.colors.ui.muted;
+        out.backdropBorderWidth = 1;
+        out.backdropShadowColor = 'rgba(0, 0, 0, 0.6)';
       }
       if (V.hasFlag(node, schema, 'allowlisted')) out.color = withAlpha(out.color, MUTED_ALPHA);
       return out;
     }
 
-    function edgeReducer(key, data) {
-      const edge = data.edge;
+    function edgeReducer(key, data, attrs) {
+      const edge = attrs.edge;
       const level = state.decisions ? state.decisions.edgeLevels.get(key) : V.NORMAL;
-      if (!edge || level === V.HIDDEN) return Object.assign({}, data, { hidden: true, label: '' });
+      if (!edge || level === V.HIDDEN) return Object.assign({}, data, { visibility: 'hidden', label: '' });
       const base = edge.kind === 'typed' ? schema.colors.kind.typed : schema.colors.kind[edge.kind] || schema.colors.kind.job;
       const muted = level === V.MUTED;
       const out = Object.assign({}, data, {
-        size: edgeSize(edge) * (level === V.FOCUS ? 1.8 : 1),
+        size: edgeSize(edge) * EDGE_STROKE * (level === V.FOCUS ? 1.8 : 1),
         color: muted ? withAlpha(base, MUTED_ALPHA) : base,
         zIndex: level,
+        depth: level === V.FOCUS ? 'topEdges' : 'edges',
+        // A typed relationship is directed and its arrowhead is the point; co-occurrence
+        // ("named in the same log file") is symmetric, so it has none. Sigma 4 spreads
+        // parallel edges itself — a second relationship between the same pair bows out
+        // instead of being drawn underneath the first, and it keeps its arrowhead (v3 could
+        // not draw an arrow on a curve, so the 2nd+ parallel edge used to lose it).
+        path: 'straight', // pathLine()'s registered name
+        parallelPath: 'curved',
+        head: edge.rel ? 'arrow' : 'none',
+        labelColor: schema.colors.kind.typed,
+        labelSize: 9,
+        // Beside the line, as v3 drew it; sigma 4 defaults to across it.
+        labelPosition: 'below',
       });
       // A typed edge's whole value is *which* relationship it is — an unlabelled arrow
       // makes `runs_as` and `parent_of` indistinguishable, which is most of the point of
@@ -169,7 +203,7 @@
       if (!edge.rel || muted) {
         out.label = '';
       } else if (level >= V.FOCUS) {
-        out.forceLabel = true;
+        out.labelVisibility = 'visible';
       } else if (!state.edgeLabelsAtRest) {
         out.label = '';
       }
@@ -181,7 +215,9 @@
     function webglAvailable() {
       try {
         const canvas = document.createElement('canvas');
-        const ctx = canvas.getContext('webgl2') || canvas.getContext('webgl') || canvas.getContext('experimental-webgl');
+        // WebGL2 only: sigma 4 dropped WebGL1, so a browser offering just WebGL1 would pass
+        // a looser probe and then fail inside the renderer instead of showing the fallback.
+        const ctx = canvas.getContext('webgl2');
         if (!ctx) return false;
         // Release the probe context immediately. Browsers cap live WebGL contexts (~16),
         // and leaking one per page load is how a long session ends up unable to draw.
@@ -193,36 +229,34 @@
       }
     }
 
-    // Sigma's UMD bundle hangs its renderers off `Sigma.rendering`. Three are registered:
-    //
-    //   line   EdgeRectangleProgram — job / finding. Undirected, so no arrowhead.
-    //   arrow  EdgeArrowProgram     — a typed relationship. The arrowhead is the point.
-    //   curve  EdgeCurveProgram     — the 2nd+ typed edge between the same pair.
-    //
-    // The bundle builds arrow-headed *curve* programs internally but does not export them,
-    // so a curved edge cannot carry an arrowhead here. That is why the split exists rather
-    // than curving everything: the overwhelmingly common case is one typed edge per pair,
-    // which gets a straight line and a real arrow, and only the rare parallel case trades
-    // its arrowhead for not being drawn underneath its sibling. The side panel lists every
-    // relationship on a pair with its direction spelled out, so nothing is only inferable
-    // from the arrowhead.
-    function programs() {
+    // Sigma 4 compiles ONE program for every node and ONE for every edge from these
+    // declarations; a node or edge picks its shape, path and head per element through the
+    // reducers above. `layerBorder` comes from @sigma/node-border (vendored as
+    // sigma-node-border.js, sigma 4 moved it out of the core): an outer band in
+    // `borderColor` over the fill, the ring v3's createNodeBorderProgram drew.
+    function primitives() {
       const r = (window.Sigma && window.Sigma.rendering) || {};
-      const node = {};
-      const edge = {};
-      if (r.NodeCircleProgram) node.circle = r.NodeCircleProgram;
-      if (r.createNodeBorderProgram) {
-        node.bordered = r.createNodeBorderProgram({
-          borders: [
-            { size: { value: 0.12 }, color: { attribute: 'borderColor' } },
-            { size: { fill: true }, color: { attribute: 'color' } },
-          ],
-        });
+      const nb = window.SigmaNodeBorder || {};
+      const layers = [r.layerFill()];
+      if (nb.layerBorder) {
+        layers.push(
+          nb.layerBorder({
+            borders: [
+              { size: 0.12, color: { attribute: 'borderColor' } },
+              { size: 0, color: { attribute: 'color' }, fill: true },
+            ],
+          }),
+        );
       }
-      if (r.EdgeRectangleProgram) edge.line = r.EdgeRectangleProgram;
-      if (r.EdgeArrowProgram) edge.arrow = r.EdgeArrowProgram;
-      if (r.EdgeCurveProgram) edge.curve = r.EdgeCurveProgram;
-      return { nodeProgramClasses: node, edgeProgramClasses: edge };
+      return {
+        nodes: { shapes: [r.sdfCircle()], layers: layers },
+        edges: {
+          // pathLoop: sigma's default for a self-referencing edge, which needs a program too.
+          paths: [r.pathLine(), r.pathCurved(), r.pathLoop()],
+          extremities: [r.extremityArrow()],
+          layers: [r.layerPlain()],
+        },
+      };
     }
 
     function construct() {
@@ -230,30 +264,30 @@
       const Graph = window.graphology;
       if (!Sigma || !Graph || state.sigma) return;
       state.graph = state.graph || new Graph.MultiGraph({ type: 'mixed' });
-      const progs = programs();
       state.sigma = new Sigma(state.graph, state.container, {
-        nodeProgramClasses: progs.nodeProgramClasses,
-        edgeProgramClasses: progs.edgeProgramClasses,
-        defaultNodeType: 'circle',
-        // A zero-size container throws "Container has no width/height", and this pane lives
-        // inside an `x-show` tab that can legitimately be display:none when the partial
-        // lands. Constructing anyway and letting the ResizeObserver call `resize()` is
-        // simpler and more reliable than guessing at a frame to defer to.
-        allowInvalidContainer: true,
-        renderEdgeLabels: true,
-        labelColor: { color: schema.colors.ui.label },
-        // See NODE_LABEL_MODES: these are the 'auto' values, and `setNodeLabels` swaps
-        // them at runtime. The threshold in particular is not a free knob — node size is
-        // derived from job_count, so it decides which entities can ever be named.
-        labelDensity: NODE_LABEL_MODES.auto.density,
-        labelGridCellSize: 70,
-        labelRenderedSizeThreshold: NODE_LABEL_MODES.auto.threshold,
-        edgeLabelColor: { color: schema.colors.kind.typed },
-        edgeLabelSize: 9,
-        defaultEdgeType: 'line',
-        zIndex: true,
-        minCameraRatio: 0.05,
-        maxCameraRatio: 12,
+        primitives: primitives(),
+        settings: {
+          // A zero-size container throws "Container has no width/height", and this pane
+          // lives inside an `x-show` tab that can legitimately be display:none when the
+          // partial lands. Constructing anyway and letting the ResizeObserver call
+          // `resize()` is simpler and more reliable than guessing at a frame to defer to.
+          allowInvalidContainer: true,
+          renderEdgeLabels: true,
+          // See NODE_LABEL_MODES: these are the 'auto' values, and `setNodeLabels` swaps
+          // them at runtime. The threshold in particular is not a free knob — node size is
+          // derived from job_count, so it decides which entities can ever be named.
+          labelDensity: NODE_LABEL_MODES.auto.density,
+          labelGridCellSize: 70,
+          labelRenderedSizeThreshold: NODE_LABEL_MODES.auto.threshold,
+          minCameraRatio: 0.05,
+          maxCameraRatio: 12,
+          // Sigma 4 reads sizes in graph coordinates by default. nodeSize/edgeSize and the
+          // label threshold above are calibrated in screen pixels, as v3 drew them.
+          itemSizesReference: 'screen',
+          // Sigma 4 drags nodes itself; this renderer has its own drag (which also pins the
+          // node, see wireEvents), and two would fight over the same pointer.
+          enableNodeDrag: false,
+        },
         nodeReducer: nodeReducer,
         edgeReducer: edgeReducer,
       });
@@ -289,7 +323,7 @@
       // the stage pans underneath the node being dragged.
       s.on('downNode', function (e) {
         state._dragging = e.node;
-        state.graph.setNodeAttribute(e.node, 'highlighted', true);
+        s.setNodeState(e.node, { isHighlighted: true });
       });
       s.getMouseCaptor().on('mousemovebody', function (e) {
         if (!state._dragging) return;
@@ -302,7 +336,7 @@
         e.original.stopPropagation();
       });
       const drop = function () {
-        if (state._dragging) state.graph.removeNodeAttribute(state._dragging, 'highlighted');
+        if (state._dragging && state.sigma === s && state.graph.hasNode(state._dragging)) s.setNodeState(state._dragging, { isHighlighted: false });
         state._dragging = null;
       };
       s.getMouseCaptor().on('mouseup', drop);
@@ -319,15 +353,17 @@
       // is torn down, those listeners are still attached, and each call rebuilt the
       // renderer again — one real GPU loss tripped the `recoveries > 3` guard and showed the
       // give-up message on a graph that had already recovered fine.
+      //
+      // Sigma 4 renders everything through one WebGL2 context (v3 had one per layer canvas).
       const owner = s;
-      const canvases = s.getCanvases ? s.getCanvases() : {};
-      Object.keys(canvases).forEach(function (name) {
-        canvases[name].addEventListener('webglcontextlost', function (ev) {
+      const gl = s.getWebGLContext ? s.getWebGLContext() : null;
+      if (gl && gl.canvas) {
+        gl.canvas.addEventListener('webglcontextlost', function (ev) {
           ev.preventDefault();
           if (state.sigma !== owner) return; // a dead renderer's canvas losing its context
           scheduleRecovery();
         });
-      });
+      }
     }
 
     let recoveryRaf = 0;
@@ -422,8 +458,7 @@
       for (let i = 0; i < decoded.nodes.length; i++) {
         graph.addNode(String(i), { index: i, x: 0, y: 0, size: 5, label: decoded.nodes[i].label });
       }
-      const seen = new Map();
-      for (const edge of decoded.edges) addEdge(graph, edge, seen);
+      for (const edge of decoded.edges) addEdge(graph, edge);
       state.graph = graph;
       state.pinned = new Set();
       if (state.sigma) state.sigma.setGraph(graph);
@@ -431,28 +466,17 @@
       applyCountDependentSettings();
     }
 
-    function addEdge(graph, edge, seen) {
+    function addEdge(graph, edge) {
       const key = View().edgeKey(edge);
       if (graph.hasEdge(key)) return;
       const attrs = { edge: edge, kind: edge.kind, weight: edge.weight, label: edge.rel ? schema.labels.rels[edge.rel] || edge.rel : '' };
       // Undirected for the two co-occurrence kinds — "named in the same log file" is a
       // symmetric statement — and directed for typed relationships, so centrality and
       // traversal treat them correctly rather than pretending a mixed graph is one thing.
-      if (!edge.rel) {
-        graph.addUndirectedEdgeWithKey(key, String(edge.source), String(edge.target), Object.assign({ type: 'line' }, attrs));
-        return;
-      }
-      const pair = Math.min(edge.source, edge.target) + '-' + Math.max(edge.source, edge.target);
-      const nth = seen ? seen.get(pair) || 0 : 0;
-      if (seen) seen.set(pair, nth + 1);
-      if (nth === 0) {
-        graph.addDirectedEdgeWithKey(key, String(edge.source), String(edge.target), Object.assign({ type: 'arrow' }, attrs));
-      } else {
-        // Alternating sign so a third parallel edge bows the other way instead of landing
-        // on top of the second.
-        const curvature = 0.25 * Math.ceil(nth / 2) * (nth % 2 === 1 ? 1 : -1);
-        graph.addDirectedEdgeWithKey(key, String(edge.source), String(edge.target), Object.assign({ type: 'curve', curvature: curvature }, attrs));
-      }
+      // Parallel typed edges need no curvature here: sigma 4 indexes them and bows each
+      // one out (`parallelPath` in the edge reducer).
+      if (!edge.rel) graph.addUndirectedEdgeWithKey(key, String(edge.source), String(edge.target), attrs);
+      else graph.addDirectedEdgeWithKey(key, String(edge.source), String(edge.target), attrs);
     }
 
     // Count-dependent settings are applied *after* the payload lands. At construction the
@@ -469,10 +493,7 @@
         const i = result.addedNodes[k];
         state.graph.addNode(String(i), { index: i, x: 0, y: 0, size: 5, label: state.decoded.nodes[i].label });
       }
-      // A fresh `seen` per merge: an added parallel edge only needs to avoid the siblings
-      // arriving with it, and re-deriving the whole map would mean walking every edge.
-      const seen = new Map();
-      for (const edge of result.addedEdges) addEdge(state.graph, edge, seen);
+      for (const edge of result.addedEdges) addEdge(state.graph, edge);
       applyCountDependentSettings();
       return result;
     }
@@ -498,7 +519,7 @@
     }
 
     // Node labels are a *setting* change, not a reducer change — which is the whole reason
-    // this is the right lever for the "small node, empty canvas" case. `forceLabel` can
+    // this is the right lever for the "small node, empty canvas" case. A forced label can
     // only rescue nodes the analyst has already pointed at, and it is capped precisely
     // because it bypasses the three settings that bound label cost. Changing the bound
     // itself is cheap, global, and needs no per-node decision. Same shape as
@@ -533,17 +554,15 @@
     function zoom(factor) {
       if (!state.sigma) return;
       const camera = state.sigma.getCamera();
-      camera.animate({ ratio: camera.ratio * factor }, { duration: 150 });
+      camera.animate({ ratio: camera.getState().ratio * factor }, { duration: 150 });
     }
 
     // A plain, already-styled copy for PNG export.
     //
-    // Two reasons it cannot be the render graph. First, `graphology-canvas` resolves each
-    // element's renderer by `renderers.edges[attr.type]`, and ours carry Sigma's names
-    // (`arrow`, `curve`, `line`), which throws. Second — and more to the point — the export
-    // must reproduce what the analyst filtered, so it is built by running the *same*
-    // materialised decision map through the *same* reducers the screen uses. Hidden
-    // elements are simply absent.
+    // It cannot be the render graph: the export must reproduce what the analyst filtered,
+    // so it is built by running the *same* materialised decision map through the *same*
+    // reducers the screen uses, and hidden elements are simply absent. (graphology-canvas
+    // also resolves an edge's renderer from a `type` attribute, which these do not carry.)
     //
     // Parallel typed edges collapse here, because the canvas renderer draws every edge
     // straight and two straight parallels are one line. The label carries both names.
@@ -552,8 +571,8 @@
       if (!Graph || !state.graph) return null;
       const out = new Graph.UndirectedGraph();
       state.graph.forEachNode(function (key, attrs) {
-        const display = nodeReducer(key, attrs);
-        if (display.hidden) return;
+        const display = nodeReducer(key, attrs, attrs, null);
+        if (display.visibility === 'hidden') return;
         out.addNode(key, {
           x: attrs.x,
           y: attrs.y,
@@ -564,8 +583,8 @@
       });
       state.graph.forEachEdge(function (key, attrs, source, target) {
         if (!out.hasNode(source) || !out.hasNode(target)) return;
-        const display = edgeReducer(key, attrs);
-        if (display.hidden) return;
+        const display = edgeReducer(key, attrs, attrs);
+        if (display.visibility === 'hidden') return;
         const existing = out.hasEdge(source, target) ? out.edge(source, target) : null;
         if (existing) {
           const label = out.getEdgeAttribute(existing, 'label');

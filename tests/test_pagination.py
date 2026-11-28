@@ -140,11 +140,11 @@ class TestGoToPage:
         assert 'type="number"' in form and 'min="1"' in form and 'max="18"' in form
 
     def test_an_htmx_pager_jumps_into_its_own_region(self):
-        html = _render(3, 18, url="/x/partial", qs="q=y", target="#region", swap="morph")
+        html = _render(3, 18, url="/x/partial", qs="q=y", target="#region", swap="outerMorph")
         assert 'hx-get="/x/partial?page=4&amp;q=y"' in html
         form = re.search(r"<form[^>]*>", html).group(0)
         assert 'hx-get="/x/partial"' in form and 'hx-target="#region"' in form
-        assert 'hx-swap="morph"' in form and 'hx-ext="alpine-morph"' in form
+        assert 'hx-swap="outerMorph"' in form
 
     def test_an_alpine_pager_writes_its_scope(self):
         html = _render(3, 18, alpine="triggerRefresh(false)")

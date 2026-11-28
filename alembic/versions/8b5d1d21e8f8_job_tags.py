@@ -20,9 +20,10 @@ Create Date: 2026-08-16 13:46:33.825669
 from collections.abc import Sequence
 from typing import Union
 
-import fastapi_users_db_sqlalchemy
 import sqlalchemy as sa
+
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = "8b5d1d21e8f8"
 down_revision: Union[str, None] = "32229ad1d2b0"
@@ -38,7 +39,7 @@ def upgrade() -> None:
         sa.Column("tag", sa.String(length=50), nullable=False),
         sa.Column("color", sa.String(length=20), server_default="gray", nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
-        sa.Column("created_by_user_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=True),
+        sa.Column("created_by_user_id", GUID(), nullable=True),
         sa.ForeignKeyConstraint(["created_by_user_id"], ["user.id"]),
         sa.ForeignKeyConstraint(["job_id"], ["analysisjob.id"]),
         sa.PrimaryKeyConstraint("id"),

@@ -1,9 +1,11 @@
 """Comparison loading stays bounded by a page, not by the size of both runs."""
 
 import json
+import re
 import shutil
 import subprocess
 from html.parser import HTMLParser
+from pathlib import Path
 
 import pytest
 from sqlalchemy import event
@@ -16,7 +18,7 @@ HX = {"HX-Request": "true", "HX-Target": "comparison-results"}
 class _LoadingControls(HTMLParser):
     def handle_starttag(self, tag, attrs):
         attrs = dict(attrs)
-        if "@htmx:before-request" in attrs:
+        if "@htmx:before:request" in attrs:
             self.state = attrs
 
 
@@ -195,7 +197,7 @@ async def test_history_restore_returns_the_full_page(test_client, paged_runs):
 async def test_initial_async_load_replaces_history_instead_of_adding_a_page(test_client, paged_runs):
     jobs, _ = paged_runs
     url = f"/jobs/{jobs[1].id}/compare?baseline={jobs[0].id}&page=2"
-    response = await test_client.get(url, headers={**HX, "HX-Trigger": "comparison-results"})
+    response = await test_client.get(url, headers={**HX, "HX-Source": "div#comparison-results"})
     assert response.status_code == 200
     assert response.headers.get("HX-Replace-Url") == url
     assert "HX-Push-Url" not in response.headers
@@ -220,22 +222,26 @@ async def test_loading_state_recovers_after_failure_and_cached_history(test_clie
             "-e",
             """
 const attrs = JSON.parse(process.argv[1]);
-const evaluate = (state, expression, successful) => new Function('state', '$event', 'with (state) { ' + expression + ' }')(state, {detail: {successful}});
+// app.js's ltOk, read from the file the page loads, so the two cannot drift.
+const ltOk = new Function('return ' + process.argv[2])();
+// htmx 4 events carry the request context; a response below 400 is a success.
+const evaluate = (state, expression, ok) => new Function('state', '$event', 'window', 'with (state) { ' + expression + ' }')(state, {detail: {ctx: {response: {status: ok ? 200 : 500}}}}, {ltOk});
 const capture = state => [state.loading, state.failed, state.loaded];
 const results = [false, true].map(cached => {
   const state = new Function('$el', 'return (' + attrs['x-data'] + ')')({querySelector: () => cached ? {} : null});
   const initial = capture(state);
-  evaluate(state, attrs['@htmx:before-request']);
-  evaluate(state, attrs['@htmx:after-request'], false);
+  evaluate(state, attrs['@htmx:before:request']);
+  evaluate(state, attrs['@htmx:finally:request'], false);
   const failed = capture(state);
-  evaluate(state, attrs['@htmx:before-request']);
+  evaluate(state, attrs['@htmx:before:request']);
   const retrying = capture(state);
-  evaluate(state, attrs['@htmx:after-request'], true);
+  evaluate(state, attrs['@htmx:finally:request'], true);
   return { initial, failed, retrying, done: capture(state) };
 });
 console.log(JSON.stringify(results));
 """,
             json.dumps(controls),
+            re.search(r"function ltOk\(event\) \{.*?\n\}", (Path(__file__).resolve().parents[1] / "app/static/app.js").read_text(), re.S).group(0),
         ],
         capture_output=True,
         text=True,

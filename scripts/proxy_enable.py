@@ -359,7 +359,7 @@ def main(argv: list[str] | None = None) -> int:
     basic_hash = args.basic_auth_hash or os.environ.get("BASIC_AUTH_HASH") or ""
     if basic_user and not basic_hash:
         print(
-            "ERROR: a basic-auth username needs its bcrypt hash. Generate one with:\n  docker run --rm -i caddy:2-alpine caddy hash-password",
+            "ERROR: a basic-auth username needs its bcrypt hash. Generate one with:\n  docker run --rm -i caddy:2-alpine caddy hash-password --algorithm bcrypt",
             file=sys.stderr,
         )
         return 1

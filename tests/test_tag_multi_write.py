@@ -16,10 +16,10 @@ to all six write routes at once:
 from __future__ import annotations
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy import select
 
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.models import AnalysisJob, Entity, EntityTag, JobStatus, JobTag, LogFile, TagDefinition, User, WorkflowDef
 from app.tags import TAG_WRITE_MAX, parse_tag_write

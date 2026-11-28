@@ -5,9 +5,9 @@ Revises: e8a42c97f310
 """
 
 import sqlalchemy as sa
-from fastapi_users_db_sqlalchemy.generics import GUID
 
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision = "f5d18b73a209"
 down_revision = "e8a42c97f310"

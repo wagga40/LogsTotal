@@ -169,6 +169,44 @@ On a single host, the upgrade stops `web` and `worker` before migrating, because
 <!-- destructive-migrations -->
 Five migrations rename or remove something, so older code cannot run on the database they leave: `a3c7e2f91d04` renames `workerpolicy.pickup_weight` to `max_concurrent_jobs`, `c9d4e1f7a2b3` drops the threat-landscape tables, `e23ff92ada52` drops the `watchlist_event` table, `c8f24a1b6d90` drops the `user.theme` column, and `f3a91c2e7d40` moves each finding's rule text into a shared `rule_text` table and drops `finding.rule_content`. Rolling back across any of them needs the pre-upgrade database backup, which is one reason `./logstotal upgrade` always takes one. The last one's own downgrade is lossless (`pdm run -- alembic downgrade e064602640a4` writes every finding's rule text back, decoding compressed rows), but it runs from the new code, before the old code is installed.
 
+## PostgreSQL 19
+
+Releases before 1.4 bundled PostgreSQL 16, in the `postgres_data` volume. The bundled
+server is now PostgreSQL 19, in a new volume, `postgres19_data`. A PostgreSQL data
+directory cannot be opened by a newer major version, so the move is a dump and a restore,
+and it happens by itself the first time the new release starts:
+
+1. The `postgres-migrate` service starts first, in the PostgreSQL 16 image. It dumps the
+   database from the old cluster — through the running PostgreSQL 16 server if there still
+   is one, otherwise through a private server it starts on the old volume — and checks that
+   the dump is complete.
+2. The PostgreSQL 19 server initialises `postgres19_data` and loads that dump, in one
+   transaction, before it accepts connections. The web service waits for it.
+
+Nothing is written to `postgres_data`, so it stays a working PostgreSQL 16 cluster: it is
+what [`./logstotal upgrade:rollback`](#rollback) returns to. Every later start finds the new
+cluster in place and skips the move. It only concerns the bundled server
+(`COMPOSE_PROFILES=postgres`); an external PostgreSQL is yours to upgrade. CI tests the
+app against PostgreSQL 19.
+
+- **Let `./logstotal upgrade` do it.** It stops `web` and `worker` first, so nothing writes
+  to PostgreSQL 16 while it is being dumped. If the old server is still answering when the
+  move starts and other clients are connected to it, the move refuses rather than dump a
+  database that is still changing.
+- **It takes as long as a dump and a restore of your database.** The new server is not
+  healthy until the restore finishes, and the app waits for it.
+- **If the restore fails, PostgreSQL 19 refuses to start** rather than serve an empty
+  database, with a message saying so. `docker compose up -d` discards the incomplete
+  cluster and moves the data again; the PostgreSQL 16 volume is unchanged throughout.
+- **The old volume stays until you remove it.** `./logstotal doctor:docker` mentions it (so
+  does `./logstotal doctor` on a development checkout); the System tab cannot, because the
+  web container cannot list Docker volumes. Once you will not roll back past this release,
+  delete it:
+
+  ```bash
+  docker volume rm logstotal_postgres_data   # the prefix is your compose project name
+  ```
+
 ## Rollback
 
 **Rolling back the code restores a local snapshot. Rolling back the database means restoring a backup.** They are separate steps, and most rollbacks need only the first.
@@ -200,6 +238,27 @@ Without a snapshot (the upgrade ran with `SKIP_SNAPSHOT=true`, or the snapshots 
 ./logstotal upgrade VERSION=<previous-version>
 ./logstotal upgrade ARCHIVE=/path/to/logstotal-<previous-version>.7z
 ```
+
+### Service data
+
+Three bundled services keep data a newer release changed in a way the older one cannot
+read back. Rolling back across one of them is refused until you say the data written since
+the upgrade may go:
+
+```bash
+ROLLBACK_DATA=previous ./logstotal upgrade:rollback
+```
+
+| Crossing | What `ROLLBACK_DATA=previous` does |
+|---|---|
+| PostgreSQL 16 → 19 (1.4) | The older release runs on `postgres_data` again, the database as it was when 1.4 first started. Rows written since stay in `postgres19_data`, unused; the 19 cluster is marked superseded, so the next upgrade copies `postgres_data` across afresh instead of reviving them. |
+| Redis 7 → 8 (1.4) | Redis 7 cannot read Redis 8's data file, so it is set aside as `dump.rdb.from-redis-8` and Redis starts empty. Queued jobs are dropped and fail once `HUEY_QUEUE_EXPIRY` passes; caches rebuild themselves. |
+| Garage → 2.5 or later (1.4) | Its metadata goes back to the copy `garage-entrypoint.sh` took before Garage 2.5 first ran; the newer metadata is kept beside it as `meta/.from-garage-2.5`. Objects stored since the upgrade — the uploads and tool outputs of jobs run after it — are no longer listed, though their bytes stay in `garage_data`. |
+
+It applies only to services the host runs: an SQLite install with local storage only meets
+the Redis row. On a fleet, the check runs on the control plane before any host is stopped,
+and the data is set back there before its files are restored. If you need what was written
+since, move forward rather than back.
 
 ### Restore the database
 
@@ -240,7 +299,11 @@ On a fleet, stop it with `./logstotal deploy:stop`, open the control plane's ins
 
 The downgrade turns partial tasks into failed ones and keeps their findings. It drops the provenance and diagnostics columns. PostgreSQL keeps the unused `PARTIAL` enum label, which older code never reads.
 
-Uploaded files and the object store are never changed by a rollback or a database restore. Files uploaded after the restored backup stay in storage without a database row; `/admin/storage` reports them as orphans — see [Storage and retention](storage.md#orphaned-files).
+Uploaded files are never changed by a rollback or a database restore, and neither is the
+object store — except Garage's metadata when a rollback crosses Garage 2.5 with
+`ROLLBACK_DATA=previous` (see [Service data](#service-data)). Files uploaded after the
+restored backup stay in storage without a database row; `/admin/storage` reports them as
+orphans — see [Storage and retention](storage.md#orphaned-files).
 
 ## After you upgrade
 

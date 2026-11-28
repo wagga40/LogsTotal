@@ -49,11 +49,9 @@
 {%- elif target -%}
 <button type="button" class="lt-btn lt-btn--sm tabular-nums" aria-label="{{ aria }}"{{ mark }}{% if disabled %} disabled{% endif %}
         hx-get="{{ url }}?page={{ n }}{% if qs %}&amp;{{ qs }}{% endif %}"
-        {# A morph swap ALWAYS ships `hx-ext`, and the style is exactly `morph` — the
-           extension matches that string and nothing else, and htmx silently falls back to
-           `innerHTML` for any spelling it does not handle. Pinned by
+        {# A morph pager passes swap='outerMorph', htmx 4's built-in morph. Pinned by
            tests/test_alpine_bindings_initialize.py::TestMorphSwapSpelling. #}
-        hx-target="{{ target }}" hx-swap="{{ swap }}"{% if swap == 'morph' %} hx-ext="alpine-morph"{% endif %}>{{ label | safe }}</button>
+        hx-target="{{ target }}" hx-swap="{{ swap }}">{{ label | safe }}</button>
 {%- elif disabled -%}
 {# A disabled <a> is not a thing, so the dead end is a span wearing the same class. #}
 <span class="lt-btn lt-btn--sm" aria-label="{{ aria }}" aria-disabled="true"{{ mark }} style="opacity:.4">{{ label | safe }}</span>
@@ -101,7 +99,7 @@
   {% if alpine %}
   <form class="lt-ctl ml-2" @submit.prevent="page = Math.min({{ total_pages }}, Math.max(1, Math.floor(Number($event.target.elements.page.value)) || 1)); {{ alpine }}">
   {% elif target %}
-  <form class="lt-ctl ml-2" hx-get="{{ url }}" hx-target="{{ target }}" hx-swap="{{ swap }}"{% if swap == 'morph' %} hx-ext="alpine-morph"{% endif %}>
+  <form class="lt-ctl ml-2" hx-get="{{ url }}" hx-target="{{ target }}" hx-swap="{{ swap }}">
   {% else %}
   <form class="lt-ctl ml-2" method="get" action="{{ url }}">
   {% endif %}

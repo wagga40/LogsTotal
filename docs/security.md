@@ -562,8 +562,8 @@ follows the same rule; everyone else keeps the tree of matched processes only.
   list, checked by a fuzz test. The query engine in the web process is locked to the index
   and cache directories, with external access and configuration changes disabled before its
   first query.
-- **Nothing from an index is cached in the browser's storage**: htmx's history snapshots
-  are off for the Explore pane.
+- **Nothing from an index is cached in the browser's storage**: htmx keeps no history
+  snapshot in localStorage; Back and Forward fetch the pane again.
 
 Turning Explore off: `EVENTS_ENABLED=false` (no new indexes, tab hidden everywhere) or
 **Explore** on `/admin/settings` (tab hidden, builds continue).

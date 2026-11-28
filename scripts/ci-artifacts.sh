@@ -55,8 +55,8 @@ step "The image carries no secrets or operator state"
 bash scripts/verify-artifacts.sh image "$IMAGE_TAG"
 
 step "The release archive builds"
-# Tailwind first, or package.sh leaves base.html in dev mode and the archive serves the Play
-# CDN, and the archive CI verifies would not be the archive a release publishes.
+# Tailwind first, or package.sh leaves base.html in dev mode and the archive compiles its CSS
+# in the browser, and the archive CI verifies would not be the archive a release publishes.
 # scripts/ci-provision.sh puts a cached copy in place on a runner; this is the fallback for a
 # local run. Deliberately NOT PACKAGE_USE_COMMITTED_CSS: that ships the stylesheet in the
 # tree without recompiling, and the whole point here is that CI compiles what it verifies.

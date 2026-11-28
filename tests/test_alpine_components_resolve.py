@@ -248,7 +248,14 @@ def test_vendored_htmx_still_processes_the_document_on_domcontentloaded():
     assert re.search(r"""addEventListener\(\s*["']DOMContentLoaded["']""", htmx), (
         "vendored htmx no longer defers document processing to DOMContentLoaded — re-derive the lazy-tab dispatch gate in app/static/app.js"
     )
-    assert re.search(r"""readyState\s*===\s*["']complete["']""", htmx), "vendored htmx no longer short-circuits on readyState === 'complete'"
+    # htmx 4 (re-derived for 4.0.2): `"loading" === document.readyState ? addEventListener(
+    # "DOMContentLoaded", init) : setTimeout(init)`. htmx.min.js is a blocking <script> in
+    # <head>, so it always sees "loading" and registers its DOMContentLoaded handler before
+    # the deferred app.js registers the latch — the ordering the gate relies on. (htmx 2
+    # tested readyState === 'complete' instead; either shape keeps that order.)
+    assert re.search(r"""["']loading["']\s*===\s*document\.readyState|readyState\s*===\s*["']loading["']""", htmx), (
+        "vendored htmx no longer gates its boot on readyState === 'loading'"
+    )
 
 
 def test_entity_filter_writes_the_hidden_input_before_htmx_serializes():

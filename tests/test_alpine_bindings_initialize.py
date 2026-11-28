@@ -4,7 +4,7 @@
 The failure hides well. Jobs-list selection checkboxes in `<thead>`/`<tbody>` with no
 `x-data` ancestor anywhere on the page are inert, because Alpine only walks subtrees rooted
 at an `x-data` element — except while a job is running, when the 5s table poll makes
-base.html's `htmx:afterSwap` hook call `Alpine.initTree()` on the swapped `<tbody>` and the
+base.html's `htmx:after:settle` hook call `Alpine.initTree()` on the swapped `<tbody>` and the
 row boxes spring to life. "Works only when a job is running" is the symptom.
 
 Static template analysis cannot catch this (a partial legitimately relies on scope from
@@ -35,9 +35,9 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.models import AnalysisJob, Entity, EntityTag, InvestigationCase, JobStatus, LogFile, User, WorkflowDef
 
@@ -546,7 +546,7 @@ async def test_htmx_partials_have_intact_alpine_expressions(test_client, async_d
     }
     for url, label in partials.items():
         resp = await test_client.get(url)
-        assert resp.status_code in (200, 286), f"{label} ({url}) returned {resp.status_code}"
+        assert resp.status_code == 200, f"{label} ({url}) returned {resp.status_code}"
         assert_alpine_expressions_are_intact(resp.text, label)
 
 
@@ -599,61 +599,51 @@ def test_every_lazy_tab_trigger_is_once():
 
 
 class TestMorphSwapSpelling:
-    """`hx-swap="morph"` must be spelled exactly as the extension matches it.
+    """Every morph swap is htmx 4's `outerMorph`, spelled exactly as htmx matches it.
 
-    This is a source-shape test because every symptom of getting it wrong reads as a
-    different bug, and none of them reads as "wrong swap style".
-
-    `htmx-ext-alpine-morph.js` compares `swapStyle === 'morph'` and declines anything else.
-    htmx only consults extensions from its `default:` branch, and when none of them handles
-    the style it falls through to `htmx.config.defaultSwapStyle` — **innerHTML**. So
-    `hx-swap="morph:outerHTML"`, which looks like a more precise spelling of the same thing,
-    silently means innerHTML.
-
-    What that produced, all reported separately:
+    A source-shape test, because every symptom of a non-morphing swap reads as a different
+    bug and none of them reads as "wrong swap style". Under htmx 2 the more precise-looking
+    `morph:outerHTML` fell silently through to innerHTML, and that one spelling produced
+    three separately-reported bugs:
 
     * every child of the region destroyed and rebuilt on each 3s poll — visible flicker;
     * the log `<pre>` recreated, so its scroll position reset while being read;
     * `hx-trigger="every 3s"` left on the *outer* element, which innerHTML never touches, so
       polling continued after the run finished and only a page reload stopped it.
+
+    htmx 4 throws on an unknown style instead of falling back, which removes the silence
+    but not the need: a broken spelling is now an error on every poll.
     """
 
-    EXTENSION = Path("app/static/vendor/htmx-ext-alpine-morph.js")
+    HTMX = Path("app/static/vendor/htmx.min.js")
+    MORPHS = {"innerMorph", "outerMorph"}
 
-    def _handled_styles(self) -> set[str]:
-        """The swap-style literals the vendored extension actually compares against."""
-        src = self.EXTENSION.read_text()
-        return set(re.findall(r"swapStyle\s*===\s*'([^']+)'", src))
+    def test_the_vendored_htmx_still_has_both_morph_styles(self):
+        """If a vendor update renames them, the templates below must change with it."""
+        src = self.HTMX.read_text()
+        for style in self.MORPHS:
+            assert f'"{style}"' in src or f"'{style}'" in src, f"htmx no longer knows swap style {style!r}"
 
-    def test_the_extension_still_matches_a_bare_morph(self):
-        """If a vendor update changes this, the templates below must change with it."""
-        assert self._handled_styles() == {"morph"}, "the alpine-morph extension no longer handles exactly 'morph'; update the hx-swap values in the templates to match"
-
-    def test_every_morph_swap_uses_a_style_the_extension_handles(self):
-        handled = self._handled_styles()
+    def test_every_morph_swap_is_a_style_htmx_handles(self):
         offenders = []
         for path in Path("app/templates").rglob("*.html"):
-            for value in re.findall(r'hx-swap="([^"]*morph[^"]*)"', path.read_text()):
-                if value not in handled:
+            for value in re.findall(r'hx-swap="([^"]*[Mm]orph[^"]*)"', path.read_text()):
+                if value not in self.MORPHS:
                     offenders.append(f"{path}: hx-swap={value!r}")
-        assert not offenders, f"these swap styles fall through to htmx.config.defaultSwapStyle (innerHTML) instead of morphing: {offenders}"
+        assert not offenders, f"not a morph style htmx 4 knows (it throws): {offenders}"
 
-    def test_a_morph_swap_always_loads_the_extension(self):
-        """`hx-swap="morph"` with no `hx-ext` is the same innerHTML fallback."""
-        offenders = []
+    def test_no_template_still_loads_the_htmx_2_morph_extension(self):
         for path in Path("app/templates").rglob("*.html"):
             text = path.read_text()
-            if 'hx-swap="morph"' in text and "alpine-morph" not in text:
-                offenders.append(str(path))
-        assert not offenders, f'morph swap without hx-ext="alpine-morph" in: {offenders}'
+            assert "hx-ext=" not in text, f"{path}: hx-ext was removed in htmx 4; include the extension script instead"
+        assert "hx-alpine-compat.js" in Path("app/templates/base.html").read_text(), "outerMorph keeps Alpine state only with alpine-compat loaded"
 
     def test_the_regions_that_poll_are_the_ones_that_morph(self):
         """Both self-polling regions morph; a plain swap there is the bug above."""
         for path in ("app/templates/partials/_job_status.html", "app/templates/partials/_ai_analysis.html"):
             text = Path(path).read_text()
             assert 'hx-trigger="every 3s"' in text, path
-            assert 'hx-swap="morph"' in text, path
-            assert 'hx-ext="alpine-morph"' in text, path
+            assert 'hx-swap="outerMorph"' in text, path
 
 
 def test_nothing_jumps_into_a_resource_tab_by_assigning_the_property():

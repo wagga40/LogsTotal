@@ -84,13 +84,13 @@
     <div x-show="panel === 'tag'" x-cloak class="px-4 pb-3 pt-1 border-t border-gray-800">
       <form class="lt-bar" x-data="tagCombobox({ max: {{ tag_write_max }} })"
             hx-post="/jobs/bulk-tag" hx-target="#jobs-bulk-tag-result" hx-swap="innerHTML"
-            @htmx:after-request="if ($event.detail.successful) { window.tagVocabChanged(); reset(); $store.jobSelection.clear(); htmx.trigger('#jobs-table-body', 'jobsRefresh'); }">
+            @htmx:after:request="if (window.ltOk($event)) { window.tagVocabChanged(); reset(); $store.jobSelection.clear(); htmx.trigger('#jobs-table-body', 'jobsRefresh'); }">
         <input type="hidden" name="job_ids" x-ref="tagIds">
         {{ tag_combobox(size='lt-field--sm', width='w-72', placeholder='Search or create a tag…') }}
         <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary" :disabled="isEmpty()" title="Type or pick a tag first"
                 @click="$refs.tagIds.value = $store.jobSelection.ids.join(',')">Tag</button>
         <button type="submit" class="lt-btn lt-btn--sm" :disabled="isEmpty()" title="Type or pick a tag first"
-                hx-post="/jobs/bulk-untag"
+                hx-post="/jobs/bulk-untag" hx-target="#jobs-bulk-tag-result" hx-swap="innerHTML"
                 @click="$refs.tagIds.value = $store.jobSelection.ids.join(',')">Untag</button>
       </form>
     </div>

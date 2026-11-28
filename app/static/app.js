@@ -114,18 +114,31 @@ function copySourceFor(btn) {
   return btn.parentElement.querySelector(selector);
 }
 
-// Show loading cursor only for user-initiated HTMX requests, not background polls.
-document.body.addEventListener('htmx:beforeRequest', (e) => {
-  const trig = (e.detail.elt?.getAttribute('hx-trigger') || '').toLowerCase();
+// Did this htmx 4 request get an answer below 400? htmx 4 dropped htmx 2's
+// `event.detail.successful`; its events carry the request context instead, and a request
+// that never got a response does not fire `htmx:after:request` at all. One definition, so
+// the dozen `@htmx:after:request` handlers in the templates cannot each pick their own.
+function ltOk(event) {
+  const status = event?.detail?.ctx?.response?.status;
+  return typeof status === 'number' && status >= 200 && status < 400;
+}
+window.ltOk = ltOk;
+
+// Show loading cursor only for user-initiated HTMX requests, not background polls. The
+// event is dispatched on the requesting element (htmx 4 has no `detail.elt`).
+document.body.addEventListener('htmx:before:request', (e) => {
+  const trig = (e.target?.getAttribute?.('hx-trigger') || '').toLowerCase();
   if (trig.includes('every') || trig === 'load') return;
   document.body.style.cursor = 'wait';
 });
-document.body.addEventListener('htmx:afterRequest', () => {
+// `finally`, so a request that errored (no `after:request`) cannot leave the cursor spinning.
+document.body.addEventListener('htmx:finally:request', () => {
   document.body.style.cursor = '';
 });
 
-// Surface failed HTMX requests. htmx suppresses the swap on any 4xx/5xx and on a
-// network error, so without this a lazy-loaded tab or a rejected form just sits there
+// Surface failed HTMX requests. The swap is suppressed on any 4xx/5xx (base.html's
+// htmx-config `noSwap`, htmx 2's default restored) and on a network error, so without
+// this a lazy-loaded tab or a rejected form just sits there
 // — the pane keeps its spinner or its stale content and the user is told nothing.
 // Same class of silent failure as the DOMContentLoaded latch below, and as a copy
 // button that does nothing: `ltCopy` raises this toast too, because "the thing you
@@ -152,10 +165,8 @@ window.dismissHtmxError = () => {
   document.getElementById('htmx-error-toast')?.classList.add('hidden');
 };
 
-document.body.addEventListener('htmx:responseError', (e) => {
-  const status = e.detail.xhr?.status;
-  // 286 is our own "stop polling" signal, not a failure.
-  if (status === 286) return;
+document.body.addEventListener('htmx:response:error', (e) => {
+  const status = e.detail?.ctx?.response?.status;
   const messages = {
     403: 'Not allowed — you may need to sign in again.',
     404: 'That resource no longer exists.',
@@ -165,8 +176,13 @@ document.body.addEventListener('htmx:responseError', (e) => {
   ltToast(messages[status] || `Request failed (${status || 'error'}).`);
 });
 
-document.body.addEventListener('htmx:sendError', () => {
-  ltToast('Network error — check your connection and try again.');
+// `htmx:error` covers a failed fetch, a timeout and an exception during a swap alike.
+// An aborted request (a newer one replaced it, the page navigated) is not an error to the
+// person looking at the page; htmx 4 already does not report those.
+document.body.addEventListener('htmx:error', (e) => {
+  const error = e.detail?.error;
+  if (error && error.name === 'TypeError') ltToast('Network error — check your connection and try again.');
+  else ltToast('Something went wrong loading that — try again.');
 });
 
 // Unified confirm dialog for destructive/expensive actions.
@@ -175,6 +191,7 @@ document.body.addEventListener('htmx:sendError', () => {
 //  - htmx-driven requests (data-confirm-* on the element carrying hx-post/hx-get/…)
 (() => {
   let onConfirm = null;
+  let onDismiss = null;
   // Set only by the accept button, read (and cleared) by the `close` handler. Reading
   // `dialog.returnValue` instead was subtly wrong: older engines do not reset it on
   // showModal(), so after one confirmed action the value stayed 'confirm' and dismissing
@@ -194,8 +211,9 @@ document.body.addEventListener('htmx:sendError', () => {
     const acceptBtn = document.getElementById('confirm-dialog-accept');
     if (!titleEl || !messageEl || !acceptBtn) return;
 
-    function show(source, confirmFn) {
+    function show(source, confirmFn, dismissFn) {
       onConfirm = confirmFn;
+      onDismiss = dismissFn || null;
       accepted = false;
       titleEl.textContent = source.dataset.confirmTitle || 'Confirm action';
       messageEl.textContent = source.dataset.confirmMessage;
@@ -243,12 +261,23 @@ document.body.addEventListener('htmx:sendError', () => {
       true,
     );
 
-    // htmx-driven elements: pause the request, resume via issueRequest(true).
+    // htmx-driven elements. htmx 4 fires `htmx:confirm` only for a request whose context
+    // carries `confirm` (htmx 2 fired it for every request), so a `data-confirm-*` element
+    // opts in here first: `config:request` runs before the confirm step reads it.
+    document.body.addEventListener('htmx:config:request', (event) => {
+      const elt = event.target;
+      if (elt instanceof HTMLElement && elt.dataset.confirmMessage && event.detail?.ctx) {
+        event.detail.ctx.confirm ||= elt.dataset.confirmMessage;
+      }
+    });
+    // Pause the request and settle it either way: htmx 4 waits on a promise until
+    // issueRequest() or dropRequest() is called, and one left pending would hold the
+    // element's request queue — its next click would queue behind a dialog long closed.
     document.body.addEventListener('htmx:confirm', (event) => {
-      const elt = event.detail.elt;
+      const elt = event.target;
       if (!(elt instanceof HTMLElement) || !elt.dataset.confirmMessage) return;
       event.preventDefault();
-      show(elt, () => event.detail.issueRequest(true));
+      show(elt, () => event.detail.issueRequest(), () => event.detail.dropRequest());
     });
 
     // `method="dialog"` submit closes the dialog and sets returnValue from the button's
@@ -260,10 +289,13 @@ document.body.addEventListener('htmx:sendError', () => {
 
     dialog.addEventListener('close', () => {
       const fn = onConfirm;
+      const drop = onDismiss;
       const run = accepted;
       onConfirm = null;
+      onDismiss = null;
       accepted = false;
       if (run && fn) fn();
+      else if (drop) drop();
     });
   }
 
@@ -515,7 +547,7 @@ function caseEntityFilter(caseId, initialId, initialLabel, types, jobId) {
         row.type = 'button';
         row.className = 'w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800/60 transition flex items-center gap-2';
         const type = document.createElement('span');
-        type.className = 'text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 flex-shrink-0';
+        type.className = 'text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 shrink-0';
         type.textContent = item.entity_type;
         const value = document.createElement('span');
         value.className = 'font-mono text-gray-200 truncate';

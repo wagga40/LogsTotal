@@ -9,9 +9,9 @@ import json
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from fastapi_users_db_sqlalchemy.generics import GUID
 
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = "e4a7b8c192d6"
 down_revision: Union[str, None] = "d8f2a91e4c7b"

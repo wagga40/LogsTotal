@@ -49,7 +49,8 @@ async def failing_job(async_db):
 
 async def test_anonymous_viewer_is_told_results_are_incomplete(test_client, failing_job):
     resp = await test_client.get(f"/jobs/{failing_job.id}/status-partial")
-    assert resp.status_code == 286  # terminal — HTMX stops polling
+    assert resp.status_code == 200
+    assert 'hx-trigger="every' not in resp.text  # terminal — the partial stops the poll itself
     assert "findings below are incomplete" in resp.text
 
 

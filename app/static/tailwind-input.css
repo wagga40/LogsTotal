@@ -1,3 +1,21 @@
-@tailwind base;
-@tailwind components;
-@tailwind utilities;
+/* Production stylesheet input for ./logstotal css:build (and the Docker image's css stage).
+ *
+ * The theme, the layer order and the preflight compatibility rules live in
+ * app/templates/partials/_tailwind.css, which development mode compiles too — edit them
+ * there. This file only says where the class names come from, which is the one thing the
+ * two builds do differently: the browser build reads them off the live page.
+ */
+@import "../templates/partials/_tailwind.css";
+
+/* Templates only, as with Tailwind 3's `content`. A class assembled in JS is never emitted
+ * unless a template also spells it out. */
+@source "../templates";
+
+/* Entity-chip colours, enumerated so the build keeps every shade the palettes use even when
+ * no template happens to contain one literally. Templates must still write class names out
+ * in full (_analytics.html::_chip_classes, _tag_chip.html::tag_classes) — this list is a
+ * backstop, not a licence to interpolate: the scanner reads templates for *complete* class
+ * names, so an assembled one is never there to find. */
+@source inline("bg-{blue,purple,green,cyan,yellow,orange,rose,teal,indigo}-900/{40,50,60}");
+@source inline("text-{blue,purple,green,cyan,yellow,orange,rose,teal,indigo}-{200,300,400}");
+@source inline("border-{blue,purple,green,cyan,yellow,orange,rose,teal,indigo}-700/{40,50,60}");

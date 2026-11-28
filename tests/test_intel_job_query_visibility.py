@@ -15,10 +15,10 @@ the router resolving correctly, and the parser refusing to be useful without it.
 from __future__ import annotations
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy import select
 
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.models import AnalysisJob, Entity, EntityJobLink, IntelRule, JobStatus, LogFile, User, WorkflowDef
 

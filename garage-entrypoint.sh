@@ -50,6 +50,28 @@ echo "Generated $CONFIG (region=${S3_REGION:-logstotal})"
 
 G="/garage -c $CONFIG"
 
+# Garage 2.5 migrated the metadata format one way: a node that has run it cannot start an
+# older Garage again. Before the first start of this image on metadata an older release
+# wrote — recognisable by a database and no version marker, since the marker is new with
+# this image — keep one copy of it, inside the volume so it survives the container. That
+# copy is what `./logstotal upgrade:rollback` restores with ROLLBACK_DATA=previous. Garage
+# is not running yet, so the copy is consistent.
+META=/var/lib/garage/meta
+PRE_MIGRATION="$META/.pre-garage-2.5"
+VERSION_MARKER="$META/.logstotal-garage-version"
+if [ -e "$META/db.sqlite" ] && [ ! -e "$VERSION_MARKER" ] && [ ! -e "$PRE_MIGRATION" ]; then
+  rm -rf "$PRE_MIGRATION.partial"
+  mkdir "$PRE_MIGRATION.partial"
+  for entry in "$META"/*; do
+    cp -a "$entry" "$PRE_MIGRATION.partial/"
+  done
+  mv "$PRE_MIGRATION.partial" "$PRE_MIGRATION"
+  echo "Kept the pre-2.5 Garage metadata in $PRE_MIGRATION (the rollback copy)."
+fi
+if [ -n "${LOGSTOTAL_GARAGE_VERSION:-}" ]; then
+  printf '%s\n' "$LOGSTOTAL_GARAGE_VERSION" > "$VERSION_MARKER"
+fi
+
 $G server &
 GARAGE_PID=$!
 

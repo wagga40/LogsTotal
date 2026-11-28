@@ -1,4 +1,4 @@
-"""Vendor downloads must not replace a working bundle with a CDN error response."""
+"""Vendor downloads must not replace a working bundle with a bad response."""
 
 from __future__ import annotations
 
@@ -11,20 +11,22 @@ from _taskfile import all_tasks
 
 
 @pytest.mark.skipif(shutil.which("curl") is None, reason="curl not installed")
-@pytest.mark.parametrize("response", ["valid", "unknown-version", "download-failure"])
+@pytest.mark.parametrize("response", ["valid", "not-the-browser-build", "download-failure"])
 def test_vendor_download_preserves_bundle_on_failure(tmp_path, response):
     vendor_dir = tmp_path / "app/static/vendor"
     vendor_dir.mkdir(parents=True)
     bundle = vendor_dir / "tailwind.js"
-    original = "window.tailwind = {config: {}};\n"
+    original = 'document.querySelectorAll(`style[type="text/tailwindcss"]`);\n'
     bundle.write_text(original)
 
     # file:// exercises the real curl command without a network dependency.
     source = tmp_path / "response.js"
     if response == "valid":
-        source.write_text("window.tailwind = {config: {}, updated: true};\n")
-    elif response == "unknown-version":
-        source.write_text('console.error("Unknown Tailwind version: `3.4.19`")\n')
+        source.write_text('document.querySelectorAll(`style[type="text/tailwindcss"]`); // updated\n')
+    elif response == "not-the-browser-build":
+        # Tailwind 3's Play CDN bundle reads a JS config and no text/tailwindcss block, so
+        # every page would render unstyled with it — and the download itself succeeds.
+        source.write_text("window.tailwind = {config: {}};\n")
 
     download = next(cmd["cmd"] for cmd in all_tasks()["vendor:update"]["cmds"] if isinstance(cmd, dict) and "for" in cmd)
     command = download.replace("{{.ASSET}}", shlex.join(["tailwind.js", source.as_uri()]))

@@ -31,11 +31,11 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy import select
 
 import app.models  # noqa: F401 — populate Base.metadata
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.intel.rules import evaluate_rules_for_job
 from app.json_utils import dumps as json_dumps

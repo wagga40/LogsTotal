@@ -15,11 +15,11 @@ from fastapi_users.authentication import (
 )
 from fastapi_users.exceptions import InvalidPasswordException
 from fastapi_users.jwt import decode_jwt, generate_jwt
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app import activity
 from app.auth.schemas import UserSelfUpdate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.config import settings
 from app.database import get_async_session
 from app.models import User

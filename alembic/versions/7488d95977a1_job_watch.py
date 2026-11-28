@@ -18,10 +18,10 @@ Create Date: 2026-08-16 14:12:05.341730
 from collections.abc import Sequence
 from typing import Union
 
-import fastapi_users_db_sqlalchemy
 import sqlalchemy as sa
-from alembic import op
 
+from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = '7488d95977a1'
 down_revision: Union[str, None] = '8b5d1d21e8f8'
@@ -33,7 +33,7 @@ def upgrade() -> None:
     op.create_table('job_watch',
     sa.Column('id', sa.Integer(), autoincrement=True, nullable=False),
     sa.Column('job_id', sa.Integer(), nullable=False),
-    sa.Column('user_id', fastapi_users_db_sqlalchemy.generics.GUID(), nullable=False),
+    sa.Column('user_id', GUID(), nullable=False),
     sa.Column('created_at', sa.DateTime(), server_default=sa.text('(CURRENT_TIMESTAMP)'), nullable=False),
     sa.ForeignKeyConstraint(['job_id'], ['analysisjob.id'], ),
     sa.ForeignKeyConstraint(['user_id'], ['user.id'], ),

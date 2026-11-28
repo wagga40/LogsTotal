@@ -8,9 +8,9 @@ Create Date: 2026-05-24 12:00:00.000000
 from typing import Sequence, Union
 
 import sqlalchemy as sa
-from fastapi_users_db_sqlalchemy.generics import GUID
 
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = "c5e9a83fb112"
 down_revision: Union[str, None] = "b42f91c7e035"

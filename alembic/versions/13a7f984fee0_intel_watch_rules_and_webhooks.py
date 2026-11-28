@@ -20,10 +20,10 @@ Create Date: 2026-08-07 10:45:46.067420
 
 from typing import Sequence, Union
 
-import fastapi_users_db_sqlalchemy
 import sqlalchemy as sa
 
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = "13a7f984fee0"
 down_revision: Union[str, None] = "a3d7f01c9b52"
@@ -37,7 +37,7 @@ def upgrade() -> None:
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("name", sa.String(length=120), nullable=False),
         sa.Column("description", sa.String(length=500), nullable=True),
-        sa.Column("owner_user_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=True),
+        sa.Column("owner_user_id", GUID(), nullable=True),
         sa.Column("enabled", sa.Boolean(), server_default="1", nullable=False),
         sa.Column("query", sa.String(length=500), server_default="", nullable=False),
         sa.Column("entity_types", sa.Text(), server_default="[]", nullable=False),
@@ -72,7 +72,7 @@ def upgrade() -> None:
         sa.Column("job_id", sa.Integer(), nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
         sa.Column("acknowledged_at", sa.DateTime(), nullable=True),
-        sa.Column("acknowledged_by_user_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=True),
+        sa.Column("acknowledged_by_user_id", GUID(), nullable=True),
         sa.ForeignKeyConstraint(["acknowledged_by_user_id"], ["user.id"]),
         sa.ForeignKeyConstraint(["entity_id"], ["entity.id"]),
         sa.ForeignKeyConstraint(["job_id"], ["analysisjob.id"]),

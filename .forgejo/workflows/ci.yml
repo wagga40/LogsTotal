@@ -66,14 +66,14 @@ jobs:
   test:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, SHA-pinned like ci.yml on GitHub
         with:
           ref: ${{ inputs.ref }}
           # Tags, not just history: `test_the_declared_version_has_a_git_tag` skips only
           # when `.git` is absent, and a shallow checkout leaves `.git` present with zero
           # tags — so it fails rather than skips. `fetch-depth: 0` rather than GitHub's
-          # `fetch-tags`, because the action version here is whatever data.forgejo.org
-          # currently mirrors, and a full clone from a self-hosted server is cheap.
+          # `fetch-tags`: a full clone from a self-hosted server is cheap. v7 declares
+          # `node24`; on this host executor it runs on the host's own node.
           fetch-depth: 0
 
       - name: Provision
@@ -94,7 +94,7 @@ jobs:
           docker rm -f "$name" >/dev/null 2>&1 || true
           docker run -d --name "$name" -p 127.0.0.1::5432 \
             -e POSTGRES_USER=pgtest -e POSTGRES_PASSWORD=pgtest -e POSTGRES_DB=pgtest \
-            postgres:16-alpine >/dev/null
+            postgres:19-alpine >/dev/null
           for _ in $(seq 1 40); do
             docker exec "$name" pg_isready -U pgtest -q 2>/dev/null && break
             sleep 1
@@ -124,7 +124,7 @@ jobs:
   artifacts:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, SHA-pinned like ci.yml on GitHub
         with:
           ref: ${{ inputs.ref }}
 
@@ -143,7 +143,7 @@ jobs:
   deploy-smoke:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, SHA-pinned like ci.yml on GitHub
         with:
           ref: ${{ inputs.ref }}
 
@@ -159,7 +159,7 @@ jobs:
   dry-run:
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, SHA-pinned like ci.yml on GitHub
         with:
           ref: ${{ inputs.ref }}
 

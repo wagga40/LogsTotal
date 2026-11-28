@@ -219,12 +219,9 @@ async def test_the_poll_stops_when_nothing_is_active(admin_client):
 
 
 async def test_the_poll_region_morphs(admin_client):
-    """`morph:outerHTML` is not recognised by the extension, falls through to innerHTML,
-    and rebuilds every child on each poll."""
+    """A plain swap rebuilds every child on each poll; outerMorph updates in place."""
     resp = await admin_client.get("/admin/tasks")
-    assert 'hx-swap="morph"' in resp.text
-    assert "morph:outerHTML" not in resp.text
-    assert 'hx-ext="alpine-morph"' in resp.text
+    assert 'hx-swap="outerMorph"' in resp.text
 
 
 # ── The worker side ───────────────────────────────────────────────────────────

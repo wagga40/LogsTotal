@@ -8,7 +8,7 @@
     The suite takes seconds (a storage probe, an Argon2 verify per superuser, a `docker
     info` that can block for ten), so a button that changes nothing on screen until it
     returns reads as inert and invites another click — each one starting another full run.
-    `hx-disabled-elt` closes that; `?force=1` is what makes this
+    `hx-disable` closes that; `?force=1` is what makes this
     button, and only this button, bypass the shared cache.
   #}
   {% if ran_at %}<span class="text-gray-600">Checked {{ ran_at | time_ago }}</span>{% endif %}
@@ -16,7 +16,7 @@
           hx-get="/admin/system-checks-partial?force=1"
           hx-target="closest div.system-checks-body"
           hx-swap="innerHTML"
-          hx-disabled-elt="this">
+          hx-disable="this">
     {# htmx puts `htmx-request` on the requesting element for the life of the request, and
        its own injected rule lights up a descendant `.htmx-indicator` — so the spinner needs
        no `hx-indicator` attribute and reserves only its own 12px when idle. #}

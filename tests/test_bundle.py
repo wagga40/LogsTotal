@@ -3,7 +3,7 @@
 `ARCHIVE=` already gets the application across without a network — the archive is copied
 from the machine running the deploy, so hosts never reach the release server. What it does
 not solve is the images: every host still runs `docker compose build`, pulling
-python:3.14-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI, and Compose then
+python:3.15-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI, and Compose then
 pulls Redis, PostgreSQL, Caddy and socat.
 
 And Zircolite is pulled **lazily inside the first Windows job**, which is the one that
@@ -112,9 +112,11 @@ def test_the_image_list_is_read_from_the_files_that_declare_it():
     ).stdout.split()
 
     compose = (REPO_ROOT / "docker-compose.yml").read_text(encoding="utf-8")
-    for image in re.findall(r"^\s+image: ([a-z0-9./:-]+)$", compose, re.M):
-        if image.startswith("logstotal"):
-            continue
+    # Every third-party image carries the ${REGISTRY_PREFIX:-} mirror prefix. A pattern
+    # without it matched NO image at all, so this loop asserted nothing for months.
+    third_party = [image for image in re.findall(r"^\s+image: (?:\$\{REGISTRY_PREFIX:-\})?([a-z0-9./:@-]+)$", compose, re.M) if not image.startswith("logstotal")]
+    assert len(third_party) >= 4, f"the compose image pattern stopped matching: {third_party}"
+    for image in third_party:
         assert image in listed, f"{image} is in compose and would not be bundled"
 
 
@@ -596,5 +598,5 @@ def test_bundle_builds_legacy_archive_without_runtime_inventory_helper(tmp_path,
     extracted = subprocess.run(["7z", "x", "-so", str(bundle), "bundle-manifest.json"], capture_output=True, text=True, check=True)
     manifest = json.loads(extracted.stdout)
     assert ("example/legacy:1" in manifest["images"]) is container_tool
-    assert "redis:7-alpine" in manifest["images"]
+    assert "redis:8-alpine" in manifest["images"]
     assert (shim / "build-contexts").read_text().splitlines() == ["version: 1.2.3"] * 2

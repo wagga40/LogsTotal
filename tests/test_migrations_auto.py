@@ -261,8 +261,9 @@ def test_workers_never_import_the_web_tier():
     handler, `templates_config` and Jinja into the worker process just to compute a dict.
     The computation lives in the pure `app/analytics.py`.
 
-    FastAPI itself still loads, via `app.models` → `fastapi_users_db_sqlalchemy` (the User
-    table base), so this asserts the layering rule, not the absence of the dependency.
+    FastAPI itself still loads, via `app.models` → `app.auth.sqlalchemy_adapter` →
+    `fastapi_users` (the User table base), so this asserts the layering rule, not the
+    absence of the dependency.
     """
     root = Path(__file__).resolve().parent.parent
     for mod in ("app/workers/huey_app.py", "app/workers/tasks.py"):

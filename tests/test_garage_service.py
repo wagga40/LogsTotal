@@ -36,8 +36,10 @@ def test_every_variable_the_entrypoint_reads_is_passed_in():
     read = set(re.findall(r"\$\{([A-Z][A-Z0-9_]*)", code)) - assigned - by_hand
     assert {"LT_GARAGE_RPC_SECRET", "S3_REGION"} <= read, "the scan no longer sees the entrypoint's variables"
     passed = set(_garage_service().get("environment") or {})
-    missing = sorted(read - passed)
-    assert not missing, f"garage-entrypoint.sh reads {missing}, which docker-compose.yml never passes to the garage service"
+    # A value baked into the image with ENV reaches the entrypoint without compose.
+    baked = set(re.findall(r"^ENV ([A-Z][A-Z0-9_]*)=", (REPO_ROOT / "Dockerfile.garage").read_text(encoding="utf-8"), flags=re.M))
+    missing = sorted(read - passed - baked)
+    assert not missing, f"garage-entrypoint.sh reads {missing}, which neither docker-compose.yml nor Dockerfile.garage passes to the garage service"
 
 
 def test_the_secrets_come_from_env_under_names_garage_does_not_read():

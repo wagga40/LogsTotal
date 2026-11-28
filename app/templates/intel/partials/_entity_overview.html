@@ -43,7 +43,7 @@
   <div class="space-y-3">
     {% for g in associated_groups %}
     <div class="flex flex-wrap items-baseline gap-x-3 gap-y-2">
-      <span class="text-xs text-gray-500 w-36 flex-shrink-0">{{ g.label }}</span>
+      <span class="text-xs text-gray-500 w-36 shrink-0">{{ g.label }}</span>
       <div class="flex flex-wrap gap-2 flex-1 min-w-0">
         {% for r in g.rows %}
         <a href="/intel/entities/{{ r.entity.id }}"
@@ -52,7 +52,7 @@
                   hover:brightness-125"
            title="{{ r.entity.value }} (observed {{ r.occurrence_count }} time{{ 's' if r.occurrence_count != 1 else '' }})">
           <span class="font-mono truncate max-w-[180px]">{{ r.entity.value }}</span>
-          <span class="opacity-50 flex-shrink-0">&times;{{ r.occurrence_count }}</span>
+          <span class="opacity-50 shrink-0">&times;{{ r.occurrence_count }}</span>
         </a>
         {% endfor %}
         {% if g.overflow %}
@@ -92,7 +92,7 @@
        title="{{ cat.label }}: seen in {{ cat.job_count }} linked job{{ 's' if cat.job_count != 1 else '' }}">
       <span class="font-medium">{{ cat.label }}</span>
       <span class="opacity-60">&times;{{ cat.job_count }} job{{ 's' if cat.job_count != 1 else '' }}</span>
-      <span class="w-1.5 h-1.5 rounded-full flex-shrink-0 {{ sev_dot(cat.severity) }}"></span>
+      <span class="w-1.5 h-1.5 rounded-full shrink-0 {{ sev_dot(cat.severity) }}"></span>
     </span>
     {% endfor %}
   </div>
@@ -117,7 +117,7 @@
               hover:brightness-125"
        title="{{ co_value }} ({{ shared_count }} shared job{{ 's' if shared_count != 1 else '' }})">
       <span class="font-mono truncate max-w-[180px]">{{ co_value }}</span>
-      <span class="opacity-50 flex-shrink-0">&times;{{ shared_count }}</span>
+      <span class="opacity-50 shrink-0">&times;{{ shared_count }}</span>
     </a>
     {% endfor %}
   </div>

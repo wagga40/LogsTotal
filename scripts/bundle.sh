@@ -4,7 +4,7 @@
 # `task deploy ARCHIVE=<file>` already installs on a host with no internet — the archive is
 # copied from the machine running the deploy, so hosts never reach the release server. What
 # it does NOT solve is the images. Every host still runs `docker compose build`, and that
-# pulls python:3.14-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI from
+# pulls python:3.15-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI from
 # GitHub; compose then pulls Redis, PostgreSQL, Caddy and socat; and Zircolite — which five
 # of the six shipped workflows use — is pulled LAZILY INSIDE THE FIRST WINDOWS JOB. So a
 # closed-network install passes every check, reports healthy, and fails hours later when

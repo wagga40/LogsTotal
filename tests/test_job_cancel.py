@@ -178,10 +178,11 @@ async def test_cancel_missing_job_404(admin_client):
 
 
 async def test_status_partial_cancelled_stops_polling(test_client, make_job):
-    """A cancelled job is terminal: HTTP 286 stops the HTMX poll, badge renders."""
+    """A cancelled job is terminal: its partial carries no poll trigger, badge renders."""
     job = await make_job(status=JobStatus.CANCELLED)
     resp = await test_client.get(f"/jobs/{job.id}/status-partial", headers={"HX-Request": "true"})
-    assert resp.status_code == 286
+    assert resp.status_code == 200
+    assert 'hx-trigger="every' not in resp.text
     assert "Cancelled" in resp.text
 
 

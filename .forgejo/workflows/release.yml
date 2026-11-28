@@ -41,7 +41,7 @@ jobs:
     needs: ci
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, SHA-pinned like ci.yml on GitHub
         with:
           ref: ${{ inputs.tag || github.ref }}
           # `test_the_declared_version_has_a_git_tag` skips only when `.git` is absent, and
@@ -76,7 +76,7 @@ jobs:
       - name: Provision
         # One step, one script, shared with ci.yml: `7z` for package.sh (which gates on
         # `command -v 7z`), `tailwind` so the published archive ships the compiled
-        # stylesheet rather than the Play-CDN dev bundle, and `jq` because
+        # stylesheet rather than the dev-mode browser build, and `jq` because
         # `actions/forgejo-release` is a composite action whose script shells out to it.
         # Each is cached in ~/.local/bin, which persists on this host executor.
         run: bash scripts/ci-provision.sh 7z tailwind jq

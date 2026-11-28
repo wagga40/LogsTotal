@@ -73,8 +73,8 @@ jobs:
           sudo apt-get update && sudo apt-get install -y --no-install-recommends p7zip-full
           # Tailwind so the published archive ships the compiled stylesheet: `tools/tailwind/`
           # is gitignored, and without the CLI `scripts/package.sh` takes its warning branch
-          # and publishes the Play-CDN dev bundle — a JIT compiler running in the browser on
-          # every page load. package.sh builds the production sheet itself when the CLI is
+          # and publishes dev mode — Tailwind's compiler running in the browser on every page
+          # load. package.sh builds the production sheet itself when the CLI is
           # present, and restores dev mode after.
           bash scripts/ci-provision.sh tailwind
           # RELEASE_REPO_URL stamps .release-origin into the archive, so a host installed
@@ -120,8 +120,8 @@ jobs:
           ls -l dist/release
 
       - name: Publish
-        # softprops/action-gh-release v3.0.3 — SHA-pinned like every other action here.
-        uses: softprops/action-gh-release@efb35369e0ad2afab669f228072c1b0d510eae64
+        # softprops/action-gh-release v3.0.4 — SHA-pinned like every other action here.
+        uses: softprops/action-gh-release@8a0cd651e5b2365bd640854a3fa5dfc70e4875f3
         with:
           tag_name: ${{ inputs.tag || github.ref_name }}
           draft: ${{ inputs.draft == true }}

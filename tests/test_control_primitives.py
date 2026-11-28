@@ -16,9 +16,9 @@ shift it. These tests hold the line on things the CSS alone cannot:
 1. every `lt-` class a template uses actually exists (a typo renders an unstyled control,
    which no route test would notice);
 2. no element mixes an `.lt-*` class with the sizing utilities it replaces. That matters for
-   correctness, not just tidiness: in dev the Play CDN injects its stylesheet at runtime,
-   after base.html's inline <style>, so a leftover utility wins at equal specificity and the
-   control silently takes the utility's height.
+   correctness, not just tidiness: both builds place Tailwind's stylesheet before base.html's
+   inline <style>, so a leftover utility loses at equal specificity and is dead code that
+   reads as though it sized the control.
 """
 
 from __future__ import annotations
@@ -96,7 +96,7 @@ def test_every_lt_class_used_in_a_template_is_defined():
 
 
 def test_lt_controls_do_not_carry_the_utilities_they_replace():
-    """A leftover utility wins over the inline <style> under the dev Play CDN."""
+    """A leftover utility is dead code beside the primitive that replaced it."""
     offenders: list[str] = []
     for path in _templates():
         for attr in _CLASS_ATTR.findall(path.read_text()):
@@ -205,8 +205,7 @@ def test_no_inert_checkbox_styling_in_scoped_templates():
             if 'type="checkbox"' in line and "text-blue-600" in line:
                 offenders.append(f"{path.relative_to(REPO_ROOT)}: {line.strip()[:100]}")
     assert not offenders, (
-        "tailwind.config.js has plugins: [], so there is no @tailwindcss/forms and "
-        "`text-blue-600` on a native checkbox styles nothing. Use `lt-check`:\n  " + "\n  ".join(offenders)
+        "No Tailwind plugin is loaded, so there is no @tailwindcss/forms and `text-blue-600` on a native checkbox styles nothing. Use `lt-check`:\n  " + "\n  ".join(offenders)
     )
 
 
@@ -363,13 +362,12 @@ def _lt_classes_declaring_padding() -> set[str]:
 
 
 def test_no_padding_utility_sits_beside_a_primitive_that_sets_padding():
-    """The two builds resolve this pair in opposite directions.
+    """At equal specificity the primitive wins this pair, and the utility reads as applied.
 
-    In dev the Play CDN injects its sheet at runtime, after base.html's `<style>`, so the
-    utility wins. In production `tailwind-built.css` is linked *before* that block, so at equal
-    specificity the primitive wins. The Analytics menu on the job page carried `lt-menu--flush
-    p-3`: padded in dev, and in every deployment its checkboxes and button sat flush against
-    the border, because `.lt-menu--flush { padding: 0 }` won.
+    Both builds place Tailwind's sheet *before* base.html's `<style>`. Under Tailwind 3 the
+    dev Play CDN injected *after* it, so the builds disagreed: the Analytics menu on the job
+    page carried `lt-menu--flush p-3`, padded in dev, and in every deployment its checkboxes
+    and button sat flush against the border, because `.lt-menu--flush { padding: 0 }` won.
 
     A primitive whose padding a caller may override declares it under `:where()`, which no
     utility can lose to. One whose padding it owns keeps a plain class, and the caller drops
@@ -451,7 +449,7 @@ def test_no_template_assembles_a_tailwind_class_name():
 
     `task css:build` scans these files for *complete* class names; an interpolated one is
     never there to find, so the element ships with no styling. Dev does not show it — the
-    Play CDN generates from the live DOM — so this reaches a deployment intact, and it
+    browser build generates from the live DOM — so this reaches a deployment intact, and it
     presents as "some of them look wrong", which reads like a data problem.
 
     Coverage is accidental: a shade that happens to be written out literally elsewhere still

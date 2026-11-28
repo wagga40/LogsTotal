@@ -117,7 +117,7 @@ ok() { printf '%s✓%s %s\n' "${C_BOLD}${C_GREEN}" "$C_OFF" "$*"; }
 # note MSG [DETAIL...] — an advisory. Not a warning: nothing is wrong.
 #
 # The separation matters because `warn` goes to stderr and is the thing an operator is
-# trained to act on. "This archive ships the Play CDN bundle" is neither — it is a fact
+# trained to act on. "This archive compiles its CSS in the browser" is neither — it is a fact
 # about what you just built, and printing it as WARN teaches people to ignore WARN.
 # Continuation lines are indented under the label.
 note() {
@@ -1260,9 +1260,6 @@ host_installed_release() {
 #
 # One reader, so every consumer agrees on what a missing or malformed file means. The
 # manifest is one line — `version: X.Y.Z` — and every consumer wants the same thing out of it.
-# shellcheck disable=SC2120  # DIR is optional; shellcheck 0.10 (which CI pins) otherwise
-# reports SC2119 at every no-argument call site, and 0.11 does not — so a tree that lints
-# clean locally fails on the runner.
 read_version_file() {
   local dir="${1:-.}"
   sed -n 's/^version: *//p' "${dir%/}/VERSION" 2>/dev/null | head -1 | tr -d '[:space:]' || true

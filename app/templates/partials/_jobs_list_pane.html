@@ -31,9 +31,8 @@
   <div class="relative flex-1 min-w-[260px]"
        x-data="searchSuggest({ url: '/jobs/search-suggest', standalone: true })"
        @focusout="if (!$event.currentTarget.contains($event.relatedTarget)) close()">
-    {# `.lt-field--clearable`, never a Tailwind `pr-8`: the Play CDN injects its sheet at
-       runtime so the utility wins in dev, but the built stylesheet is linked BEFORE
-       base.html's <style>, so `.lt-field`'s shorthand `padding` wins in prod and silently
+    {# `.lt-field--clearable`, never a Tailwind `pr-8`: both builds place Tailwind's sheet
+       BEFORE base.html's <style>, so `.lt-field`'s shorthand `padding` wins and silently
        eats the space the × sits in. #}
     <input type="text" name="q" value="{{ query }}" placeholder="Search jobs — try  tag:apt29  status:failed  sev:critical  is:mine"
            x-ref="search" autocomplete="off" spellcheck="false"
@@ -122,7 +121,7 @@
   `x-data` here is load-bearing, not decorative: Alpine only initializes subtrees rooted
   at an x-data element, so without it the selection checkboxes in <thead>/<tbody> are
   never processed and silently do nothing. (They appeared to work only while a job was
-  running, because the 5s table poll made base.html's htmx:afterSwap hook call
+  running, because the 5s table poll made base.html's htmx:after:settle hook call
   Alpine.initTree() on the swapped <tbody>.) The scope is empty — the state itself lives
   in Alpine.store('jobSelection') so it survives those swaps.
 #}

@@ -123,7 +123,11 @@
                   @keyup.arrow-left="schedule()" @keyup.arrow-right="schedule()" @click="schedule()"
                   @keydown="onKey($event)"
                   hx-get="/intel/rules/preview" hx-trigger="keyup changed delay:400ms"
-                  hx-target="#rule-preview-{{ r.id if r else 'new' }}" hx-include="closest form">{{ r.query if r else '' }}</textarea>
+                  hx-target="#rule-preview-{{ r.id if r else 'new' }}" hx-include="closest form"
+                  {# innerHTML, stated: under htmx 2 this inherited the form's outerHTML, so the
+                     first preview replaced the <p> with a bare <span> and every later one had
+                     no #rule-preview-* left to land in. #}
+                  hx-swap="innerHTML">{{ r.query if r else '' }}</textarea>
       </div>
       {# Labels are tag, list and workflow names — bound with x-text, never interpolated. #}
       <div x-show="open" x-cloak data-search-suggest

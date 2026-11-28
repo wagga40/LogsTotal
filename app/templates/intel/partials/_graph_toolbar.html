@@ -22,7 +22,7 @@
      selectedTypes / hiddenKinds / hiddenRels / allTypesSelected() / toggleAllTypes()
 
    Chip colours come from `schema.colors` via inline `style`, never a Tailwind class:
-   tailwind.config.js only scans app/templates/**/*.html, and a class assembled at runtime
+   the production build only scans app/templates, and a class assembled at runtime
    in JS is invisible to the scanner in a production CSS build.
 #}
 

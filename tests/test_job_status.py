@@ -113,8 +113,7 @@ async def test_job_status_partial_htmx(test_client, sample_job):
         f"/jobs/{sample_job.id}/status-partial",
         headers={"HX-Request": "true"},
     )
-    # 200 = still polling, 286 = HTMX stop-polling (terminal job)
-    assert resp.status_code in (200, 286)
+    assert resp.status_code == 200
     assert "job-status-region" in resp.text
     # OOB fragment updates header actions (Analytics / Recalculate) without full page reload
     assert "hx-swap-oob" in resp.text
@@ -135,7 +134,7 @@ async def test_job_status_partial_hides_error_details_for_anonymous(test_client,
     """Anonymous users must not see job/task error text or tool log output."""
     jid = failed_job_with_error_details.id
     resp = await test_client.get(f"/jobs/{jid}/status-partial", headers={"HX-Request": "true"})
-    assert resp.status_code in (200, 286)
+    assert resp.status_code == 200
     text = resp.text
     assert "SECRET_JOB_ERR_XYZ" not in text
     assert "SECRET_TOOL_ERR_XYZ" not in text
@@ -147,7 +146,7 @@ async def test_job_status_partial_shows_error_details_for_admin(admin_client, fa
     """Admins see full job and task error messages in the status partial."""
     jid = failed_job_with_error_details.id
     resp = await admin_client.get(f"/jobs/{jid}/status-partial", headers={"HX-Request": "true"})
-    assert resp.status_code in (200, 286)
+    assert resp.status_code == 200
     text = resp.text
     assert "SECRET_JOB_ERR_XYZ" in text
     assert "SECRET_TOOL_ERR_XYZ" in text
@@ -215,7 +214,7 @@ async def test_status_poll_never_selects_a_full_tool_log(admin_client, async_db,
     finally:
         event.remove(engine, "before_cursor_execute", record)
 
-    assert resp.status_code in (200, 286)
+    assert resp.status_code == 200
     assert "LEAK_STDERR_XYZ" in resp.text, "the failed task's log still reaches the admin panel"
     assert "BIG_COMPLETED_LOG" not in resp.text
     # The 2 KB head shares a SELECT with every other column, so strip it before looking for

@@ -1,19 +1,16 @@
 {% from "partials/_severity_macros.html" import sev_dot, sev_card_border, sev_heading %}
 {# expects parent to set `s` and `is_terminal` (job.html / _job_status_poll.html)
 
-   `hx-swap="morph"` — exactly that, no `:outerHTML` suffix. This said `morph:outerHTML` for
-   a long time and was therefore never morphing at all: the alpine-morph extension matches
-   the bare string, declines anything else, and htmx then falls back to
-   `htmx.config.defaultSwapStyle` (innerHTML). That rebuilt every child of this region on
-   each 3s poll, which is why an open task log flickered and lost its scroll position, and
-   why `Alpine.store('openLogs')` had to exist to keep the disclosures open at all. See the
-   long note in `_ai_analysis.html`; the spelling is pinned by a test. #}
+   `hx-swap="outerMorph"` — a morph keeps node identity, so the 3s poll updates this region in
+   place. Before it truly morphed, every child was rebuilt on each poll: an open task log
+   flickered and lost its scroll position, which is why `Alpine.store('openLogs')` exists to
+   keep the disclosures open. See the long note in `_ai_analysis.html`; the spelling is
+   pinned by a test. #}
 <div id="job-status-region"
   {% if not is_terminal %}
   hx-get="/jobs/{{ job.id }}/status-partial"
   hx-trigger="every 3s"
-  hx-swap="morph"
-  hx-ext="alpine-morph"
+  hx-swap="outerMorph"
   {% endif %}
 >
 
@@ -100,7 +97,7 @@
         {% endif %}
       </div>
       {% if can_resubmit %}
-      <form method="POST" action="/jobs/resubmit" class="flex-shrink-0">
+      <form method="POST" action="/jobs/resubmit" class="shrink-0">
         <input type="hidden" name="file_id" value="{{ job.file_id }}">
         <input type="hidden" name="workflow_id" value="{{ job.workflow_id }}">
         <button type="submit"
@@ -122,7 +119,7 @@
     <div class="bg-gray-900 border border-gray-800 rounded-lg" x-data="{ analysisOpen: false }">
       <!-- Summary row -->
       <div class="flex items-center gap-4 px-4 py-3 flex-wrap">
-        <div class="flex-shrink-0 w-5 text-center">
+        <div class="shrink-0 w-5 text-center">
           {% if ts == 'completed' %}<span class="text-green-400 text-sm">&#10003;</span>
           {% elif ts == 'partial' %}<span class="text-amber-400 text-sm" title="Incomplete analysis">!</span>
           {% elif ts == 'running' %}<span class="text-blue-400 text-sm animate-pulse">&#9679;</span>
@@ -132,7 +129,7 @@
           {% elif ts == 'cancelled' %}<span class="text-gray-400 text-sm">&#8856;</span>
           {% else %}<span class="text-gray-600 text-sm">&#9675;</span>{% endif %}
         </div>
-        <span class="font-semibold text-sm capitalize {% if tr.tool_name in ['Computing analytics', 'File similarity'] %}min-w-[11rem]{% else %}w-28{% endif %} flex-shrink-0">{{ tr.tool_name }}</span>
+        <span class="font-semibold text-sm capitalize {% if tr.tool_name in ['Computing analytics', 'File similarity'] %}min-w-[11rem]{% else %}w-28{% endif %} shrink-0">{{ tr.tool_name }}</span>
         {% if tr.tool_name in ['Computing analytics', 'File similarity'] %}
         <span class="text-sm text-gray-500">—</span>
         {% else %}
@@ -156,7 +153,7 @@
           @click="analysisOpen = !analysisOpen"
           :aria-expanded="analysisOpen"
           aria-controls="task-analysis-{{ tr.id }}"
-          class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
+          class="text-xs font-mono shrink-0 px-3 py-1.5 rounded border transition"
           :class="analysisOpen ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
           Analysis details
         </button>
@@ -168,7 +165,7 @@
           hx-trigger="click once"
           hx-target="#task-log-{{ tr.id }}"
           hx-swap="innerHTML"
-          class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition"
+          class="text-xs font-mono shrink-0 px-3 py-1.5 rounded border transition"
           :class="($store.openLogs[{{ tr.id }}] || false) ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
           <span x-text="($store.openLogs[{{ tr.id }}] || false) ? 'Hide logs' : 'Show logs'"></span>
         </button>
@@ -273,7 +270,7 @@
             {{ items | sum(attribute='finding.count') }} hits</span>
         </div>
         <button type="button" @click="open = !open" :aria-expanded="open"
-          class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition flex items-center gap-1.5"
+          class="text-xs font-mono shrink-0 px-3 py-1.5 rounded border transition flex items-center gap-1.5"
           :class="open ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
           <span x-text="open ? 'Hide' : 'Show'"></span>
           <svg class="w-3 h-3 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
@@ -313,7 +310,7 @@
               </div>
               {% endif %}
             </div>
-            <div class="flex gap-3 flex-shrink-0">
+            <div class="flex gap-3 shrink-0">
               {% if item.has_details %}
               <button @click="showDetails = !showDetails"
                 hx-get="/jobs/findings/{{ item.finding.id }}/events"

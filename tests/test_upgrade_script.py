@@ -999,7 +999,7 @@ def test_the_overlay_deletes_everything_on_an_archive_install(tmp_path: Path):
 
 def test_a_checkout_keeps_its_own_base_html(tmp_path: Path):
     """The archive ships base.html in PRODUCTION mode (package.sh runs css:build, archives,
-    then restores dev mode) while HEAD holds the Play-CDN block. Overlaying it leaves the
+    then restores dev mode) while HEAD holds the dev-mode block. Overlaying it leaves the
     tree permanently dirty, so the next SOURCE=git run dies on the dirty guard naming no
     file. It costs nothing to keep: the Dockerfile rebuilds both in its css stage and copies
     them over whatever `COPY . .` laid down.

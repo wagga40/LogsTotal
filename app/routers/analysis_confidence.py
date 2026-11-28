@@ -129,7 +129,11 @@ async def analysis_compare(
     fragment = request.headers.get("HX-Request") == "true" and request.headers.get("HX-History-Restore-Request") != "true"
     if fragment and previous:
         context.update(await compare_findings_page(db, previous.id, current.id, page=page, per_page=_COMPARE_PAGE_SIZE))
-        history = "HX-Replace-Url" if request.headers.get("HX-Trigger") in {"comparison-results", "comparison-retry"} else "HX-Push-Url"
+        # htmx 4 names the requesting element in HX-Source as `tag#id` (htmx 2 sent the bare
+        # id as HX-Trigger). The pane's own load and its Retry replace the URL; a pager
+        # click pushes a history entry.
+        source_id = request.headers.get("HX-Source", "").partition("#")[2]
+        history = "HX-Replace-Url" if source_id in {"comparison-results", "comparison-retry"} else "HX-Push-Url"
         headers[history] = f"/jobs/{current.id}/compare?baseline={previous.id}&page={context['page']}"
         return templates.TemplateResponse(request, "partials/_analysis_comparison_results.html", context, headers=headers)
     tasks = await _comparison_task_metadata(db, [current.id, previous.id] if previous else [current.id])

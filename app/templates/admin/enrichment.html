@@ -40,12 +40,12 @@
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">Name *</span>
         <input type="text" name="name" required maxlength="80"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">Provider key (optional)</span>
         <input type="text" name="provider_key" maxlength="40" placeholder="otx, urlscan, …"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <div class="text-xs sm:col-span-2">
         <span class="block text-gray-400 mb-1.5">Entity types * <span class="text-gray-600">— which observables this service can look up</span></span>
@@ -54,12 +54,12 @@
       <label class="text-xs sm:col-span-2">
         <span class="block text-gray-400 mb-1">Link template (browser URL)</span>
         <input type="text" name="link_template" maxlength="500" placeholder="https://example.com/lookup/{value}"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">API template (optional, for future enrichment calls)</span>
         <input type="text" name="api_template" maxlength="500" placeholder="https://api.example.com/v1/{value}"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">API method</span>
@@ -71,22 +71,22 @@
       <label class="text-xs sm:col-span-2">
         <span class="block text-gray-400 mb-1">API headers (JSON, {token} substitution supported)</span>
         <textarea name="api_headers_json" rows="2" placeholder='{"Authorization": "Bearer {token}"}'
-                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none"></textarea>
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden"></textarea>
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">API token (encrypted at rest)</span>
         <input type="password" name="api_token" autocomplete="off"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">Display order</span>
         <input type="number" name="display_order" value="100" min="0" max="9999"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs sm:col-span-2">
         <span class="block text-gray-400 mb-1">Notes</span>
         <textarea name="notes" rows="2"
-                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"></textarea>
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden"></textarea>
       </label>
       <label class="flex items-center gap-2 text-sm text-gray-300">
         <input type="hidden" name="enabled" value="0">{# an unticked box posts nothing, and the route defaults to 1 #}
@@ -106,7 +106,7 @@
     {% for s in services %}
     <details class="border-b border-gray-800/50 last:border-b-0 group">
       <summary class="flex items-center gap-3 px-5 py-3 cursor-pointer hover:bg-gray-800/50 transition">
-        <span class="flex-shrink-0 w-8 text-center text-xs text-gray-600">{{ s.display_order }}</span>
+        <span class="shrink-0 w-8 text-center text-xs text-gray-600">{{ s.display_order }}</span>
         <div class="flex-1 min-w-0">
           <div class="flex items-center gap-2">
             <span class="text-sm font-medium text-white truncate {% if not s.enabled %}line-through text-gray-500{% endif %}">{{ s.name }}</span>
@@ -130,12 +130,12 @@
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Name</span>
             <input type="text" name="name" value="{{ s.name }}" required maxlength="80"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Provider key</span>
             <input type="text" name="provider_key" value="{{ s.provider_key or '' }}" maxlength="40"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <div class="text-xs sm:col-span-2">
             <span class="block text-gray-400 mb-1.5">Entity types *</span>
@@ -144,12 +144,12 @@
           <label class="text-xs sm:col-span-2">
             <span class="block text-gray-400 mb-1">Link template</span>
             <input type="text" name="link_template" value="{{ s.link_template or '' }}" maxlength="500"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">API template</span>
             <input type="text" name="api_template" value="{{ s.api_template or '' }}" maxlength="500"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">API method</span>
@@ -161,22 +161,22 @@
           <label class="text-xs sm:col-span-2">
             <span class="block text-gray-400 mb-1">API headers (JSON)</span>
             <textarea name="api_headers_json" rows="2"
-                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">{{ s.api_headers_json or '' }}</textarea>
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">{{ s.api_headers_json or '' }}</textarea>
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">API token {% if s.has_api_token %}(leave blank to keep existing){% endif %}</span>
             <input type="password" name="api_token" autocomplete="off"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Display order</span>
             <input type="number" name="display_order" value="{{ s.display_order }}" min="0" max="9999"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs sm:col-span-2">
             <span class="block text-gray-400 mb-1">Notes</span>
             <textarea name="notes" rows="2"
-                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">{{ s.notes or '' }}</textarea>
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">{{ s.notes or '' }}</textarea>
           </label>
           <label class="flex items-center gap-2 text-sm text-gray-300">
             <input type="hidden" name="enabled" value="0">

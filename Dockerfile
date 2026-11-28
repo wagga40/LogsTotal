@@ -1,11 +1,11 @@
 # Stage 1: Install Python dependencies (cached unless requirements.txt changes)
 #
-# 3.14 is what this project is developed on, and the ceiling that `requires-python =
-# ">=3.11"` leaves open; the CI matrix runs the suite on 3.11, 3.12 and 3.14, so the range
-# is tested rather than assumed. It is not here for speed — an analysis spends its wall
+# 3.15 is the newest CPython and the ceiling that `requires-python = ">=3.11"` leaves open;
+# the CI matrix runs the suite on 3.11, 3.12, 3.14 and 3.15, so the range is tested rather
+# than assumed. It is not here for speed — an analysis spends its wall
 # clock in the detection binaries, the subprocesses around them and the database, and the
 # interpreter only shows up in the pure-Python passes (analytics, lineage, markers).
-FROM python:3.14-slim AS deps
+FROM python:3.15-slim AS deps
 
 WORKDIR /app
 
@@ -13,9 +13,11 @@ COPY requirements.txt .
 
 # CXX/LDCXXSHARED are load-bearing, and what they prevent fails SILENTLY.
 #
-# `python:3.14-slim` records `CXX = gcc` and `LDCXXSHARED = gcc -shared` in its sysconfig
+# `python:3.14-slim` recorded `CXX = gcc` and `LDCXXSHARED = gcc -shared` in its sysconfig
 # where 3.12-slim recorded `g++` — that CPython was configured in an environment without
-# g++, and every C++ extension built from an sdist inherits the answer. `py-tlsh` is the
+# g++, and every C++ extension built from an sdist inherits the answer. 3.15-slim records
+# `/usr/bin/g++` again (checked when moving to it), but that is a property of one build of
+# the base image, not a promise, so the override and the guard below both stay. `py-tlsh` is the
 # one C++ sdist in requirements.txt (it publishes no wheels, so every image compiles it),
 # and linked by `gcc` it comes out with no libstdc++: `import tlsh` then raises
 # `ImportError: undefined symbol: __gxx_personality_v0`. Both call sites in
@@ -39,9 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Stage 2: Production CSS.
 #
 # Without this the image would ship `base.html` in **dev mode** — a `<script>` tag loading
-# the Tailwind Play CDN bundle, which is a JIT compiler that recompiles every utility class
-# in the browser on every page load, and which needs `style-src 'unsafe-inline'` to inject
-# what it produces — while `scripts/package.sh` ships production CSS in the *archive*.
+# Tailwind's browser build, a compiler that rebuilds every utility class in the browser on
+# every page load, and which needs `style-src 'unsafe-inline'` to inject what it produces —
+# while `scripts/package.sh` ships production CSS in the *archive*.
 #
 # Its own stage so the ~46 MB CLI download is cached independently of the app layer and
 # never reaches the runtime image — only the two files it produces are copied forward.
@@ -50,8 +52,9 @@ FROM deps AS css
 WORKDIR /app
 
 # Keep in step with TAILWIND_VERSION in Taskfile.yml.
-ARG TAILWIND_VERSION=3.4.19
+ARG TAILWIND_VERSION=4.3.5
 
+# The input imports app/templates/partials/_tailwind.css, which the templates COPY brings.
 COPY app/static/tailwind-input.css app/static/tailwind-input.css
 COPY app/static/vendor app/static/vendor
 COPY app/templates app/templates
@@ -67,7 +70,7 @@ COPY app/templates app/templates
 # template today is absent from a stylesheet compiled last week. `task package` flips
 # base.html to the compiled sheet and writes it in the same step, so "base.html already
 # points at the compiled sheet" means exactly "this tree was packaged" and nothing else. A
-# working tree carries the Play-CDN block and still gets a fresh build.
+# working tree carries the browser-build block and still gets a fresh build.
 #
 # The swap and both assertions run either way, so a half-swapped base.html still fails here
 # rather than in a browser.
@@ -87,8 +90,7 @@ RUN set -eu; \
       curl -fsSL -o /usr/local/bin/tailwindcss \
         "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-linux-${tw_arch}"; \
       chmod +x /usr/local/bin/tailwindcss; \
-      tailwindcss -i app/static/tailwind-input.css -o /tmp/tailwind-built.css \
-        --content "app/templates/**/*.html" --minify; \
+      tailwindcss -i app/static/tailwind-input.css -o /tmp/tailwind-built.css --minify; \
     fi; \
     # The same swap `task css:build` performs, inlined rather than shelling out to `task`
     # (go-task is not in this image, and adding it for one substitution is not worth it).
@@ -100,7 +102,7 @@ RUN set -eu; \
     grep -q 'tailwind-built.css' app/templates/base.html \
       || { echo "base.html was not switched to the compiled stylesheet" >&2; exit 1; }; \
     grep -q 'vendor/tailwind.js' app/templates/base.html \
-      && { echo "base.html still loads the Play CDN bundle" >&2; exit 1; }; \
+      && { echo "base.html still loads the Tailwind browser build" >&2; exit 1; }; \
     true
 
 # Stage 3: Application image

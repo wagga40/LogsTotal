@@ -6,7 +6,7 @@
   of itself. The ready pane carries no trigger, so the first poll that finds the index ready
   replaces this region with the explorer and the polling stops by itself.
 #}
-<div id="explore-region" hx-history="false"
+<div id="explore-region"
      class="bg-gray-900 border border-gray-800 rounded-xl p-6"
      {% if phase in ('pending', 'building', 'preparing') %}hx-get="{{ pane_url }}" hx-trigger="every 5s" hx-swap="outerHTML"{% endif %}>
   <h3 class="text-sm font-semibold text-gray-200 mb-2">Explore every event</h3>

@@ -11,16 +11,17 @@ env:
 
 vars:
   LINT_PATHS: 'app/ tests/ scripts/ init_db.py sync_workflows.py sync_rules.py'
-  TAILWIND_VERSION: '3.4.19'
-  # Play CDN releases are independent of the standalone CLI's releases.
-  TAILWIND_CDN_VERSION: '3.4.17'
-  HTMX_VERSION: '2.0.11'
-  ALPINE_VERSION: '3.17.4'
-  ALPINE_MORPH_VERSION: '3.17.4'
-  HTMX_ALPINE_MORPH_VERSION: '2.0.2'
+  # One version for both builds: the standalone CLI (css:build, production) and the browser
+  # build vendor:update downloads (dev mode) are the same compiler, so a page cannot render
+  # one way in development and another in production because they drifted apart.
+  TAILWIND_VERSION: '4.3.5'
+  HTMX_VERSION: '4.0.2'
+  ALPINE_VERSION: '3.17.5'
   PRISM_VERSION: '1.30.0'
-  MERMAID_VERSION: '11.17.2'
-  SIGMA_VERSION: '3.0.3'
+  MERMAID_VERSION: '12.4.0'
+  SIGMA_VERSION: '4.0.6'
+  # Sigma 4 moved node borders out of the core; @sigma/node-border is versioned on its own.
+  SIGMA_NODE_BORDER_VERSION: '4.0.0'
   GRAPHOLOGY_VERSION: '0.26.0'
   GRAPHOLOGY_LIBRARY_VERSION: '0.8.0'
 
