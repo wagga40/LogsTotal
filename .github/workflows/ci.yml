@@ -148,7 +148,7 @@ jobs:
 
       - name: Provide the Tailwind CLI
         # What release.yml does, so the archive checked here is built the way a published
-        # one is: with the compiled stylesheet, not the Play-CDN fallback.
+        # one is: with the compiled stylesheet, not the browser-build fallback.
         run: bash scripts/ci-provision.sh tailwind
 
       - name: Compose parses, image builds, archive builds, neither ships a secret

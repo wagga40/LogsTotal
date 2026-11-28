@@ -13,7 +13,7 @@
 #
 # Env:
 #   PACKAGE_USE_COMMITTED_CSS=true   with no Tailwind CLI, ship app/static/vendor/
-#                                    tailwind-built.css as it stands instead of the Play CDN.
+#                                    tailwind-built.css as it stands instead of the browser build.
 #                                    An explicit choice: nothing here can prove that file
 #                                    matches these templates. See the CSS mode block below.
 #
@@ -80,7 +80,7 @@ if [ -x tools/tailwind/tailwindcss ]; then
 elif base_html_is_prod; then
   [ -s "$CSS_BUILT" ] || die "app/templates/base.html loads ${CSS_BUILT}, but that file is missing or empty.
        This tree renders unstyled as it stands, so the archive would too.
-       Run './logstotal css:dev' for the Play CDN, or './logstotal tailwind:install && ./logstotal css:build'."
+       Run './logstotal css:dev' for the browser build, or './logstotal tailwind:install && ./logstotal css:build'."
   note "Tailwind CLI not found, but base.html already loads $(value "$CSS_BUILT")" \
     "($(wc -c <"$CSS_BUILT" | tr -d ' ') bytes) — the archive ships that stylesheet, unchanged." \
     "It was NOT recompiled here. If a template changed since it was built, run" \
@@ -99,9 +99,9 @@ else
   # The CLI is gitignored, so on a fresh clone or a runner without it this is the branch that
   # runs. It is not a failure — the app is fully correct this way — and the note says what the
   # archive contains rather than shouting about what it does not.
-  note "tools/tailwind/tailwindcss not found — this archive serves Tailwind from the Play" \
-    "CDN bundle it ships (app/static/vendor/tailwind.js). Every class renders; the cost" \
-    "is a ~120 KB gzipped compiler running in the browser on every page load." \
+  note "tools/tailwind/tailwindcss not found — this archive compiles Tailwind in the browser" \
+    "with the build it ships (app/static/vendor/tailwind.js). Every class renders; the cost" \
+    "is a ~75 KB gzipped compiler running in the browser on every page load." \
     "" \
     "${CSS_BUILT} is committed and sits right there, but nothing" \
     "here can check that it matches these templates — Tailwind emits only the" \

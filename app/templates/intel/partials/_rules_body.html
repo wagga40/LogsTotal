@@ -122,7 +122,7 @@
     <span class="text-xs {% if r.enabled %}text-green-400{% else %}text-gray-600{% endif %}">{{ 'On' if r.enabled else 'Off' }}</span>
     {% endif %}
   </div>
-  <div x-show="open" x-cloak class="border-t border-gray-800 px-4 py-4 space-y-4">
+  <div x-show="open" x-cloak class="border-t border-gray-800 px-4 py-4 flex flex-col gap-4">
     {# The whole condition, which the row above could only start. `break-all` because it is
        one unbroken token; a comma-separated `cidr:` list has no space to wrap at. #}
     {% if r.query %}
@@ -374,7 +374,7 @@
             hx-post="/intel/rules/lists/{{ l.row.id }}/delete" hx-target="#rules-region" hx-swap="outerHTML">Delete</button>
     {% endif %}
   </div>
-  <div x-show="open" x-cloak class="border-t border-gray-800 px-4 py-4 space-y-4">
+  <div x-show="open" x-cloak class="border-t border-gray-800 px-4 py-4 flex flex-col gap-4">
     {# The values themselves, bounded: `gtfobins` ships 92 and a list may hold 2,000. #}
     <div>
       <p class="lt-label">Values</p>

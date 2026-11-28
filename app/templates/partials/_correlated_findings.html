@@ -3,14 +3,14 @@
 <div class="space-y-1">
   {% for cf in correlated_findings %}
   <div class="flex items-center gap-3 text-xs flex-wrap">
-    <span class="text-gray-500 whitespace-nowrap flex-shrink-0">{{ cf.job_created_at.strftime('%Y-%m-%d') }}</span>
+    <span class="text-gray-500 whitespace-nowrap shrink-0">{{ cf.job_created_at.strftime('%Y-%m-%d') }}</span>
     <a href="/jobs/{{ cf.job_id }}" class="text-blue-300 hover:text-blue-200 font-mono truncate max-w-[200px] block" title="{{ cf.original_filename }}">
       {{ cf.original_filename }}
     </a>
-    <span class="text-gray-500 flex-shrink-0">{{ cf.tool_name }}</span>
-    <span class="flex-shrink-0 {{ sev_text(cf.severity) }}">{{ cf.severity }}</span>
-    <span class="text-gray-400 flex-shrink-0">{{ cf.count }} hit{% if cf.count != 1 %}s{% endif %}</span>
-    <a href="/jobs/{{ cf.job_id }}" class="text-purple-400 hover:text-purple-300 flex-shrink-0">→ #{{ cf.job_id }}</a>
+    <span class="text-gray-500 shrink-0">{{ cf.tool_name }}</span>
+    <span class="shrink-0 {{ sev_text(cf.severity) }}">{{ cf.severity }}</span>
+    <span class="text-gray-400 shrink-0">{{ cf.count }} hit{% if cf.count != 1 %}s{% endif %}</span>
+    <a href="/jobs/{{ cf.job_id }}" class="text-purple-400 hover:text-purple-300 shrink-0">→ #{{ cf.job_id }}</a>
   </div>
   {% endfor %}
 </div>

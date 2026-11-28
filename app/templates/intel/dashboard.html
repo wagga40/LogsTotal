@@ -258,11 +258,11 @@
           </div>
           <div class="border-t border-gray-800 mt-2 pt-2 lt-bar">
             <input type="text" x-model="newName" placeholder="Save current filters as…" class="lt-field lt-field--sm flex-1 min-w-0">
-            <label class="flex items-center gap-1 text-xs text-gray-400 flex-shrink-0 whitespace-nowrap">
+            <label class="flex items-center gap-1 text-xs text-gray-400 shrink-0 whitespace-nowrap">
               <input type="checkbox" x-model="newShared" class="lt-check">
               shared
             </label>
-            <button type="button" @click="save()" :disabled="!newName.trim()" class="lt-btn lt-btn--sm lt-btn--primary flex-shrink-0">Save</button>
+            <button type="button" @click="save()" :disabled="!newName.trim()" class="lt-btn lt-btn--sm lt-btn--primary shrink-0">Save</button>
           </div>
         </div>
       </div>

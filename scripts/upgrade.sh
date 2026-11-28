@@ -332,7 +332,7 @@ do_stage_code() {
       2) warn "could not reach $(release_repo_url) to check the package for ${REF} — trying anyway." ;;
     esac
     # Require 7z rather than falling back to a source zip. That zip is
-    # the COMMITTED tree, whose base.html is the Play-CDN dev bundle — a JIT compiler running
+    # the COMMITTED tree, whose base.html is in dev mode — Tailwind's compiler running
     # in the browser on every page load. `SOURCE=package` has to mean one artifact, or the
     # word means something different on each flow.
     command -v 7z >/dev/null 2>&1 || die "SOURCE=package needs 7z to open the release asset.
@@ -450,7 +450,7 @@ do_stage_code() {
 
     # On a checkout, keep the tree's OWN base.html and built stylesheet. The archive ships
     # them in production mode (package.sh runs css:build, archives, then restores dev mode)
-    # while HEAD holds the Play-CDN block — so overlaying them leaves the tree permanently
+    # while HEAD holds the dev-mode block — so overlaying them leaves the tree permanently
     # dirty, and the next `SOURCE=git` run dies on the guard above naming no file. It costs
     # nothing: the Dockerfile rebuilds both in its css stage and copies them over whatever
     # `COPY . .` laid down, so what is on disk here never reaches the image.

@@ -37,7 +37,7 @@ JQ_VERSION="1.7.1"
 # Kept in step with Taskfile.yml's TAILWIND_VERSION and the Dockerfile ARG — this one
 # compiles the CSS shipped in every release archive. tests/test_version_pins.py holds the
 # three copies together (they had drifted: 3.4.17 here, 3.4.19 elsewhere).
-TAILWIND_VERSION="3.4.19"
+TAILWIND_VERSION="4.3.5"
 
 fail() { echo "::error::$1" >&2; exit 1; }
 
@@ -112,7 +112,9 @@ install_tailwind() {
   case "$arch" in x86_64) key=linux-x64 ;; aarch64) key=linux-arm64 ;; esac
   dest="${PWD}/tools/tailwind/tailwindcss"
   mkdir -p "${PWD}/tools/tailwind"
-  if [ ! -x "${BIN_DIR}/tailwindcss" ]; then
+  # Re-fetched when the cached copy is another version: a host runner keeps ~/.local/bin
+  # between runs, so presence alone would keep compiling with whatever was pinned first.
+  if ! "${BIN_DIR}/tailwindcss" --help 2>&1 | head -n 3 | grep -q "tailwindcss v${TAILWIND_VERSION}\$"; then
     fetch "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-${key}" /tmp/tailwindcss
     install -m 0755 /tmp/tailwindcss "${BIN_DIR}/tailwindcss"
   fi

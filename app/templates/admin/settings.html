@@ -30,7 +30,7 @@
         <span id="max-upload-files-help" class="block text-xs text-gray-500 mt-1 max-w-3xl">How many files users can select together on the upload page (1–500). Applies after reloading that page. Each file creates its own job; upload concurrency and rate limits still apply.</span>
       </span>
       <input type="number" id="max_upload_files" name="max_upload_files" min="1" max="500" step="1" required
-             value="{{ site_settings.max_upload_files }}" aria-describedby="max-upload-files-help" class="lt-field lt-field--sm w-24 flex-shrink-0">
+             value="{{ site_settings.max_upload_files }}" aria-describedby="max-upload-files-help" class="lt-field lt-field--sm w-24 shrink-0">
     </div>
   {% endcall %}
 
@@ -50,7 +50,7 @@
         <span class="block text-xs text-gray-500 mt-1 max-w-3xl">Higher is more useful, and makes the job page slower to render and larger to send.</span>
       </span>
       <input type="number" id="max_finding_details" name="max_finding_details" min="1" max="500"
-             value="{{ site_settings.max_finding_details }}" class="lt-field lt-field--sm w-24 flex-shrink-0">
+             value="{{ site_settings.max_finding_details }}" class="lt-field lt-field--sm w-24 shrink-0">
     </div>
   {% endcall %}
 

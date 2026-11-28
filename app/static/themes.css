@@ -5,15 +5,16 @@
  * dropdown layering and popup positioning in ways that cannot happen in this theme — so
  * every menu would need testing twice, and the bugs would only ever appear in one of them.
  *
- * Tailwind's gray palette is remapped in tailwind.config.js (and the Play CDN
- * config in base.html) to reference --ui-gray-* below. This file MUST load
- * BEFORE the Tailwind stylesheet so the variables exist when Tailwind
- * resolves them (static CSS ignores import order but early declaration avoids
- * a flash while the Tailwind file is still loading).
+ * Tailwind's gray palette is remapped in app/templates/partials/_tailwind.css (the
+ * one Tailwind source, compiled by both the dev and the production build) to
+ * reference --ui-gray-* below. This file MUST load BEFORE the Tailwind stylesheet
+ * so the variables exist when Tailwind resolves them (static CSS ignores import
+ * order but early declaration avoids a flash while the Tailwind file is still
+ * loading).
  *
- * RGB triplets are space-separated (not comma) so Tailwind's
- * `rgb(var(--ui-gray-X) / <alpha-value>)` pattern works with opacity modifiers
- * like `bg-gray-800/50`.
+ * RGB triplets are space-separated (not comma): the theme wraps them as
+ * `rgb(var(--ui-gray-X))`, and Tailwind applies opacity modifiers like
+ * `bg-gray-800/50` to that with color-mix().
  */
 
 /* ── Classic (current look) ─────────────────────────────────────────────── */

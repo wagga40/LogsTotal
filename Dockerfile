@@ -41,9 +41,9 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 # Stage 2: Production CSS.
 #
 # Without this the image would ship `base.html` in **dev mode** — a `<script>` tag loading
-# the Tailwind Play CDN bundle, which is a JIT compiler that recompiles every utility class
-# in the browser on every page load, and which needs `style-src 'unsafe-inline'` to inject
-# what it produces — while `scripts/package.sh` ships production CSS in the *archive*.
+# Tailwind's browser build, a compiler that rebuilds every utility class in the browser on
+# every page load, and which needs `style-src 'unsafe-inline'` to inject what it produces —
+# while `scripts/package.sh` ships production CSS in the *archive*.
 #
 # Its own stage so the ~46 MB CLI download is cached independently of the app layer and
 # never reaches the runtime image — only the two files it produces are copied forward.
@@ -52,8 +52,9 @@ FROM deps AS css
 WORKDIR /app
 
 # Keep in step with TAILWIND_VERSION in Taskfile.yml.
-ARG TAILWIND_VERSION=3.4.19
+ARG TAILWIND_VERSION=4.3.5
 
+# The input imports app/templates/partials/_tailwind.css, which the templates COPY brings.
 COPY app/static/tailwind-input.css app/static/tailwind-input.css
 COPY app/static/vendor app/static/vendor
 COPY app/templates app/templates
@@ -69,7 +70,7 @@ COPY app/templates app/templates
 # template today is absent from a stylesheet compiled last week. `task package` flips
 # base.html to the compiled sheet and writes it in the same step, so "base.html already
 # points at the compiled sheet" means exactly "this tree was packaged" and nothing else. A
-# working tree carries the Play-CDN block and still gets a fresh build.
+# working tree carries the browser-build block and still gets a fresh build.
 #
 # The swap and both assertions run either way, so a half-swapped base.html still fails here
 # rather than in a browser.
@@ -89,8 +90,7 @@ RUN set -eu; \
       curl -fsSL -o /usr/local/bin/tailwindcss \
         "https://github.com/tailwindlabs/tailwindcss/releases/download/v${TAILWIND_VERSION}/tailwindcss-linux-${tw_arch}"; \
       chmod +x /usr/local/bin/tailwindcss; \
-      tailwindcss -i app/static/tailwind-input.css -o /tmp/tailwind-built.css \
-        --content "app/templates/**/*.html" --minify; \
+      tailwindcss -i app/static/tailwind-input.css -o /tmp/tailwind-built.css --minify; \
     fi; \
     # The same swap `task css:build` performs, inlined rather than shelling out to `task`
     # (go-task is not in this image, and adding it for one substitution is not worth it).
@@ -102,7 +102,7 @@ RUN set -eu; \
     grep -q 'tailwind-built.css' app/templates/base.html \
       || { echo "base.html was not switched to the compiled stylesheet" >&2; exit 1; }; \
     grep -q 'vendor/tailwind.js' app/templates/base.html \
-      && { echo "base.html still loads the Play CDN bundle" >&2; exit 1; }; \
+      && { echo "base.html still loads the Tailwind browser build" >&2; exit 1; }; \
     true
 
 # Stage 3: Application image

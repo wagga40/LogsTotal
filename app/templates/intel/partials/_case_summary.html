@@ -55,7 +55,7 @@
       {% for r in rollup.top_rules %}
       <div class="flex items-center justify-between gap-3 px-3 py-2 text-sm bg-gray-950/30">
         <span class="text-gray-300 truncate" title="{{ r.rule_name }}">{{ r.rule_name }}</span>
-        <div class="flex items-center gap-3 flex-shrink-0">
+        <div class="flex items-center gap-3 shrink-0">
           <span class="text-[10px] px-2 py-0.5 rounded border font-medium uppercase tracking-wider {{ sev_pill(r.severity) }}">{{ r.severity }}</span>
           <span class="text-xs text-gray-500 font-mono">{{ r.events }} event{{ 's' if r.events != 1 else '' }}</span>
         </div>

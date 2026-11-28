@@ -65,8 +65,8 @@
     <div class="flex items-center justify-between mt-1 text-[11px] text-gray-500">
       <span x-text="label">Loading…</span>
       <span class="flex items-center gap-3">
-        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm" :style="`background:${colors.events}`"></span> events</span>
-        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-sm" :style="`background:${colors.detected}`"></span> detected</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-xs" :style="`background:${colors.events}`"></span> events</span>
+        <span class="flex items-center gap-1"><span class="inline-block w-2 h-2 rounded-xs" :style="`background:${colors.detected}`"></span> detected</span>
         <button type="button" class="lt-btn lt-btn--xs" x-show="zoomed" x-cloak @click="resetZoom()">Reset zoom</button>
       </span>
     </div>

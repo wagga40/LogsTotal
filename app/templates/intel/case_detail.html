@@ -38,7 +38,7 @@
           {% if case.closed_at %}<span title="{{ case.closed_at.strftime('%Y-%m-%d %H:%M UTC') }}">closed {{ case.closed_at | time_ago }}</span>{% endif %}
         </div>
       </div>
-      <div class="flex items-center gap-2 flex-shrink-0">
+      <div class="flex items-center gap-2 shrink-0">
         {# The dialogs live outside the tab wrapper, so these work from any tab. #}
         <button onclick="document.getElementById('add-job-dialog').showModal()"
                 class="lt-btn">+ Jobs</button>
@@ -415,7 +415,7 @@
           row.className = 'w-full text-left px-3 py-2 text-sm hover:bg-gray-800/60 transition flex items-center gap-2';
           if (kind === 'entity') {
             const typeSpan = document.createElement('span');
-            typeSpan.className = 'text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 flex-shrink-0';
+            typeSpan.className = 'text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 shrink-0';
             typeSpan.textContent = item.entity_type;
             const valueSpan = document.createElement('span');
             valueSpan.className = 'font-mono text-gray-200 truncate';
@@ -425,13 +425,13 @@
             row.addEventListener('click', () => this.choose(item.id, item.value, box));
           } else {
             const idSpan = document.createElement('span');
-            idSpan.className = 'text-xs font-mono text-gray-500 flex-shrink-0';
+            idSpan.className = 'text-xs font-mono text-gray-500 shrink-0';
             idSpan.textContent = '#' + item.id;
             const nameSpan = document.createElement('span');
             nameSpan.className = 'text-gray-200 truncate flex-1';
             nameSpan.textContent = item.filename;
             const dateSpan = document.createElement('span');
-            dateSpan.className = 'text-xs text-gray-600 flex-shrink-0';
+            dateSpan.className = 'text-xs text-gray-600 shrink-0';
             dateSpan.textContent = item.created_at;
             row.appendChild(idSpan);
             row.appendChild(nameSpan);

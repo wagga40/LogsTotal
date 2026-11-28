@@ -73,8 +73,8 @@ jobs:
           sudo apt-get update && sudo apt-get install -y --no-install-recommends p7zip-full
           # Tailwind so the published archive ships the compiled stylesheet: `tools/tailwind/`
           # is gitignored, and without the CLI `scripts/package.sh` takes its warning branch
-          # and publishes the Play-CDN dev bundle — a JIT compiler running in the browser on
-          # every page load. package.sh builds the production sheet itself when the CLI is
+          # and publishes dev mode — Tailwind's compiler running in the browser on every page
+          # load. package.sh builds the production sheet itself when the CLI is
           # present, and restores dev mode after.
           bash scripts/ci-provision.sh tailwind
           # RELEASE_REPO_URL stamps .release-origin into the archive, so a host installed

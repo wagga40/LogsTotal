@@ -547,7 +547,7 @@ function caseEntityFilter(caseId, initialId, initialLabel, types, jobId) {
         row.type = 'button';
         row.className = 'w-full text-left px-3 py-1.5 text-xs hover:bg-gray-800/60 transition flex items-center gap-2';
         const type = document.createElement('span');
-        type.className = 'text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 flex-shrink-0';
+        type.className = 'text-[10px] px-1.5 py-0.5 rounded bg-gray-800 text-gray-400 shrink-0';
         type.textContent = item.entity_type;
         const value = document.createElement('span');
         value.className = 'font-mono text-gray-200 truncate';

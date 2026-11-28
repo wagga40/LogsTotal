@@ -117,7 +117,7 @@ ok() { printf '%s✓%s %s\n' "${C_BOLD}${C_GREEN}" "$C_OFF" "$*"; }
 # note MSG [DETAIL...] — an advisory. Not a warning: nothing is wrong.
 #
 # The separation matters because `warn` goes to stderr and is the thing an operator is
-# trained to act on. "This archive ships the Play CDN bundle" is neither — it is a fact
+# trained to act on. "This archive compiles its CSS in the browser" is neither — it is a fact
 # about what you just built, and printing it as WARN teaches people to ignore WARN.
 # Continuation lines are indented under the label.
 note() {

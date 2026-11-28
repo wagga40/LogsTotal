@@ -9,7 +9,7 @@
     <input type="number" name="{{ scope }}_max_prompt_chars" min="1" max="2000000" step="1"
            value="{{ provider[scope ~ '_max_prompt_chars'] or '' if provider else '' }}"
            placeholder="{{ default_max_prompt_chars }}"
-           class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+           class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
   </label>
   {% endfor %}
   <p class="text-xs text-gray-500 sm:col-span-2">
@@ -70,7 +70,7 @@
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">Name *</span>
         <input type="text" name="name" required maxlength="80" placeholder="Local Ollama"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">API shape *</span>
@@ -92,49 +92,49 @@
           </span>
         </span>
         <input type="text" name="base_url" required maxlength="500" placeholder="{{ base_url_hints.openai }}"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">Model *</span>
         <input type="text" name="model" required maxlength="200" placeholder="qwen3.8:latest"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">API token (encrypted at rest; blank for a local model)</span>
         <input type="password" name="api_token" autocomplete="off"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">Temperature (0.0&ndash;2.0)</span>
         <input type="number" name="temperature" value="0.2" min="0" max="2" step="0.1"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">Max output tokens</span>
         <input type="number" name="max_output_tokens" value="20000" min="1" max="200000"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       <label class="text-xs">
         <span class="block text-gray-400 mb-1">Timeout (seconds)</span>
         <input type="number" name="timeout_seconds" value="300" min="5" max="3600"
-               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+               class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
       </label>
       {{ prompt_size_fields() }}
       <label class="text-xs sm:col-span-2">
         <span class="block text-gray-400 mb-1">Job system prompt override (blank uses the built-in SOC-analyst prompt)</span>
         <textarea name="system_prompt" rows="3"
-                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none"></textarea>
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden"></textarea>
       </label>
       <label class="text-xs sm:col-span-2">
         <span class="block text-gray-400 mb-1">Case system prompt override</span>
         <textarea name="case_system_prompt" rows="3" maxlength="8000"
                   placeholder="Leave empty for the default case assessment prompt."
-                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none"></textarea>
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden"></textarea>
       </label>
       <label class="text-xs sm:col-span-2">
         <span class="block text-gray-400 mb-1">Notes</span>
         <textarea name="notes" rows="2"
-                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none"></textarea>
+                  class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden"></textarea>
       </label>
       <div class="flex items-center gap-4">
         <label class="flex items-center gap-2 text-sm text-gray-300">
@@ -180,7 +180,7 @@
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Name</span>
             <input type="text" name="name" value="{{ p.name }}" required maxlength="80"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">API shape</span>
@@ -193,49 +193,49 @@
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Base URL</span>
             <input type="text" name="base_url" value="{{ p.base_url }}" required maxlength="500"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Model</span>
             <input type="text" name="model" value="{{ p.model }}" required maxlength="200"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">API token {% if p.has_api_token %}(leave blank to keep existing){% endif %}</span>
             <input type="password" name="api_token" autocomplete="off"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Temperature</span>
             <input type="number" name="temperature" value="{{ p.temperature }}" min="0" max="2" step="0.1"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Max output tokens</span>
             <input type="number" name="max_output_tokens" value="{{ p.max_output_tokens }}" min="1" max="200000"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           <label class="text-xs">
             <span class="block text-gray-400 mb-1">Timeout (seconds)</span>
             <input type="number" name="timeout_seconds" value="{{ p.timeout_seconds }}" min="5" max="3600"
-                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">
+                   class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">
           </label>
           {{ prompt_size_fields(p) }}
           <label class="text-xs sm:col-span-2">
             <span class="block text-gray-400 mb-1">Job system prompt override</span>
             <textarea name="system_prompt" rows="3"
-                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">{{ p.system_prompt or '' }}</textarea>
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">{{ p.system_prompt or '' }}</textarea>
           </label>
           <label class="text-xs sm:col-span-2">
             <span class="block text-gray-400 mb-1">Case system prompt override</span>
             <textarea name="case_system_prompt" rows="3" maxlength="8000"
                       placeholder="Leave empty for the default case assessment prompt."
-                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-none">{{ p.case_system_prompt or '' }}</textarea>
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm font-mono text-gray-200 focus:border-blue-500 outline-hidden">{{ p.case_system_prompt or '' }}</textarea>
           </label>
           <label class="text-xs sm:col-span-2">
             <span class="block text-gray-400 mb-1">Notes</span>
             <textarea name="notes" rows="2"
-                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-none">{{ p.notes or '' }}</textarea>
+                      class="w-full bg-gray-950 border border-gray-700 rounded px-2 py-1.5 text-sm text-gray-200 focus:border-blue-500 outline-hidden">{{ p.notes or '' }}</textarea>
           </label>
           <div class="flex items-center gap-4">
             <label class="flex items-center gap-2 text-sm text-gray-300">

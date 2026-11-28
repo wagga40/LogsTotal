@@ -5,8 +5,8 @@
 
     Never assembled — `bg-{{ color_prefix }}-900/40 text-{{ color_prefix }}-300 …` cannot
     work in a production CSS build: `./logstotal css:build` scans these files for *complete* class
-    names, and an interpolated one is never there to find. The dev Play CDN generates from the
-    live DOM, so development looks perfect.
+    names, and an interpolated one is never there to find. The dev browser build generates from
+    the live DOM, so development looks perfect.
 
     In production the failure is partial — any shade that happens to be written out literally
     elsewhere in the templates still works — so it presents as "some of them are broken",
@@ -35,7 +35,7 @@
   hx-swap="outerHTML">
   <div class="bg-gray-900 border border-gray-800 rounded-xl p-6 mb-6">
     <div class="flex items-center gap-3">
-      <svg class="animate-spin h-5 w-5 text-blue-400 flex-shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+      <svg class="animate-spin h-5 w-5 text-blue-400 shrink-0" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
         <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
         <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
       </svg>
@@ -265,12 +265,12 @@
           class="border-l-4 {{ sev_border(sev) }} bg-gray-950/40 rounded-r-lg overflow-hidden">
           <div class="w-full flex items-center justify-between gap-3 px-4 py-3 hover:bg-gray-800/50 transition">
             <div class="flex items-center gap-2.5 min-w-0">
-              <span class="w-2 h-2 rounded-full flex-shrink-0 {{ sev_dot(sev) }}"></span>
+              <span class="w-2 h-2 rounded-full shrink-0 {{ sev_dot(sev) }}"></span>
               <span class="font-medium text-sm text-gray-200">{{ cat.label }}</span>
               <span class="text-xs text-gray-500">{{ cat.total }} indicator{{ 's' if cat.total != 1 else '' }}</span>
             </div>
             <button type="button" @click="open = !open" :aria-expanded="open"
-              class="text-xs font-mono flex-shrink-0 px-3 py-1.5 rounded border transition flex items-center gap-1.5"
+              class="text-xs font-mono shrink-0 px-3 py-1.5 rounded border transition flex items-center gap-1.5"
               :class="open ? 'border-blue-600 bg-blue-900/50 text-blue-300 hover:bg-blue-800/50' : 'border-gray-600 bg-gray-800 text-gray-300 hover:bg-gray-700 hover:border-gray-500'">
               <span x-text="open ? 'Hide' : 'Show'"></span>
               <svg class="w-3 h-3 transition-transform" :class="open && 'rotate-180'" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
@@ -282,7 +282,7 @@
               {% for ind in cat.indicators %}
               {% set isev = ind.severity %}
               <div class="flex items-start gap-2 text-xs" x-show="sevFilter === '' || sevFilter === '{{ isev }}'">
-                <span class="flex-shrink-0 px-2 py-1 rounded border font-medium whitespace-nowrap {{ sev_pill(isev) }}">
+                <span class="shrink-0 px-2 py-1 rounded border font-medium whitespace-nowrap {{ sev_pill(isev) }}">
                   {{ ind.tag }}{% if ind.count > 1 %} <span class="font-bold">&times;{{ ind.count }}</span>{% endif %}
                 </span>
                 {% if ind.value %}

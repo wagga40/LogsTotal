@@ -51,12 +51,12 @@
        the top of this file rules that out here. Unguarded, this threw twice per graph mount
        on both the entity and the case Graph tab (the href self-heals once the payload lands,
        so the only symptom was console noise — which is exactly what hides a real error). #}
-    <span x-show="stats && stats.job_scoped" x-cloak class="flex-shrink-0">
+    <span x-show="stats && stats.job_scoped" x-cloak class="shrink-0">
       <a :href="stats ? '/intel/jobs/' + stats.job_id + '/findings' : null"
          class="lt-chip lt-chip--square lt-chip--btn bg-blue-900/40 text-blue-300 border-blue-700/40"
          title="Every finding in this job">scoped to job #<span x-text="stats?.job_id"></span></a>
     </span>
-    <span class="text-gray-600 flex-shrink-0">Click a node or edge for details · drag a node to pin it · right-click for actions</span>
+    <span class="text-gray-600 shrink-0">Click a node or edge for details · drag a node to pin it · right-click for actions</span>
   </div>
 
   {# The reserved row. `min-h` is one control's worth, so an empty status and a one-message

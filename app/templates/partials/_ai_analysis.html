@@ -377,7 +377,7 @@
     {% endif %}
     {% set show_prompt = user and user.is_superuser and analysis.prompt_text and site_settings and site_settings.show_ai_prompt %}
     {% if user and user.is_superuser and (analysis.log_output or show_prompt) %}
-    <div x-data class="mt-4 pt-3 border-t border-gray-800 space-y-2">
+    <div x-data class="mt-4 pt-3 border-t border-gray-800 flex flex-col gap-2">
       <div class="lt-bar">
         {% if analysis.log_output %}
         <button type="button"

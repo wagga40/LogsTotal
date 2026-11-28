@@ -62,7 +62,8 @@ VENDORED = {
     # Ships inside the htmx package, so it carries htmx's version.
     "htmx alpine-compat extension (`hx-alpine-compat.js`)": "HTMX_VERSION",
     "Alpine.js": "ALPINE_VERSION",
-    "Tailwind CSS (Play CDN build, dev mode only)": "TAILWIND_CDN_VERSION",
+    # The same compiler as the CLI, so the same pin: dev and production cannot drift apart.
+    "Tailwind CSS (browser build, dev mode only)": "TAILWIND_VERSION",
     "Prism.js (+ json/sql/yaml, Tomorrow theme)": "PRISM_VERSION",
     "Mermaid": "MERMAID_VERSION",
     "Sigma.js": "SIGMA_VERSION",

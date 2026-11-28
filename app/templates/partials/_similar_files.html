@@ -49,7 +49,7 @@
   <div class="space-y-2">
     {% for sf in similar_files %}
     <div class="flex items-center gap-3 px-3 py-2 bg-gray-800/50 rounded-lg flex-wrap">
-      <span class="text-xs font-mono font-bold px-2 py-0.5 rounded flex-shrink-0
+      <span class="text-xs font-mono font-bold px-2 py-0.5 rounded shrink-0
         {% if sf.distance == 0 %}bg-red-900/50 text-red-300 border border-red-700/60
         {% elif sf.distance < 30 %}bg-orange-900/50 text-orange-300 border border-orange-700/60
         {% elif sf.distance < 70 %}bg-yellow-900/50 text-yellow-300 border border-yellow-700/60
@@ -65,7 +65,7 @@
       {% endif %}
 
       {% if sf.job_status %}
-      <span class="text-xs px-2 py-0.5 rounded flex-shrink-0
+      <span class="text-xs px-2 py-0.5 rounded shrink-0
         {% if sf.job_status == 'completed' %}bg-green-900/50 text-green-300
         {% elif sf.job_status == 'failed' %}bg-red-900/50 text-red-300
         {% elif sf.job_status == 'running' %}bg-blue-900/50 text-blue-300

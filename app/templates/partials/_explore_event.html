@@ -18,6 +18,9 @@
     {% if error %}
     <p class="text-sm text-red-300">{{ error }}</p>
     {% else %}
+    {# First, not last: it never renders, and as the last child it would still count as
+       `:last-child` for space-y, leaving a gap under the final section. #}
+    <pre id="explore-event-json" hidden>{{ json }}</pre>
     {% if matched %}
     <section>
       <h4 class="text-[11px] uppercase tracking-wide text-gray-500 mb-1.5">Matched by</h4>
@@ -46,7 +49,6 @@
       </dl>
     </section>
     {% endfor %}
-    <pre id="explore-event-json" hidden>{{ json }}</pre>
     {% endif %}
   </div>
 </div>

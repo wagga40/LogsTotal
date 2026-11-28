@@ -76,7 +76,7 @@ jobs:
       - name: Provision
         # One step, one script, shared with ci.yml: `7z` for package.sh (which gates on
         # `command -v 7z`), `tailwind` so the published archive ships the compiled
-        # stylesheet rather than the Play-CDN dev bundle, and `jq` because
+        # stylesheet rather than the dev-mode browser build, and `jq` because
         # `actions/forgejo-release` is a composite action whose script shells out to it.
         # Each is cached in ~/.local/bin, which persists on this host executor.
         run: bash scripts/ci-provision.sh 7z tailwind jq
