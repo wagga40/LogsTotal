@@ -9,6 +9,11 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+### Fixed
+
+- The notes on each release page broke every sentence where the changelog wraps its lines.
+  They now keep each paragraph and list item on one line.
+
 ## [1.4.0] — 2026-11-28
 
 ### Updated

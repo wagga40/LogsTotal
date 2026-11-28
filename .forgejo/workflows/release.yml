@@ -99,11 +99,9 @@ jobs:
           TAG: ${{ inputs.tag || github.ref_name }}
         run: |
           version="${TAG#v}"
-          awk -v v="$version" '
-            $0 ~ "^## \\[" v "\\]" { inside = 1; next }
-            inside && /^## \[/     { exit }
-            inside                 { print }
-          ' CHANGELOG.md > release-notes.md
+          # Unwrapped: a release page renders every newline as a line break, so the
+          # changelog's 95-column wrap would break each sentence mid-line.
+          python3 -I scripts/release_notes.py "$version" > release-notes.md
           # A silently-empty body is how a release ends up looking unremarkable. The
           # changelog guard in the test suite makes this unreachable, which is exactly why a
           # failure here means something upstream broke rather than someone forgot.
