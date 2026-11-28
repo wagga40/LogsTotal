@@ -111,7 +111,8 @@ declared in `Taskfile.yml` and refreshed with `./logstotal vendor:update`.
 | Tailwind CSS (Play CDN build, dev mode only) | 3.4.17 | MIT (<https://github.com/tailwindlabs/tailwindcss>) |
 | Prism.js (+ json/sql/yaml, Tomorrow theme) | 1.30.0 | MIT (<https://github.com/PrismJS/prism>) |
 | Mermaid | 12.4.0 | MIT (<https://github.com/mermaid-js/mermaid>) |
-| Sigma.js | 3.0.3 | MIT (<https://github.com/jacomyal/sigma.js>) |
+| Sigma.js | 4.0.6 | MIT (<https://github.com/jacomyal/sigma.js>) |
+| @sigma/node-border (rewritten to a classic script by `vendor:update`) | 4.0.0 | MIT (<https://github.com/jacomyal/sigma.js>) |
 | graphology | 0.26.0 | MIT (<https://github.com/graphology/graphology>) |
 | graphology-library | 0.8.0 | MIT (<https://github.com/graphology/graphology>) |
 

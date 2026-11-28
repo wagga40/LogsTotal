@@ -72,8 +72,8 @@
           src="/static/mermaid-render.js?v={{ asset_version('app/static/mermaid-render.js') }}"
           data-mermaid-src="/static/vendor/mermaid.min.js?v={{ app_version }}"></script>
   {# Relationship graph — entity detail and case detail only. ONE block, in dependency
-     order: the vendor bundles first (our modules read `window.Sigma` / `window.graphology`
-     / `window.graphologyLibrary`), then our four files, then Alpine.
+     order: the vendor bundles first (our modules read `window.Sigma` / `window.SigmaNodeBorder`
+     / `window.graphology` / `window.graphologyLibrary`), then our four files, then Alpine.
 
      Deferred scripts run in document order, so one list is the whole ordering guarantee;
      two blocks drift. #}
@@ -81,6 +81,8 @@
   <script defer src="/static/vendor/graphology.umd.min.js?v={{ app_version }}"></script>
   <script defer src="/static/vendor/graphology-library.min.js?v={{ app_version }}"></script>
   <script defer src="/static/vendor/sigma.min.js?v={{ app_version }}"></script>
+  {# Reads window.Sigma, so it follows sigma.min.js; the renderer reads window.SigmaNodeBorder. #}
+  <script defer src="/static/vendor/sigma-node-border.js?v={{ app_version }}"></script>
   <script defer src="/static/graph-view.js?v={{ asset_version('app/static/graph-view.js') }}"></script>
   <script defer src="/static/graph-algo.js?v={{ asset_version('app/static/graph-algo.js') }}"></script>
   <script defer src="/static/graph-render.js?v={{ asset_version('app/static/graph-render.js') }}"></script>

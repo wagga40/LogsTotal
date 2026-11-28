@@ -833,6 +833,7 @@ tasks:
         graphology.umd.min.js https://unpkg.com/graphology@{{.GRAPHOLOGY_VERSION}}/dist/graphology.umd.min.js
         graphology-library.min.js https://unpkg.com/graphology-library@{{.GRAPHOLOGY_LIBRARY_VERSION}}/dist/graphology-library.min.js
         sigma.min.js https://unpkg.com/sigma@{{.SIGMA_VERSION}}/dist/sigma.min.js
+        sigma-node-border.js https://unpkg.com/@sigma/node-border@{{.SIGMA_NODE_BORDER_VERSION}}/dist/sigma-node-border.esm.js
     cmds:
       - mkdir -p app/static/vendor
       - for: {var: VENDOR_ASSETS, split: "\n", as: ASSET}
@@ -845,6 +846,17 @@ tasks:
           if [ "$1" = "tailwind.js" ] && grep -q 'Unknown Tailwind version:' "$tmp"; then
             echo "ERROR: unsupported Tailwind Play CDN version: $2"
             exit 1
+          fi
+          # @sigma/node-border ships only as an ES module importing three sigma namespaces,
+          # and this project loads classic scripts with no bundler. Its imports are all on
+          # the sigma UMD global, so rewrite them to read it, and publish the exports as
+          # window.SigmaNodeBorder. Refuse a file the rewrite did not fully convert.
+          if [ "$1" = "sigma-node-border.js" ]; then
+            perl -0777 -i -pe 's#^import \{([^}]*)\} from .sigma/(rendering|utils|primitives).;\n#const {$1} = window.Sigma.$2;\n#mg; s#^export \{([^}]*)\};\s*\z#window.SigmaNodeBorder = {$1};\n#m; $_ = "// \@sigma/node-border, rewritten from its ES module by ./logstotal vendor:update.\n(function () {\n" . $_ . "})();\n";' "$tmp" || exit 1
+            if grep -qE '^(import|export) ' "$tmp" || ! grep -q 'window.SigmaNodeBorder = ' "$tmp"; then
+              echo "ERROR: could not convert sigma-node-border.js to a classic script"
+              exit 1
+            fi
           fi
           chmod 644 "$tmp" || exit 1
           mv "$tmp" "app/static/vendor/$1"

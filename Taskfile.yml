@@ -20,7 +20,9 @@ vars:
   HTMX_ALPINE_MORPH_VERSION: '2.0.2'
   PRISM_VERSION: '1.30.0'
   MERMAID_VERSION: '12.4.0'
-  SIGMA_VERSION: '3.0.3'
+  SIGMA_VERSION: '4.0.6'
+  # Sigma 4 moved node borders out of the core; @sigma/node-border is versioned on its own.
+  SIGMA_NODE_BORDER_VERSION: '4.0.0'
   GRAPHOLOGY_VERSION: '0.26.0'
   GRAPHOLOGY_LIBRARY_VERSION: '0.8.0'
 

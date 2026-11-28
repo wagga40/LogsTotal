@@ -66,6 +66,7 @@ VENDORED = {
     "Prism.js (+ json/sql/yaml, Tomorrow theme)": "PRISM_VERSION",
     "Mermaid": "MERMAID_VERSION",
     "Sigma.js": "SIGMA_VERSION",
+    "@sigma/node-border (rewritten to a classic script by `vendor:update`)": "SIGMA_NODE_BORDER_VERSION",
     "graphology": "GRAPHOLOGY_VERSION",
     "graphology-library": "GRAPHOLOGY_LIBRARY_VERSION",
 }
