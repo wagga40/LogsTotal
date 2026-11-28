@@ -5,7 +5,7 @@
 groups = ["default", "dev", "docs"]
 strategy = ["inherit_metadata"]
 lock_version = "4.5.1"
-content_hash = "sha256:c26dd1cdec6db3aef849f4bd4ba497322fa4efd5ef99cb36af209357d90409f1"
+content_hash = "sha256:96eead53e7bda91fd1250961ef75f40e39cd2e3c4c5346b2dbbd373a1c3cb7cc"
 
 [[metadata.targets]]
 requires_python = ">=3.11"
@@ -1176,37 +1176,6 @@ dependencies = [
     "pwdlib[argon2,bcrypt]==0.3.0",
     "pyjwt[crypto]<3.0.0,>=2.12.0",
     "python-multipart<0.1.0,>=0.0.22",
-]
-files = [
-    {file = "fastapi_users-15.0.5-py3-none-any.whl", hash = "sha256:10fd4f3e85ed66f694a6ca2ecac609af4e59d1f9ec64d1557f5912dccfd87c7f"},
-    {file = "fastapi_users-15.0.5.tar.gz", hash = "sha256:097f69701894e650c346df89b1cdb0a09cf139234f4cb9a8ece275af4e98e202"},
-]
-
-[[package]]
-name = "fastapi-users-db-sqlalchemy"
-version = "7.0.0"
-requires_python = ">=3.9"
-summary = "FastAPI Users database adapter for SQLAlchemy"
-groups = ["default"]
-dependencies = [
-    "fastapi-users>=10.0.0",
-    "sqlalchemy[asyncio]<2.1.0,>=2.0.0",
-]
-files = [
-    {file = "fastapi_users_db_sqlalchemy-7.0.0-py3-none-any.whl", hash = "sha256:5fceac018e7cfa69efc70834dd3035b3de7988eb4274154a0dbe8b14f5aa001e"},
-    {file = "fastapi_users_db_sqlalchemy-7.0.0.tar.gz", hash = "sha256:6823eeedf8a92f819276a2b2210ef1dcfd71fe8b6e37f7b4da8d1c60e3dfd595"},
-]
-
-[[package]]
-name = "fastapi-users"
-version = "15.0.5"
-extras = ["sqlalchemy"]
-requires_python = ">=3.10"
-summary = "Ready-to-use and customizable users management for FastAPI"
-groups = ["default"]
-dependencies = [
-    "fastapi-users-db-sqlalchemy>=7.0.0",
-    "fastapi-users==15.0.5",
 ]
 files = [
     {file = "fastapi_users-15.0.5-py3-none-any.whl", hash = "sha256:10fd4f3e85ed66f694a6ca2ecac609af4e59d1f9ec64d1557f5912dccfd87c7f"},

@@ -84,8 +84,8 @@ async def main(*, recovery: bool = False):
     admin_password = os.environ.get("ADMIN_PASSWORD", "changeme123")
 
     from fastapi_users.exceptions import InvalidPasswordException
-    from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
+    from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
     from app.database import async_session_maker
     from app.models import User
 

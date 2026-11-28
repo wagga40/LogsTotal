@@ -20,9 +20,9 @@ else, and everything job-derived runs through the visibility filter.
 from __future__ import annotations
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.intel.queries import caret_token
 from app.jobs_query import COMPLETABLE_PREFIXES, IS_FLAGS, PREFIX_HELP, SYNTAX_HELP, parse_jobs_query

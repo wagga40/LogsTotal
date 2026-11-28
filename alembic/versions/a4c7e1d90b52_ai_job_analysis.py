@@ -7,10 +7,10 @@ Create Date: 2026-08-15 09:00:00.000000
 
 from typing import Sequence, Union
 
-import fastapi_users_db_sqlalchemy
 import sqlalchemy as sa
 
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = "a4c7e1d90b52"
 down_revision: Union[str, None] = "e23ff92ada52"
@@ -57,7 +57,7 @@ def upgrade() -> None:
         sa.Column("error_message", sa.String(length=500), nullable=True),
         # GUID(), not CHAR(32): the type renders as UUID on PostgreSQL and CHAR elsewhere,
         # so a hand-written CHAR would build a column the ORM cannot bind on PG.
-        sa.Column("requested_by_user_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=True),
+        sa.Column("requested_by_user_id", GUID(), nullable=True),
         sa.Column("prompt_chars", sa.Integer(), nullable=True),
         sa.Column("input_tokens", sa.Integer(), nullable=True),
         sa.Column("output_tokens", sa.Integer(), nullable=True),

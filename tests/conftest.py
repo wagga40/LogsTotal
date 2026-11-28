@@ -279,9 +279,8 @@ async def test_client(async_db, fake_redis, monkeypatch, tmp_path):
 @pytest.fixture()
 async def admin_user(async_db):
     """Create an admin (superuser) in the test DB and return (User, auth_cookie_value)."""
-    from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
-
     from app.auth.schemas import UserCreate
+    from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
     from app.auth.users import UserManager
     from app.models import User
 
@@ -305,9 +304,8 @@ async def admin_client(test_client, admin_user):
 @pytest.fixture()
 async def member_user(async_db):
     """Create a member-role user in the test DB."""
-    from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
-
     from app.auth.schemas import UserCreate
+    from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
     from app.auth.users import UserManager
     from app.models import User
 
@@ -331,9 +329,8 @@ async def member_client(test_client, member_user):
 @pytest.fixture()
 async def regular_user(async_db):
     """Create a basic user (role='user') in the test DB."""
-    from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
-
     from app.auth.schemas import UserCreate
+    from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
     from app.auth.users import UserManager
     from app.models import User
 

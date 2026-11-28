@@ -27,9 +27,10 @@ rollback-unsafe list in `docs/runbooks/upgrading.md`.
 
 from typing import Sequence, Union
 
-import fastapi_users_db_sqlalchemy
 import sqlalchemy as sa
+
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = "f1a2c37b5e08"
 down_revision: Union[str, None] = "d3f81a6c92be"
@@ -51,7 +52,7 @@ def upgrade() -> None:
         sa.Column("job_id", sa.Integer(), sa.ForeignKey("analysisjob.id"), nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column("acknowledged_at", sa.DateTime(), nullable=True),
-        sa.Column("acknowledged_by_user_id", fastapi_users_db_sqlalchemy.generics.GUID(), sa.ForeignKey("user.id"), nullable=True),
+        sa.Column("acknowledged_by_user_id", GUID(), sa.ForeignKey("user.id"), nullable=True),
         sa.UniqueConstraint("rule_id", "job_id", name="uq_job_rule_match"),
     )
     op.create_index("ix_job_rule_match_rule_id", "job_rule_match", ["rule_id"])

@@ -14,9 +14,9 @@ open would be the enumeration oracle the `job:` term is careful not to be.
 from __future__ import annotations
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.intel.queries import caret_token, scan_query, tokenize_query
 from app.models import AnalysisJob, Entity, EntityTag, JobStatus, LogFile, User, WorkflowDef

@@ -122,6 +122,30 @@ Installed from PyPI at build time, not vendored — see `requirements.txt` (gene
 redistributed in this repository. `pdm list --fields name,version,licenses --csv` prints
 the resolved set for a given lock.
 
+One exception is adapted into this repository's own source rather than installed:
+
+| Component | Where | Licence |
+|---|---|---|
+| fastapi-users-db-sqlalchemy 7.0.0 (user table base, `GUID` type, database adapter) | `app/auth/sqlalchemy_adapter.py` | MIT, Copyright (c) 2021 François Voron (<https://github.com/fastapi-users/fastapi-users-db-sqlalchemy>) |
+
+The MIT licence requires its notice to travel with the code, so here it is:
+
+> Permission is hereby granted, free of charge, to any person obtaining a copy of this
+> software and associated documentation files (the "Software"), to deal in the Software
+> without restriction, including without limitation the rights to use, copy, modify, merge,
+> publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons
+> to whom the Software is furnished to do so, subject to the following conditions:
+>
+> The above copyright notice and this permission notice shall be included in all copies or
+> substantial portions of the Software.
+>
+> THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED,
+> INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR
+> PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE
+> FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR
+> OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+> DEALINGS IN THE SOFTWARE.
+
 ## Sample logs
 
 `samples/` contains small, curated log files used for evaluation and by

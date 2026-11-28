@@ -13,10 +13,10 @@ so a scripted caller keeps working.
 from __future__ import annotations
 
 import pytest
-from fastapi_users_db_sqlalchemy import SQLAlchemyUserDatabase
 from sqlalchemy import select
 
 from app.auth.schemas import UserCreate
+from app.auth.sqlalchemy_adapter import SQLAlchemyUserDatabase
 from app.auth.users import UserManager
 from app.constants import ENTITY_TYPES, parse_entity_types
 from app.json_utils import loads as json_loads

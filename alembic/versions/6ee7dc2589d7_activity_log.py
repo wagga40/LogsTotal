@@ -14,9 +14,10 @@ Create Date: 2026-08-15 22:52:12.062408
 
 from collections.abc import Sequence
 
-import fastapi_users_db_sqlalchemy
 import sqlalchemy as sa
+
 from alembic import op
+from app.auth.sqlalchemy_adapter import GUID
 
 revision: str = "6ee7dc2589d7"
 down_revision: str | None = "c3d8e5f10a47"
@@ -29,7 +30,7 @@ def upgrade() -> None:
         "activity_event",
         sa.Column("id", sa.Integer(), autoincrement=True, nullable=False),
         sa.Column("created_at", sa.DateTime(), server_default=sa.text("(CURRENT_TIMESTAMP)"), nullable=False),
-        sa.Column("actor_user_id", fastapi_users_db_sqlalchemy.generics.GUID(), nullable=True),
+        sa.Column("actor_user_id", GUID(), nullable=True),
         sa.Column("actor_label", sa.String(length=255), nullable=False),
         sa.Column("actor_ip", sa.String(length=45), nullable=True),
         sa.Column("action", sa.String(length=80), nullable=False),
