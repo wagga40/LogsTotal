@@ -163,7 +163,6 @@ fleet_adopt() {
   # would run every heredoc with `bash -c` on THIS machine, which holds deploy-envs/ and the
   # keys to every host.
   local hosts
-  # shellcheck disable=SC2119
   hosts=$(fleet_hosts)
   case "$hosts" in
     *[!A-Za-z0-9.,_@-]*) die "the fleet record from ${from} names a host that is not one: '${hosts}'" ;;
@@ -172,8 +171,6 @@ fleet_adopt() {
     die "the fleet record from ${from} names \`local\` as a host. Refusing: it would run on this machine."
   fi
 
-  # The companion to the note on fleet_hosts above.
-  # shellcheck disable=SC2119
   info "fleet: ${hosts} (from the fleet record on ${from})"
   info "  secrets were NOT fetched — they never leave the machine that generated them."
   info "  So: upgrade, plan, status, logs, smoke, stop/start and remove. Not deploy or"
@@ -224,15 +221,6 @@ _fleet_fetch() {
 # (a deploy builds the record on the machine running it, before pushing it), and a workstation
 # reading a pulled copy has to keep the control plane's name or it starts deploying to itself.
 # The INSTALL_DIR argument is optional and always has been; fleet_adopt calls it with none.
-# Version 0.10.0 of the linter — which scripts/ci-provision.sh pins, and which is OLDER than
-# a current local install — reports SC2120/SC2119 for an optional-argument function whose
-# only in-file caller passes nothing. 0.11.0 stopped emitting it. So a local run is clean
-# while CI fails, and the directive below is what closes that gap. Reproduce CI's exact
-# verdict with:  docker run --rm -v "$PWD:/mnt" -w /mnt koalaman/shellcheck:v0.10.0 -x <file>
-#
-# Note no line of this comment may begin with the linter's own name: it would be parsed as a
-# malformed directive and fail the file outright.
-# shellcheck disable=SC2120
 fleet_hosts() {
   local path
   path=$(fleet_manifest_path "${1:-}")

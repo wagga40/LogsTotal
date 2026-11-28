@@ -28,7 +28,7 @@
 # was tested with, whatever else the host has. A git checkout carries no tarball, so a
 # developer's own `task` wins there.
 
-LT_TASK_VERSION=3.53.1
+LT_TASK_VERSION=3.54.0
 # The oldest go-task that loads this Taskfile: `flatten:` includes arrived in 3.39.0.
 LT_TASK_MIN_VERSION=3.39.0
 LT_TASK_URL_BASE=https://github.com/go-task/task/releases/download
@@ -39,10 +39,10 @@ LT_TASK_BUNDLED_PLATFORMS="linux_amd64 linux_arm64"
 
 lt_task_sha256_pin() {
   case "$1" in
-    linux_amd64) echo a54a408f6861ff921f6e87774180db31bacd8c1e7c944ca696db9fea49a82fc7 ;;
-    linux_arm64) echo e3ad19101493a0112e1f22ae8ccc54bf03e533b1076a0ca1e6c782a09ad2e588 ;;
-    darwin_amd64) echo 7f1a702d54a789cb818a636039a83df071f4179893133afafa4eba351a7e19ef ;;
-    darwin_arm64) echo 85d2d96c2380b33d7855b07b3f7a20dc7ca0eda999a26efa0fb5f6f32b366cd7 ;;
+    linux_amd64) echo 680859dbb4d881a9c72d4d9a8f510825450849af8567deacd7302c01124416fb ;;
+    linux_arm64) echo d7189d439d4a6058e39e1b2acd7c8b27acd4856691b408f23b242e4294e1df5b ;;
+    darwin_amd64) echo 0543b0844a725814c0412d3f4bed12873ce9ed0da207b15775f63a97d734aac0 ;;
+    darwin_arm64) echo 12a69fcf37bb8d5bc9150c44f9a936775b73e59ff044c2c245232f198c135637 ;;
     *) return 1 ;;
   esac
 }
@@ -68,7 +68,7 @@ lt_task_platform() {
 }
 
 # _lt_task_version_string BIN — the X.Y.Z a go-task binary reports, or nothing. Current
-# releases print a bare `3.53.1`, older ones `Task version: v3.39.0 (h1:…)`.
+# releases print a bare `3.54.0`, older ones `Task version: v3.39.0 (h1:…)`.
 #
 # No pipes in this or the next function: the wrapper runs under `pipefail`, and a `| grep -q`
 # that exits on its first match hands the writer a SIGPIPE that fails the whole check.

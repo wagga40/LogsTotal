@@ -41,7 +41,7 @@ jobs:
     needs: ci
     runs-on: self-hosted
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1, SHA-pinned like ci.yml on GitHub
         with:
           ref: ${{ inputs.tag || github.ref }}
           # `test_the_declared_version_has_a_git_tag` skips only when `.git` is absent, and

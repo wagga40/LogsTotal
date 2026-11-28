@@ -118,6 +118,9 @@ max-complexity = 25
 
 [tool.pytest.ini_options]
 asyncio_mode = "auto"
+# Every async fixture here is function-scoped, so this is what already happens; saying so
+# silences pytest-asyncio's warning that the unset default is about to change.
+asyncio_default_fixture_loop_scope = "function"
 testpaths = ["tests"]
 pythonpath = ["."]
 markers = [

@@ -1260,9 +1260,6 @@ host_installed_release() {
 #
 # One reader, so every consumer agrees on what a missing or malformed file means. The
 # manifest is one line — `version: X.Y.Z` — and every consumer wants the same thing out of it.
-# shellcheck disable=SC2120  # DIR is optional; shellcheck 0.10 (which CI pins) otherwise
-# reports SC2119 at every no-argument call site, and 0.11 does not — so a tree that lints
-# clean locally fails on the runner.
 read_version_file() {
   local dir="${1:-.}"
   sed -n 's/^version: *//p' "${dir%/}/VERSION" 2>/dev/null | head -1 | tr -d '[:space:]' || true
