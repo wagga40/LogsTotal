@@ -33,8 +33,8 @@ backup step, migration ordering, and rollback for each deployment path.
   `postgres` profile's data is dumped from the 16 volume and restored into a new
   `postgres19_data` volume before PostgreSQL 19 starts. The upgrade takes longer by the
   time a dump and restore of your database take. The 16 volume is left as it was, for
-  rollback; once you are satisfied, `./logstotal doctor` and the System tab give the
-  command that removes it. An external PostgreSQL is not touched. See
+  rollback; once you are satisfied, `./logstotal doctor:docker` gives the command that
+  removes it. An external PostgreSQL is not touched. See
   [PostgreSQL 19](docs/runbooks/upgrading.md#postgresql-19).
 - **Rolling back to 1.3.0 loses what was written since the upgrade.** PostgreSQL 16,
   Redis 7 and Garage 2.2 cannot read data that 19, 8 and 2.6 wrote, so `upgrade:rollback`

@@ -169,11 +169,16 @@ tasks:
       # Through /docker-entrypoint.sh in env-only mode: an exec'd process does not inherit
       # the DATABASE_URL the entrypoint derived at boot, and would check an empty
       # ./logstotal.db inside the container instead of the real database.
+      #
+      # LT_HOST_DOCKER_VOLUMES: the container has no Docker CLI, so the host lists its
+      # volumes for the check that reports a leftover PostgreSQL 16 volume. `-q`, not
+      # `--format`: go-task would read the format's braces as its own template.
       - |
+        vols=$(docker volume ls -q 2>/dev/null | tr '\n' ' ')
         if docker compose ps --status running web 2>/dev/null | grep -q web; then
-          docker compose exec -t -e LOGSTOTAL_ENTRYPOINT_ENV_ONLY=1 web /docker-entrypoint.sh python3 scripts/doctor.py --in-container
+          docker compose exec -t -e LOGSTOTAL_ENTRYPOINT_ENV_ONLY=1 -e LT_HOST_DOCKER_VOLUMES="$vols" web /docker-entrypoint.sh python3 scripts/doctor.py --in-container
         else
-          docker compose run --rm web python3 scripts/doctor.py --in-container
+          docker compose run --rm -e LT_HOST_DOCKER_VOLUMES="$vols" web python3 scripts/doctor.py --in-container
         fi
 
   gen-secrets:

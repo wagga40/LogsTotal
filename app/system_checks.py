@@ -749,8 +749,16 @@ def _docker_socket_present() -> bool:
     return Path("/var/run/docker.sock").exists()
 
 
+# Set by `./logstotal doctor:docker`, which runs the doctor inside the web container: the
+# container has no Docker CLI, so the host lists its volumes and passes the names in.
+HOST_DOCKER_VOLUMES_ENV = "LT_HOST_DOCKER_VOLUMES"
+
+
 def _docker_volume_names() -> list[str] | None:
     """Every Docker volume name on this host, or None when the CLI cannot answer. A seam."""
+    handed_in = os.environ.get(HOST_DOCKER_VOLUMES_ENV)
+    if handed_in is not None:
+        return handed_in.split()
     try:
         done = subprocess.run(["docker", "volume", "ls", "--format", "{{.Name}}"], capture_output=True, text=True, timeout=10, check=False)
     except Exception:
@@ -764,10 +772,14 @@ def check_postgres_legacy_volume(*, in_container: bool = False) -> CheckResult |
     The move to PostgreSQL 19 (postgres-migrate.sh) copies the data out of `postgres_data`
     and never deletes it, because that volume is what `upgrade:rollback` returns to. Once
     the operator is sure they will not roll back, it is a whole second copy of the database
-    taking up disk — and nothing else would ever mention it. Host only: the web container
-    has no Docker CLI, and the answer is about this machine's volumes.
+    taking up disk — and nothing else would ever mention it.
+
+    The answer is about the host's volumes, which the web container cannot list (it has no
+    Docker CLI). So it is answered on the host, or inside the container when
+    `doctor:docker` has handed the host's list in — the doctor a Docker deployment actually
+    runs, since `./logstotal doctor` there has no venv. The System tab cannot see it.
     """
-    if in_container or _running_in_container():
+    if (in_container or _running_in_container()) and HOST_DOCKER_VOLUMES_ENV not in os.environ:
         return None
     names = _docker_volume_names()
     if not names:

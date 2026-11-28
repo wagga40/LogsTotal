@@ -198,8 +198,10 @@ app against PostgreSQL 19.
 - **If the restore fails, PostgreSQL 19 refuses to start** rather than serve an empty
   database, with a message saying so. `docker compose up -d` discards the incomplete
   cluster and moves the data again; the PostgreSQL 16 volume is unchanged throughout.
-- **The old volume stays until you remove it.** `./logstotal doctor` mentions it. Once you
-  will not roll back past this release, delete it:
+- **The old volume stays until you remove it.** `./logstotal doctor:docker` mentions it (so
+  does `./logstotal doctor` on a development checkout); the System tab cannot, because the
+  web container cannot list Docker volumes. Once you will not roll back past this release,
+  delete it:
 
   ```bash
   docker volume rm logstotal_postgres_data   # the prefix is your compose project name

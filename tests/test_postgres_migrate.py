@@ -137,5 +137,28 @@ def test_nothing_is_reported_unless_both_volumes_belong_to_one_project(host, nam
 
 
 def test_the_check_stays_silent_inside_a_container(monkeypatch):
+    """The System tab runs in the web container, which cannot list the host's volumes."""
+    monkeypatch.delenv(system_checks.HOST_DOCKER_VOLUMES_ENV, raising=False)
     monkeypatch.setattr(system_checks, "_docker_volume_names", lambda: ["x_postgres_data", "x_postgres19_data"])
     assert system_checks.check_postgres_legacy_volume(in_container=True) is None
+
+
+def test_doctor_docker_answers_from_the_volumes_the_host_hands_in(monkeypatch):
+    """`./logstotal doctor` needs a venv a Docker host does not have, so `doctor:docker` is
+    the doctor that runs there — and before the host handed its volumes in, it could never
+    report the leftover volume at all."""
+    monkeypatch.setenv(system_checks.HOST_DOCKER_VOLUMES_ENV, "lt_redis_data lt_postgres_data lt_postgres19_data")
+    monkeypatch.setattr(system_checks.subprocess, "run", lambda *a, **k: pytest.fail("the handed-in list must be used, not the CLI"))
+    result = system_checks.check_postgres_legacy_volume(in_container=True)
+    assert result is not None and "docker volume rm lt_postgres_data" in result.fix
+
+
+def test_doctor_docker_hands_the_host_volumes_in_on_both_paths():
+    from _taskfile import all_tasks
+
+    script = next(c for c in all_tasks()["doctor:docker"]["cmds"] if isinstance(c, str) and "doctor.py" in c)
+    assert "docker volume ls -q" in script
+    invocations = [line for line in script.splitlines() if "scripts/doctor.py" in line]
+    assert len(invocations) == 2, invocations
+    for line in invocations:
+        assert f'-e {system_checks.HOST_DOCKER_VOLUMES_ENV}="$vols"' in line, line
