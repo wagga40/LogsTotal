@@ -2,7 +2,7 @@
 
 Without an `image:` key, Compose names a built image after the project directory — and
 there is nothing a `docker load` can satisfy. So a host with no network cannot be GIVEN an
-image, only told to build one, and building pulls python:3.14-slim, Debian packages, PyPI
+image, only told to build one, and building pulls python:3.15-slim, Debian packages, PyPI
 wheels and a 46 MB Tailwind CLI from GitHub.
 
 Naming them is what makes `docker save` on a connected machine and `docker load` on a

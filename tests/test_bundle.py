@@ -3,7 +3,7 @@
 `ARCHIVE=` already gets the application across without a network — the archive is copied
 from the machine running the deploy, so hosts never reach the release server. What it does
 not solve is the images: every host still runs `docker compose build`, pulling
-python:3.14-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI, and Compose then
+python:3.15-slim, Debian packages, PyPI wheels and a ~46 MB Tailwind CLI, and Compose then
 pulls Redis, PostgreSQL, Caddy and socat.
 
 And Zircolite is pulled **lazily inside the first Windows job**, which is the one that

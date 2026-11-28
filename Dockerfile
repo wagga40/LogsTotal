@@ -1,11 +1,11 @@
 # Stage 1: Install Python dependencies (cached unless requirements.txt changes)
 #
-# 3.14 is what this project is developed on, and the ceiling that `requires-python =
-# ">=3.11"` leaves open; the CI matrix runs the suite on 3.11, 3.12 and 3.14, so the range
-# is tested rather than assumed. It is not here for speed — an analysis spends its wall
+# 3.15 is the newest CPython and the ceiling that `requires-python = ">=3.11"` leaves open;
+# the CI matrix runs the suite on 3.11, 3.12, 3.14 and 3.15, so the range is tested rather
+# than assumed. It is not here for speed — an analysis spends its wall
 # clock in the detection binaries, the subprocesses around them and the database, and the
 # interpreter only shows up in the pure-Python passes (analytics, lineage, markers).
-FROM python:3.14-slim AS deps
+FROM python:3.15-slim AS deps
 
 WORKDIR /app
 
@@ -13,9 +13,11 @@ COPY requirements.txt .
 
 # CXX/LDCXXSHARED are load-bearing, and what they prevent fails SILENTLY.
 #
-# `python:3.14-slim` records `CXX = gcc` and `LDCXXSHARED = gcc -shared` in its sysconfig
+# `python:3.14-slim` recorded `CXX = gcc` and `LDCXXSHARED = gcc -shared` in its sysconfig
 # where 3.12-slim recorded `g++` — that CPython was configured in an environment without
-# g++, and every C++ extension built from an sdist inherits the answer. `py-tlsh` is the
+# g++, and every C++ extension built from an sdist inherits the answer. 3.15-slim records
+# `/usr/bin/g++` again (checked when moving to it), but that is a property of one build of
+# the base image, not a promise, so the override and the guard below both stay. `py-tlsh` is the
 # one C++ sdist in requirements.txt (it publishes no wheels, so every image compiles it),
 # and linked by `gcc` it comes out with no libstdc++: `import tlsh` then raises
 # `ImportError: undefined symbol: __gxx_personality_v0`. Both call sites in
