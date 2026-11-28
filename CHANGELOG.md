@@ -9,6 +9,48 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+### Updated
+
+- The bundled services: PostgreSQL 19 (from 16), Redis 8 (from 7.4), Garage 2.6 (from
+  2.2) on Alpine 3.24, and socat 1.8.1 for the worker relays. The proxy writes Caddy's
+  `basic_auth` directive in place of the deprecated `basicauth`.
+- The image runs Python 3.15. CI also tests 3.11, 3.12 and 3.14.
+- Python dependencies, among them FastAPI 0.165, SQLAlchemy 2.1, huey 3.5, httpx 0.29,
+  DuckDB 2.0.1 and evtx 0.15. The fastapi-users SQLAlchemy adapter, which held SQLAlchemy
+  at 2.0, is now part of LogsTotal.
+- The front end: htmx 4, Tailwind 4, Sigma 4 for the relationship graph, Mermaid 12 and
+  Alpine 3.17.5. Pages, graphs and diagrams render as before.
+- `./logstotal` runs go-task 3.54.0, which every release archive carries.
+
+### Fixed
+
+- The rule form's match preview refreshed only after the first pause in typing. It now
+  refreshes on every pause.
+
+### Upgrade notes
+
+- **The bundled PostgreSQL moves from 16 to 19 on the first start after the upgrade.** The
+  `postgres` profile's data is dumped from the 16 volume and restored into a new
+  `postgres19_data` volume before PostgreSQL 19 starts. The upgrade takes longer by the
+  time a dump and restore of your database take. The 16 volume is left as it was, for
+  rollback; once you are satisfied, `./logstotal doctor` and the System tab give the
+  command that removes it. An external PostgreSQL is not touched. See
+  [PostgreSQL 19](docs/runbooks/upgrading.md#postgresql-19).
+- **Rolling back to 1.3.0 loses what was written since the upgrade.** PostgreSQL 16,
+  Redis 7 and Garage 2.2 cannot read data that 19, 8 and 2.6 wrote, so `upgrade:rollback`
+  refuses unless you set `ROLLBACK_DATA=previous`. With it, PostgreSQL returns to the
+  database as it was before the upgrade, Redis starts with an empty queue, and Garage
+  returns to the metadata copy taken before its upgrade. See
+  [Service data](docs/runbooks/upgrading.md#service-data).
+- Generate a proxy basic-auth hash with `caddy hash-password --algorithm bcrypt`. The
+  fleet deploy accepts bcrypt hashes only. Existing hashes keep working.
+- **Supported browsers: Chrome or Edge 117, Firefox 128 and Safari 17.4, or later.**
+  Tailwind 4 needs Chrome 111, Firefox 128 and Safari 16.4; Mermaid 12's diagrams need
+  Chrome 117 and Safari 17.4.
+- Explore stores built from EVTX logs after the upgrade spell GUIDs in lowercase, in
+  braces, as the engines' raw output already did. Stores built before the upgrade keep
+  the old spelling, so a GUID search across older and newer jobs should allow for both.
+
 ## [1.3.0] — 2026-11-26
 
 ### Updated

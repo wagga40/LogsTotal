@@ -12,6 +12,10 @@ The caps, the deliberate omissions, and what is not built — so you find out wh
   desktop layout instead of reflowing it. Submitting a file needs scripting — the file
   picker, the log-type preview and the workflow list are all script-driven, and the upload
   card says so with scripting off. There is no mobile layout and none is planned.
+- **Chrome or Edge 117, Firefox 128 or Safari 17.4, or later.** The stylesheet relies on
+  cascade layers, `@property` and `color-mix()` (Chrome 111, Firefox 128, Safari 16.4).
+  The diagram renderer needs `Object.groupBy` (Chrome 117, Safari 17.4). An older browser
+  draws some controls without their styling, and some diagrams fail to render.
 - **Zircolite runs as a Docker container**, so the default workflows need a reachable
   Docker daemon even on a "bare metal" install, and the worker mounts the host's Docker
   socket — see [Docker socket on workers](security.md#docker-socket-on-workers). Chainsaw,
