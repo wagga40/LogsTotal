@@ -832,8 +832,10 @@ async def job_status_partial(
 ):
     """HTMX partial — returns full job status (score card + findings + panels).
 
-    Polls every 3s while running; returns HTTP 286 when terminal so HTMX
-    cancels the polling timer (the official way to stop ``every Xs`` triggers).
+    Polls every 3s while running. A terminal job's partial carries no ``hx-trigger``, and
+    the region swaps with ``outerMorph``, which re-wires the element from its new
+    attributes — so the poll stops by itself. (htmx 2 also honoured HTTP 286 as "stop
+    polling"; htmx 4 has no such code, and this answers 200 either way.)
     """
     job = await _load_job_full(db, job_id)
     if not job or not _can_view_private(job, user):
@@ -885,7 +887,6 @@ async def job_status_partial(
             "comparison_baseline_id": await comparison_baseline_id(db, job, user),
             "failed_logs": await _failed_task_logs(db, job, user),
         },
-        status_code=286 if is_terminal else 200,
     )
 
 

@@ -10,12 +10,12 @@
   <form
     hx-post="/auth/cookie/login"
     hx-encoding="application/x-www-form-urlencoded"
-    hx-on::after-request="
-      if (event.detail.successful) {
+    hx-on::finally:request="
+      if (window.ltOk(event)) {
         window.location.href = '/';
       } else {
         let el = document.getElementById('login-error');
-        let status = event.detail.xhr ? event.detail.xhr.status : 0;
+        let status = event.detail.ctx?.response?.status || 0;
         el.classList.remove('hidden');
         el.textContent = status === 400 ? 'Invalid email or password.'
           : status === 429 ? 'Too many sign-in attempts. Wait a minute, then try again.'

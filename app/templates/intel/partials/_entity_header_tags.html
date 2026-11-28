@@ -41,7 +41,7 @@
         hx-post="/intel/entities/{{ entity.id }}/tags"
         hx-target="#entity-tags-region"
         hx-swap="outerHTML"
-        @htmx:after-request="window.tagVocabChanged(); cancel(); reset()"
+        @htmx:after:request="window.tagVocabChanged(); cancel(); reset()"
         @keydown.window.escape="cancel()"
         class="inline-flex items-center gap-1">
     {{ tag_combobox(size='lt-field--sm', width='w-80', placeholder='Search or create a tag…') }}

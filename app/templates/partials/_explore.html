@@ -10,11 +10,12 @@
   Values from the log reach the page only as text or `data-*` attributes, never inside an
   Alpine expression: a field value is attacker-controlled, and an expression is code.
 
-  `hx-history="false"`: htmx would otherwise snapshot the whole page into localStorage on
-  every HX-Replace-Url, leaving log events in the browser's storage (and overflowing its
-  quota on a busy job). Back and Forward refetch instead.
+  No log event reaches the browser's storage through history: htmx 4 keeps no localStorage
+  snapshot of the page and refetches on Back and Forward (htmx 2 needed `hx-history="false"`
+  here, or every HX-Replace-Url left the page's events in localStorage and overflowed its
+  quota on a busy job).
 #}
-<div id="explore-region" class="space-y-4" hx-history="false"
+<div id="explore-region" class="space-y-4"
      x-data='exploreView({{ {"base": base_url, "ev": state.ev, "columns": columns} | tojson }})'
      @keydown.window="onKey($event)">
   <form id="explore-form" class="bg-gray-900 border border-gray-800 rounded-xl p-4 space-y-2"

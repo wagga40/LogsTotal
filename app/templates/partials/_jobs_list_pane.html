@@ -122,7 +122,7 @@
   `x-data` here is load-bearing, not decorative: Alpine only initializes subtrees rooted
   at an x-data element, so without it the selection checkboxes in <thead>/<tbody> are
   never processed and silently do nothing. (They appeared to work only while a job was
-  running, because the 5s table poll made base.html's htmx:afterSwap hook call
+  running, because the 5s table poll made base.html's htmx:after:settle hook call
   Alpine.initTree() on the swapped <tbody>.) The scope is empty — the state itself lives
   in Alpine.store('jobSelection') so it survives those swaps.
 #}

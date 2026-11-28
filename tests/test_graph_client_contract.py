@@ -234,7 +234,7 @@ def test_reload_keeps_its_abort_discipline():
     """Three behaviours, each of which was a real bug once.
 
     1. A duplicate identical request is collapsed (the pane is initialized twice — Alpine's
-       MutationObserver *and* base.html's htmx:afterSwap hook).
+       MutationObserver *and* base.html's htmx:after:settle hook).
     2. A different query aborts the previous one, or hops 1->3->1 leaves two requests
        racing and the last to resolve wins.
     3. A reload aborts a pending expand but **never the reverse**: an expand sets no

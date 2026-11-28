@@ -276,7 +276,7 @@
   }
 
   // Prose arrives by htmx more often than by page load: the AI pane, comment threads and
-  // case notes are all swapped in. afterSettle rather than afterSwap so the nodes are in
+  // case notes are all swapped in. after:settle rather than after:swap so the nodes are in
   // their final position before mermaid measures them.
   //
   // Scanned from `document.body`, NOT from `ev.detail.target`. Under `hx-swap="outerHTML"`,
@@ -287,7 +287,7 @@
   // source. Re-scanning the document is cheap, and
   // `:not([data-mermaid-source])` in the selector makes the work idempotent — an
   // already-rendered diagram is skipped before any DOM is touched.
-  document.body.addEventListener('htmx:afterSettle', function () {
+  document.body.addEventListener('htmx:after:settle', function () {
     renderIn(document.body);
   });
 })();

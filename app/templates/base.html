@@ -45,8 +45,15 @@
     }
   </script>
   <!-- TAILWIND:END -->
+  {# htmx 4 swaps 4xx/5xx responses by default. This app's error pages are full documents
+     and its failed partials are not meant to land in a pane — app.js raises a toast for
+     them instead (`htmx:response:error`) — so restore htmx 2's answer: no swap on errors. #}
+  <meta name="htmx-config" content='{"noSwap": [204, 304, "4xx", "5xx"]}'>
   <script src="/static/vendor/htmx.min.js?v={{ app_version }}"></script>
-  <script src="/static/vendor/htmx-ext-alpine-morph.js?v={{ app_version }}"></script>
+  {# Registers on load, so it follows htmx. It keeps Alpine state through htmx 4's own
+     `outerMorph` swap and defers Alpine's mutation handling across each swap; it replaced
+     both htmx-ext-alpine-morph and the @alpinejs/morph plugin. #}
+  <script src="/static/vendor/hx-alpine-compat.js?v={{ app_version }}"></script>
   {# Our own JS MUST come before alpine.min.js.
 
      Alpine's CDN build ends with `queueMicrotask(() => Alpine.start())`, and the HTML
@@ -94,14 +101,13 @@
   <script defer src="/static/timeline-canvas.js?v={{ asset_version('app/static/timeline-canvas.js') }}"></script>
   <script defer src="/static/explore.js?v={{ asset_version('app/static/explore.js') }}"></script>
   {% endif %}
-  <script defer src="/static/vendor/alpine-morph.min.js?v={{ app_version }}"></script>
   <script defer src="/static/vendor/alpine.min.js?v={{ app_version }}"></script>
   <script>
     document.addEventListener('alpine:init', () => {
       // State that must survive an HTMX swap of the element that renders it lives in a
       // store, not in the DOM: `openLogs` keeps task-log disclosures open across the job
       // page's 3s morph poll, and `jobSelection` keeps jobs-list checkboxes ticked across
-      // the 5s tbody swap. The global htmx:afterSwap -> Alpine.initTree below re-binds
+      // the 5s tbody swap. The global htmx:after:settle -> Alpine.initTree below re-binds
       // the new nodes against these stores.
       Alpine.store('openLogs', {});
       Alpine.store('jobSelection', {
@@ -818,7 +824,7 @@
         {# Any logged-in user: job-watch events belong to whoever can view a job, not to Intel. #}
     {% if user %}
         <div x-data="watchlistBell()" x-init="loadCount()" @click.outside="open = false"
-             @htmx:after-request="loadCount()"
+             @htmx:after:request="loadCount()"
              class="relative">
           <button @click="toggle()" class="relative p-1.5 rounded-md text-gray-400 hover:text-white hover:bg-gray-800 transition flex items-center" title="Alerts">
             <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -892,11 +898,16 @@
   <script src="/static/vendor/prism-json.min.js?v={{ app_version }}" defer></script>
   <script src="/static/vendor/prism-sql.min.js?v={{ app_version }}" defer></script>
   <script>
-    // Re-highlight Prism code blocks after HTMX swaps in new content
-    document.addEventListener('htmx:afterSwap', function(e) {
-      if (window.Prism) Prism.highlightAllUnder(e.detail.target);
-      if (window.Alpine && e.detail.target) {
-        Alpine.initTree(e.detail.target);
+    // Re-highlight Prism code blocks and bind Alpine in content an htmx swap put in.
+    // `htmx:after:settle`, not `after:swap`: in htmx 4 only settle carries the inserted
+    // nodes (`newContent`) — after:swap holds the request context, whose target is the
+    // element an outer swap has just removed.
+    document.addEventListener('htmx:after:settle', function(e) {
+      const nodes = (e.detail && e.detail.newContent) || [];
+      for (const node of nodes) {
+        if (!(node instanceof Element) || !node.isConnected) continue;
+        if (window.Prism) Prism.highlightAllUnder(node);
+        if (window.Alpine) Alpine.initTree(node);
       }
       // Selection stores live outside the markup they select, which is what makes them
       // survive a poll — and also what lets them outlive the rows themselves after a

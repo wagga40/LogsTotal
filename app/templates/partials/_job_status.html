@@ -1,19 +1,16 @@
 {% from "partials/_severity_macros.html" import sev_dot, sev_card_border, sev_heading %}
 {# expects parent to set `s` and `is_terminal` (job.html / _job_status_poll.html)
 
-   `hx-swap="morph"` — exactly that, no `:outerHTML` suffix. This said `morph:outerHTML` for
-   a long time and was therefore never morphing at all: the alpine-morph extension matches
-   the bare string, declines anything else, and htmx then falls back to
-   `htmx.config.defaultSwapStyle` (innerHTML). That rebuilt every child of this region on
-   each 3s poll, which is why an open task log flickered and lost its scroll position, and
-   why `Alpine.store('openLogs')` had to exist to keep the disclosures open at all. See the
-   long note in `_ai_analysis.html`; the spelling is pinned by a test. #}
+   `hx-swap="outerMorph"` — a morph keeps node identity, so the 3s poll updates this region in
+   place. Before it truly morphed, every child was rebuilt on each poll: an open task log
+   flickered and lost its scroll position, which is why `Alpine.store('openLogs')` exists to
+   keep the disclosures open. See the long note in `_ai_analysis.html`; the spelling is
+   pinned by a test. #}
 <div id="job-status-region"
   {% if not is_terminal %}
   hx-get="/jobs/{{ job.id }}/status-partial"
   hx-trigger="every 3s"
-  hx-swap="morph"
-  hx-ext="alpine-morph"
+  hx-swap="outerMorph"
   {% endif %}
 >
 

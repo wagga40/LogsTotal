@@ -821,8 +821,7 @@ tasks:
       VENDOR_ASSETS: |-
         tailwind.js https://cdn.tailwindcss.com/{{.TAILWIND_CDN_VERSION}}
         htmx.min.js https://unpkg.com/htmx.org@{{.HTMX_VERSION}}/dist/htmx.min.js
-        htmx-ext-alpine-morph.js https://unpkg.com/htmx-ext-alpine-morph@{{.HTMX_ALPINE_MORPH_VERSION}}/alpine-morph.js
-        alpine-morph.min.js https://unpkg.com/@alpinejs/morph@{{.ALPINE_MORPH_VERSION}}/dist/cdn.min.js
+        hx-alpine-compat.js https://unpkg.com/htmx.org@{{.HTMX_VERSION}}/dist/ext/hx-alpine-compat.js
         alpine.min.js https://unpkg.com/alpinejs@{{.ALPINE_VERSION}}/dist/cdn.min.js
         prism-tomorrow.min.css https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/themes/prism-tomorrow.min.css
         prism.min.js https://cdnjs.cloudflare.com/ajax/libs/prism/{{.PRISM_VERSION}}/prism.min.js

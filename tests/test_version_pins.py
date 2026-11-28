@@ -59,9 +59,9 @@ def test_the_tailwind_cli_is_one_version_everywhere():
 # Notices row → the Taskfile var `vendor:update` downloads it with.
 VENDORED = {
     "htmx": "HTMX_VERSION",
-    "htmx-ext-alpine-morph": "HTMX_ALPINE_MORPH_VERSION",
+    # Ships inside the htmx package, so it carries htmx's version.
+    "htmx alpine-compat extension (`hx-alpine-compat.js`)": "HTMX_VERSION",
     "Alpine.js": "ALPINE_VERSION",
-    "Alpine Morph plugin": "ALPINE_MORPH_VERSION",
     "Tailwind CSS (Play CDN build, dev mode only)": "TAILWIND_CDN_VERSION",
     "Prism.js (+ json/sql/yaml, Tomorrow theme)": "PRISM_VERSION",
     "Mermaid": "MERMAID_VERSION",

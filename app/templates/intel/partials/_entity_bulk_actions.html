@@ -20,7 +20,7 @@
     </span>
 
     <form class="lt-bar" x-data="tagCombobox({ max: {{ tag_write_max }} })" hx-post="/intel/entities/bulk-tag" hx-target="#bulk-tag-result" hx-swap="innerHTML"
-          @htmx:after-request="if ($event.detail.successful) { window.tagVocabChanged(); reset(); $store.entitySelection.clear(); htmx.trigger('#entity-table-region', 'filterChange'); }">
+          @htmx:after:request="if (window.ltOk($event)) { window.tagVocabChanged(); reset(); $store.entitySelection.clear(); htmx.trigger('#entity-table-region', 'filterChange'); }">
       {# Written imperatively on submit rather than bound: htmx serializes the form
          synchronously inside the submit event, but Alpine applies :value on its own
          scheduler, so a binding would send the previous selection. Same trap as
@@ -30,7 +30,7 @@
       <button type="submit" class="lt-btn lt-btn--sm lt-btn--primary" :disabled="isEmpty()" title="Type or pick a tag first"
               @click="$refs.ids.value = $store.entitySelection.ids.join(',')">Tag</button>
       <button type="submit" class="lt-btn lt-btn--sm" :disabled="isEmpty()" title="Type or pick a tag first"
-              hx-post="/intel/entities/bulk-untag"
+              hx-post="/intel/entities/bulk-untag" hx-target="#bulk-tag-result" hx-swap="innerHTML"
               @click="$refs.ids.value = $store.entitySelection.ids.join(',')">Untag</button>
     </form>
 

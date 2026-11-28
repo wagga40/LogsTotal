@@ -104,10 +104,9 @@ declared in `Taskfile.yml` and refreshed with `./logstotal vendor:update`.
 
 | Component | Version | Licence |
 |---|---|---|
-| htmx | 2.0.11 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx>) |
-| htmx-ext-alpine-morph | 2.0.2 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx-extensions>) |
+| htmx | 4.0.2 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx>) |
+| htmx alpine-compat extension (`hx-alpine-compat.js`) | 4.0.2 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx>) |
 | Alpine.js | 3.17.5 | MIT (<https://github.com/alpinejs/alpine>) |
-| Alpine Morph plugin | 3.17.5 | MIT (<https://github.com/alpinejs/alpine>) |
 | Tailwind CSS (Play CDN build, dev mode only) | 3.4.17 | MIT (<https://github.com/tailwindlabs/tailwindcss>) |
 | Prism.js (+ json/sql/yaml, Tomorrow theme) | 1.30.0 | MIT (<https://github.com/PrismJS/prism>) |
 | Mermaid | 12.4.0 | MIT (<https://github.com/mermaid-js/mermaid>) |

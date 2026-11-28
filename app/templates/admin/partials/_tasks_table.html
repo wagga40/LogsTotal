@@ -1,13 +1,11 @@
-{# Self-polling region. `hx-swap="morph"` EXACTLY (plus the extension): `morph:outerHTML`
-   is not recognised by htmx-ext-alpine-morph, falls through to the default innerHTML, and
-   rebuilds every child on each poll — flicker, lost scroll position, and a nested
-   duplicate of this region. The poll stops when nothing is active, the `_job_status.html`
-   rule: without that, every admin with this page open polls forever on an idle instance. #}
+{# Self-polling region, `hx-swap="outerMorph"` — the morph that keeps node identity, so a
+   poll updates this region in place instead of rebuilding every child (see the note in
+   `_ai_analysis.html`). The poll stops when nothing is active, the `_job_status.html` rule:
+   without that, every admin with this page open polls forever on an idle instance. #}
 <div id="tasks-content"
   hx-get="/admin/tasks/partial"
   {% if has_active %}hx-trigger="every 5s"{% endif %}
-  hx-swap="morph"
-  hx-ext="alpine-morph"
+  hx-swap="outerMorph"
 >
 {% from "partials/_severity_macros.html" import sev_pill with context %}
 

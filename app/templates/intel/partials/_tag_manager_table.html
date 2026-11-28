@@ -39,7 +39,7 @@
 
     <form class="lt-bar ml-auto" x-data="tagCombobox({ max: {{ tag_write_max }} })"
           hx-post="/intel/tags" hx-target="#tag-manager-region" hx-swap="outerHTML"
-          @htmx:after-request="window.tagVocabChanged(); reset()">
+          @htmx:after:request="window.tagVocabChanged(); reset()">
       <input type="hidden" name="q" value="{{ current_q }}">
       <input type="hidden" name="sort" value="{{ current_sort }}">
       {{ tag_combobox(width='w-72', placeholder='New tag name…') }}
@@ -175,7 +175,7 @@
 
         <form x-show="editing" x-cloak class="flex items-center gap-1"
               x-data='tagCombobox({ value: {{ row.tag | tojson }}, color: {{ row.color | tojson }} })'
-              @htmx:after-request="window.tagVocabChanged()"
+              @htmx:after:request="window.tagVocabChanged()"
               hx-post="/intel/tags/rename" hx-target="#tag-manager-region" hx-swap="outerHTML">
           <input type="hidden" name="q" value="{{ current_q }}">
           <input type="hidden" name="tag" value="{{ row.tag }}">
@@ -189,7 +189,7 @@
         <form x-show="merging" x-cloak class="flex items-center gap-1"
               x-data="tagCombobox()"
               hx-post="/intel/tags/merge" hx-target="#tag-manager-region" hx-swap="outerHTML"
-              @htmx:after-request="reset()">
+              @htmx:after:request="reset()">
           <input type="hidden" name="q" value="{{ current_q }}">
           <input type="hidden" name="tag" value="{{ row.tag }}">
           <input type="hidden" name="sort" value="{{ current_sort }}">

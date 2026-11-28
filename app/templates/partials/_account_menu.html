@@ -38,7 +38,7 @@
     </button>
     <form method="POST" action="/auth/cookie/logout" class="mt-1 pt-1 border-t border-gray-800"
           hx-post="/auth/cookie/logout"
-          hx-on::after-request="if (event.detail.successful) window.location.href='/'">
+          hx-on::after:request="if (window.ltOk(event)) window.location.href='/'">
       <button type="submit"
               class="flex items-center gap-2.5 w-full text-left px-3 py-2 text-sm text-gray-400 hover:bg-gray-800 hover:text-red-400 transition">
         <svg class="w-4 h-4 shrink-0" viewBox="0 0 24 24" fill="none" stroke="currentColor" aria-hidden="true">

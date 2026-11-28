@@ -14,10 +14,8 @@ vars:
   TAILWIND_VERSION: '3.4.19'
   # Play CDN releases are independent of the standalone CLI's releases.
   TAILWIND_CDN_VERSION: '3.4.17'
-  HTMX_VERSION: '2.0.11'
+  HTMX_VERSION: '4.0.2'
   ALPINE_VERSION: '3.17.5'
-  ALPINE_MORPH_VERSION: '3.17.5'
-  HTMX_ALPINE_MORPH_VERSION: '2.0.2'
   PRISM_VERSION: '1.30.0'
   MERMAID_VERSION: '12.4.0'
   SIGMA_VERSION: '4.0.6'

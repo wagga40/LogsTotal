@@ -23,8 +23,8 @@ at the top of `Taskfile.yml`, which is also where the shared preconditions and t
 
 | File | What uses it |
 |---|---|
-| `htmx.min.js`, `htmx-ext-alpine-morph.js` | every page |
-| `alpine.min.js`, `alpine-morph.min.js` | every page |
+| `htmx.min.js`, `hx-alpine-compat.js` | every page |
+| `alpine.min.js` | every page |
 | `tailwind.js` / `tailwind-built.css` | dev / production CSS (see above) |
 | `prism*.js`, `prism-tomorrow.min.css` | syntax highlighting |
 | `mermaid.min.js` | `/docs` diagrams, and diagrams in analyst prose (comments, notes, AI analyses) — fetched lazily, only on a page that has one |

@@ -200,7 +200,7 @@ function graphComponent(opts) {
     reload() {
       const query = this._query();
       // Swapped-in markup is initialized twice (Alpine's MutationObserver sees the inserted
-      // nodes, and base.html's htmx:afterSwap hook calls Alpine.initTree too), so init()
+      // nodes, and base.html's htmx:after:settle hook calls Alpine.initTree too), so init()
       // fires twice and would otherwise issue two identical requests — each expensive on a
       // large case. Collapse the duplicate.
       if (this.loading && this._inflight === query) return;

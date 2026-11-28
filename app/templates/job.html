@@ -271,7 +271,7 @@
         }
       }, true);
 
-      document.body.addEventListener('htmx:afterSettle', function () {
+      document.body.addEventListener('htmx:after:settle', function () {
         var saved = window._logScrollTops;
         if (!saved) return;
         var region = document.getElementById('job-status-region');

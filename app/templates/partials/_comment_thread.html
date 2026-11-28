@@ -87,7 +87,7 @@
   <form hx-post="/comments/{{ target_type }}/{{ target_id }}"
         hx-target="#comment-thread-{{ target_type }}-{{ target_id }}"
         hx-swap="outerHTML"
-        hx-on::after-request="if (event.detail.successful) this.reset()"
+        hx-on::after:request="if (window.ltOk(event)) this.reset()"
         class="space-y-2">
     <textarea name="body" rows="3" maxlength="{{ comment_max }}"
               placeholder="{{ editor_placeholder(site_settings, 'Write a comment…', comment_max) }}"
