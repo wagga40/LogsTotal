@@ -106,11 +106,11 @@ declared in `Taskfile.yml` and refreshed with `./logstotal vendor:update`.
 |---|---|---|
 | htmx | 2.0.11 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx>) |
 | htmx-ext-alpine-morph | 2.0.2 | BSD-2-Clause (<https://github.com/bigskysoftware/htmx-extensions>) |
-| Alpine.js | 3.17.4 | MIT (<https://github.com/alpinejs/alpine>) |
-| Alpine Morph plugin | 3.17.4 | MIT (<https://github.com/alpinejs/alpine>) |
+| Alpine.js | 3.17.5 | MIT (<https://github.com/alpinejs/alpine>) |
+| Alpine Morph plugin | 3.17.5 | MIT (<https://github.com/alpinejs/alpine>) |
 | Tailwind CSS (Play CDN build, dev mode only) | 3.4.17 | MIT (<https://github.com/tailwindlabs/tailwindcss>) |
 | Prism.js (+ json/sql/yaml, Tomorrow theme) | 1.30.0 | MIT (<https://github.com/PrismJS/prism>) |
-| Mermaid | 11.17.2 | MIT (<https://github.com/mermaid-js/mermaid>) |
+| Mermaid | 12.4.0 | MIT (<https://github.com/mermaid-js/mermaid>) |
 | Sigma.js | 3.0.3 | MIT (<https://github.com/jacomyal/sigma.js>) |
 | graphology | 0.26.0 | MIT (<https://github.com/graphology/graphology>) |
 | graphology-library | 0.8.0 | MIT (<https://github.com/graphology/graphology>) |

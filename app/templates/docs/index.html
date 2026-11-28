@@ -809,6 +809,10 @@
     mermaid.initialize({
       startOnLoad: true,
       theme: 'dark',
+      // Mermaid 12 defaults to the ELK layout and the `neo` look; these diagrams were
+      // drawn for dagre and the classic look.
+      layout: 'dagre',
+      look: 'classic',
       themeVariables: {
         darkMode: true,
         background: '#030712',
@@ -827,6 +831,9 @@
         htmlLabels: true,
         nodeSpacing: 36,
         rankSpacing: 40,
+        // Mermaid 12 gives every flowchart node a 120px minimum (plus padding); the first
+        // diagram here then outgrew the 896px column. 0 sizes nodes to their text, as 11 did.
+        minNodeWidth: 0,
         // The content column is a fixed 896px. With useMaxWidth the SVG is scaled down to
         // fit it, which shrinks the label text; the wrapper scrolls instead.
         useMaxWidth: false

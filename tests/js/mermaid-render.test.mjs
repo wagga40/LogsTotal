@@ -97,6 +97,18 @@ describe('mermaid initialize() config', () => {
     assert.ok(keys.has('theme'), "'theme' is not in mermaid's default secure list, so it must be added explicitly");
   });
 
+  /* Mermaid 12 made ELK the default layout and `neo` the default look. Both are pinned back
+     to the 11 rendering, and both are secured: a model-written `%%{init}%%` directive must
+     not be able to switch the layout engine or the look back on. */
+  it('pins the dagre layout and classic look, and secures both', () => {
+    assert.match(SRC, /layout:\s*'dagre'/);
+    assert.match(SRC, /look:\s*'classic'/);
+    const keys = new Set(SRC.match(/secure:\s*\[([^\]]*)\]/)[1].match(/'([^']+)'/g).map((s) => s.slice(1, -1)));
+    assert.ok(keys.has('layout') && keys.has('look'), 'layout/look must be in the secure list');
+    // 12's 120px flowchart minimum made every short label an identical oversized box.
+    assert.match(SRC, /flowchart:\s*\{[^}]*minNodeWidth:\s*0/);
+  });
+
   /* `themeCSS` is compiled into the diagram's own <style>, scoped under `#lt-mermaid-N`, but
      a `&` selector is that id itself: `%%{init: {"themeCSS": "&{position:fixed;width:100vw;
      height:100vh;z-index:2147483647}"}}%%` lifts the SVG out of its box and over the whole
