@@ -10,6 +10,12 @@ line; headings, nested list items, tables, quotes, link definitions and fenced c
 their lines. Exits 1, printing nothing, when the version has no section or an empty one —
 both release workflows refuse to publish an empty body.
 
+Relative links are written out in full. A release page resolves them against itself:
+GitHub maps `docs/x.md` onto the tagged tree, Forgejo onto `/<owner>/<repo>/docs/x.md`, a
+404 on every release. Each becomes GitHub's own resolution — `<repo>/blob/v<version>/<path>`,
+the repository read from the changelog's `[Unreleased]:` compare link — which reads the same
+on both forges and names the file as it was in that release.
+
 Stdlib only: it runs on the release runners before any dependency is installed.
 """
 
@@ -27,6 +33,11 @@ _OWN_LINE = re.compile(r"^\s*(?:\||>|<!--|\[[^\]]+\]:\s)")
 # The compare links at the foot of the file belong to the whole changelog, not to the
 # oldest section, which they would otherwise trail.
 _COMPARE_LINK = re.compile(r"^\[(?:Unreleased|\d+\.\d+\.\d+)\]:\s")
+_REPO = re.compile(r"^\[Unreleased\]:\s*(https?://\S+?)/compare/", re.M)
+_INLINE_LINK = re.compile(r"(\]\()([^)\s]+)(\))")
+_REF_DEF = re.compile(r"^(\s*\[[^\]]+\]:\s*)(\S+)")
+# A scheme (https:, mailto:), a fragment or a site-absolute path: already means one thing.
+_NOT_RELATIVE = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*:|#|/)")
 
 
 def section(text: str, version: str) -> list[str] | None:
@@ -89,11 +100,38 @@ def unwrap(lines: list[str]) -> list[str]:
     return out
 
 
+def _resolve(target: str, base: str) -> str:
+    return target if _NOT_RELATIVE.match(target) else base + target.removeprefix("./")
+
+
+def absolutize(lines: list[str], base: str) -> list[str]:
+    """Every relative link target prefixed with *base*; code spans and fenced code untouched."""
+    out: list[str] = []
+    in_fence = False
+    for line in lines:
+        if _FENCE.match(line):
+            in_fence = not in_fence
+        elif not in_fence:
+            ref = _REF_DEF.match(line)
+            if ref:
+                line = ref.group(1) + _resolve(ref.group(2), base) + line[ref.end() :]
+            else:
+                parts = line.split("`")
+                for i in range(0, len(parts), 2):  # outside `code spans`
+                    parts[i] = _INLINE_LINK.sub(lambda m: m.group(1) + _resolve(m.group(2), base) + m.group(3), parts[i])
+                line = "`".join(parts)
+        out.append(line)
+    return out
+
+
 def release_notes(text: str, version: str) -> str | None:
     lines = section(text, version)
     if lines is None:
         return None
     body = unwrap(lines)
+    repo = _REPO.search(text)
+    if repo:
+        body = absolutize(body, f"{repo.group(1)}/blob/v{version}/")
     return "\n".join(body) + "\n" if body else None
 
 

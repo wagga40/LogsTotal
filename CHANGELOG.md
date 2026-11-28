@@ -18,6 +18,8 @@ backup step, migration ordering, and rollback for each deployment path.
 - Once the PostgreSQL 16 volume was removed, a rollback past 1.4 with
   `ROLLBACK_DATA=previous` would have started the older release on an empty database. It
   is now refused on a single host and on a fleet.
+- The links in a release's notes led to a missing page on Forgejo. They now point at the
+  file as it was in that release.
 
 ## [1.4.1] — 2026-11-28
 

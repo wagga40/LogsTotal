@@ -121,7 +121,8 @@ def test_every_released_section_unwraps_without_losing_a_word(version):
     raw = release_notes.section(CHANGELOG, version)
     body = release_notes.release_notes(CHANGELOG, version)
     assert raw is not None and body is not None
-    assert " ".join(" ".join(raw).split()) == " ".join(body.split())
+    # Unwrapping alone changes only whitespace (links are written out after it, below).
+    assert " ".join(" ".join(raw).split()) == " ".join(" ".join(release_notes.unwrap(raw)).split())
     # No line of a paragraph or list item is left ending where the 95-column wrap put it.
     lines = body.splitlines()
     for line, following in itertools.pairwise(lines):
@@ -144,3 +145,61 @@ def test_both_release_workflows_publish_the_unwrapped_notes(workflow):
     text = (REPO_ROOT / workflow).read_text(encoding="utf-8")
     assert re.search(r"python3 (-I )?scripts/release_notes\.py \"\$version\" > release-notes\.md", text), workflow
     assert "CHANGELOG.md > release-notes.md" not in text, f"{workflow} still extracts the wrapped section with awk"
+
+
+# ── links ────────────────────────────────────────────────────────────────────
+#
+# A release page resolves a relative link against itself: GitHub onto the tagged tree,
+# Forgejo onto /<owner>/<repo>/<path> — which answered 404 for both links in 1.4.0's notes.
+
+LINKED = """\
+## [Unreleased]
+
+## [2.0.0] — 2027-01-01
+
+- See [the runbook](docs/runbooks/upgrading.md#service-data), [notices](./NOTICE.md),
+  [the site](https://example.org/x), [above](#fixed), [root](/wagga/x) and `[code](docs/a.md)`.
+
+```md
+[fenced](docs/b.md)
+```
+
+[ref]: docs/c.md
+
+[Unreleased]: https://github.com/wagga40/LogsTotal/compare/v2.0.0...HEAD
+[2.0.0]: https://github.com/wagga40/LogsTotal/compare/v1.9.0...v2.0.0
+"""
+
+BLOB = "https://github.com/wagga40/LogsTotal/blob/v2.0.0/"
+
+
+def test_a_relative_link_becomes_the_file_in_that_release():
+    body = release_notes.release_notes(LINKED, "2.0.0")
+    assert f"[the runbook]({BLOB}docs/runbooks/upgrading.md#service-data)" in body
+    assert f"[notices]({BLOB}NOTICE.md)" in body
+    assert f"[ref]: {BLOB}docs/c.md" in body
+
+
+def test_links_that_already_mean_one_thing_are_left_alone():
+    body = release_notes.release_notes(LINKED, "2.0.0")
+    assert "[the site](https://example.org/x)" in body
+    assert "[above](#fixed)" in body
+    assert "[root](/wagga/x)" in body
+
+
+def test_code_is_never_rewritten():
+    body = release_notes.release_notes(LINKED, "2.0.0")
+    assert "`[code](docs/a.md)`" in body
+    assert "[fenced](docs/b.md)" in body
+
+
+def test_without_a_compare_link_to_name_the_repository_links_are_kept_as_written():
+    body = release_notes.release_notes(LINKED.split("[Unreleased]: ")[0], "2.0.0")
+    assert "[the runbook](docs/runbooks/upgrading.md#service-data)" in body
+
+
+@pytest.mark.parametrize("version", re.findall(r"^## \[(\d+\.\d+\.\d+)\]", CHANGELOG, re.M))
+def test_no_released_section_keeps_a_link_forgejo_cannot_follow(version):
+    body = release_notes.release_notes(CHANGELOG, version)
+    for target in re.findall(r"\]\(([^)\s]+)\)", body):
+        assert target.startswith(("https://", "http://", "#")), f"{version}: {target}"
