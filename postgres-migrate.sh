@@ -56,7 +56,11 @@ fi
 
 if [ -s "$NEW_PGDATA/PG_VERSION" ] && [ -e "$PENDING" ]; then
   # Set by an unfinished restore, or by upgrade:rollback (scripts/lib/service_data.sh),
-  # which leaves this cluster behind as no longer current.
+  # which leaves this cluster behind as no longer current. Discarded only when there is a
+  # 16 cluster to move again: without one, the 19 cluster is the only copy of the database,
+  # whatever the marker says. postgres refuses to start while the marker stands, so this
+  # stops the stack with the reason in the log instead of starting it empty.
+  [ -s "$OLD/PG_VERSION" ] || die "the PostgreSQL 19 cluster is marked not current ($PENDING), but postgres_data holds no PostgreSQL 16 cluster to move again; refusing to discard the only copy of the database. If the 19 cluster is the one to keep, delete that marker from the postgres19_data volume."
   log "the PostgreSQL 19 cluster is not current (an unfinished restore, or a rollback since); discarding it and moving the PostgreSQL 16 data again"
   rm -rf "$NEW_PGDATA"
 fi

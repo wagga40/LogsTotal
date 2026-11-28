@@ -101,64 +101,56 @@ def test_a_second_server_is_never_started_on_a_directory_another_container_serve
     assert SCRIPT.index('[ -e "$OLD/postmaster.pid" ] || break') < private
 
 
+def test_a_superseded_19_cluster_is_discarded_only_when_there_is_a_16_cluster_to_move_again():
+    """Discarding it with an empty postgres_data would leave nothing: the 19 cluster is then
+    the only copy, and an empty 16 one would be "migrated" over it."""
+    branch = SCRIPT[SCRIPT.index('if [ -s "$NEW_PGDATA/PG_VERSION" ] && [ -e "$PENDING" ]; then') :]
+    branch = branch[: branch.index("\nfi\n")]
+    assert branch.index('[ -s "$OLD/PG_VERSION" ] || die') < branch.index('rm -rf "$NEW_PGDATA"')
+
+
 # ── the system check ─────────────────────────────────────────────────────────
 
 
-@pytest.fixture
-def host(monkeypatch):
-    monkeypatch.setattr(system_checks, "_running_in_container", lambda: False)
-
-    def volumes(names):
-        monkeypatch.setattr(system_checks, "_docker_volume_names", lambda: names)
-
-    return volumes
-
-
-def test_the_leftover_postgres_16_volume_is_reported_once_the_move_happened(host):
-    host(["logstotal_postgres_data", "logstotal_postgres19_data", "logstotal_redis_data"])
+def test_the_leftover_cluster_is_reported_by_the_name_the_host_hands_in(monkeypatch):
+    monkeypatch.setenv(system_checks.HOST_PG16_VOLUME_ENV, "logstotal_postgres_data")
     result = system_checks.check_postgres_legacy_volume()
     assert result is not None and result.level == system_checks.INFO
-    assert "docker volume rm logstotal_postgres_data" in result.fix
+    assert "logstotal_postgres_data still holds the PostgreSQL 16 cluster" in result.message
 
 
-@pytest.mark.parametrize(
-    "names",
-    [
-        ["logstotal_postgres_data"],  # not moved yet: that volume is the live database
-        ["logstotal_postgres19_data"],  # a fresh 19 install
-        ["other_postgres_data", "logstotal_postgres19_data"],  # a different compose project
-        [],
-        None,  # no Docker CLI
-    ],
-)
-def test_nothing_is_reported_unless_both_volumes_belong_to_one_project(host, names):
-    host(names)
+def test_the_removal_command_clears_the_container_that_holds_the_volume_first(monkeypatch):
+    """`docker volume rm` alone is refused: the stopped postgres-migrate container still
+    references the volume (measured on the fleet's control plane)."""
+    monkeypatch.setenv(system_checks.HOST_PG16_VOLUME_ENV, "lt_postgres_data")
+    fix = system_checks.check_postgres_legacy_volume().fix
+    assert "docker compose rm -f postgres-migrate && docker volume rm lt_postgres_data" in fix
+
+
+@pytest.mark.parametrize("handed_in", [None, "", "   ", "x; rm -rf /", "$(id)"])
+def test_nothing_is_reported_without_a_usable_answer_from_the_host(monkeypatch, handed_in):
+    """Silent on the System tab and a host doctor (no answer), and for an empty answer: the
+    volume exists but holds nothing — every fresh 1.4 install, and every install whose old
+    volume was removed and then recreated empty by the next start."""
+    if handed_in is None:
+        monkeypatch.delenv(system_checks.HOST_PG16_VOLUME_ENV, raising=False)
+    else:
+        monkeypatch.setenv(system_checks.HOST_PG16_VOLUME_ENV, handed_in)
     assert system_checks.check_postgres_legacy_volume() is None
 
 
-def test_the_check_stays_silent_inside_a_container(monkeypatch):
-    """The System tab runs in the web container, which cannot list the host's volumes."""
-    monkeypatch.delenv(system_checks.HOST_DOCKER_VOLUMES_ENV, raising=False)
-    monkeypatch.setattr(system_checks, "_docker_volume_names", lambda: ["x_postgres_data", "x_postgres19_data"])
-    assert system_checks.check_postgres_legacy_volume(in_container=True) is None
+def test_the_check_never_lists_volumes_by_name_again():
+    """Names cannot tell a held cluster from the empty volume Compose recreates."""
+    source = (REPO_ROOT / "app" / "system_checks.py").read_text(encoding="utf-8")
+    assert "docker volume ls" not in source and "_postgres19_data" not in source
 
 
-def test_doctor_docker_answers_from_the_volumes_the_host_hands_in(monkeypatch):
-    """`./logstotal doctor` needs a venv a Docker host does not have, so `doctor:docker` is
-    the doctor that runs there — and before the host handed its volumes in, it could never
-    report the leftover volume at all."""
-    monkeypatch.setenv(system_checks.HOST_DOCKER_VOLUMES_ENV, "lt_redis_data lt_postgres_data lt_postgres19_data")
-    monkeypatch.setattr(system_checks.subprocess, "run", lambda *a, **k: pytest.fail("the handed-in list must be used, not the CLI"))
-    result = system_checks.check_postgres_legacy_volume(in_container=True)
-    assert result is not None and "docker volume rm lt_postgres_data" in result.fix
-
-
-def test_doctor_docker_hands_the_host_volumes_in_on_both_paths():
+def test_doctor_docker_asks_the_volume_itself_and_hands_the_answer_in_on_both_paths():
     from _taskfile import all_tasks
 
     script = next(c for c in all_tasks()["doctor:docker"]["cmds"] if isinstance(c, str) and "doctor.py" in c)
-    assert "docker volume ls -q" in script
+    assert ". scripts/lib/service_data.sh" in script and "pg16=$(service_data_pg16_volume)" in script
     invocations = [line for line in script.splitlines() if "scripts/doctor.py" in line]
     assert len(invocations) == 2, invocations
     for line in invocations:
-        assert f'-e {system_checks.HOST_DOCKER_VOLUMES_ENV}="$vols"' in line, line
+        assert f'-e {system_checks.HOST_PG16_VOLUME_ENV}="$pg16"' in line, line

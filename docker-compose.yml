@@ -319,8 +319,9 @@ services:
 volumes:
   redis_data:
   # The PostgreSQL 16 cluster from before 1.4 — read once by postgres-migrate, then kept
-  # for upgrade:rollback. `docker volume rm <project>_postgres_data` once you no longer
-  # need to roll back.
+  # for upgrade:rollback. Once you no longer need to roll back: `docker compose rm -f
+  # postgres-migrate && docker volume rm <project>_postgres_data`. Compose recreates it
+  # empty on the next start, because postgres-migrate mounts it; that copy holds nothing.
   postgres_data:
   postgres19_data:
   postgres_migration:

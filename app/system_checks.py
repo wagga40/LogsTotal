@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 import platform
+import re
 import shutil
 import subprocess
 import threading
@@ -749,51 +750,40 @@ def _docker_socket_present() -> bool:
     return Path("/var/run/docker.sock").exists()
 
 
-# Set by `./logstotal doctor:docker`, which runs the doctor inside the web container: the
-# container has no Docker CLI, so the host lists its volumes and passes the names in.
-HOST_DOCKER_VOLUMES_ENV = "LT_HOST_DOCKER_VOLUMES"
+# Set by `./logstotal doctor:docker` (taskfiles/ops.yml) from the host, which can look inside a
+# volume where the web container cannot (it has no Docker CLI): the name of the PostgreSQL 16
+# volume while it still HOLDS A CLUSTER, else empty. scripts/lib/service_data.sh::
+# service_data_pg16_volume answers it.
+HOST_PG16_VOLUME_ENV = "LT_HOST_PG16_VOLUME"
+_VOLUME_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*")
 
 
-def _docker_volume_names() -> list[str] | None:
-    """Every Docker volume name on this host, or None when the CLI cannot answer. A seam."""
-    handed_in = os.environ.get(HOST_DOCKER_VOLUMES_ENV)
-    if handed_in is not None:
-        return handed_in.split()
-    try:
-        done = subprocess.run(["docker", "volume", "ls", "--format", "{{.Name}}"], capture_output=True, text=True, timeout=10, check=False)
-    except Exception:
-        return None
-    return done.stdout.split() if done.returncode == 0 else None
-
-
-def check_postgres_legacy_volume(*, in_container: bool = False) -> CheckResult | None:
-    """INFO: the PostgreSQL 16 volume the bundled database moved off is still on disk.
+def check_postgres_legacy_volume() -> CheckResult | None:
+    """INFO: the PostgreSQL 16 cluster the bundled database moved off is still on disk.
 
     The move to PostgreSQL 19 (postgres-migrate.sh) copies the data out of `postgres_data`
     and never deletes it, because that volume is what `upgrade:rollback` returns to. Once
     the operator is sure they will not roll back, it is a whole second copy of the database
     taking up disk — and nothing else would ever mention it.
 
-    The answer is about the host's volumes, which the web container cannot list (it has no
-    Docker CLI). So it is answered on the host, or inside the container when
-    `doctor:docker` has handed the host's list in — the doctor a Docker deployment actually
-    runs, since `./logstotal doctor` there has no venv. The System tab cannot see it.
+    By the volume's contents, never its name. postgres-migrate mounts the volume, so Compose
+    creates it on every start: an empty one exists on every fresh 1.4 install and comes back
+    after an operator removes it. A name-based check reported both as "still holds the
+    cluster". Only the host can look inside, so this reports what `doctor:docker` hands in
+    and is silent otherwise — on a host doctor, and on the System tab.
     """
-    if (in_container or _running_in_container()) and HOST_DOCKER_VOLUMES_ENV not in os.environ:
-        return None
-    names = _docker_volume_names()
-    if not names:
-        return None
-    current = {name.removesuffix("_postgres19_data") for name in names if name.endswith("_postgres19_data")}
-    legacy = sorted(name for name in names if name.endswith("_postgres_data") and name.removesuffix("_postgres_data") in current)
-    if not legacy:
+    name = os.environ.get(HOST_PG16_VOLUME_ENV, "").strip()
+    if not _VOLUME_NAME.fullmatch(name):
         return None
     return CheckResult(
         "Database",
         INFO,
         "PostgreSQL 16 volume",
-        f"{', '.join(legacy)} still holds the PostgreSQL 16 cluster the database moved off — kept so upgrade:rollback can return to it",
-        f"once you will not roll back past the move to PostgreSQL 19: docker volume rm {' '.join(legacy)} — {docs_url('runbooks/upgrading.md', 'postgresql-19')}",
+        f"{name} still holds the PostgreSQL 16 cluster the database moved off — kept so upgrade:rollback can return to it",
+        # The stopped postgres-migrate container still references the volume, so `docker
+        # volume rm` alone is refused. Compose recreates both, the volume empty, on the next
+        # start — which this check does not report.
+        f"once you will not roll back past the move to PostgreSQL 19: docker compose rm -f postgres-migrate && docker volume rm {name} — {docs_url('runbooks/upgrading.md', 'postgresql-19')}",
     )
 
 

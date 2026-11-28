@@ -44,6 +44,41 @@ service_data_crossings() {
   fi
 }
 
+# service_data_pg16_cluster — does this project's PostgreSQL 16 volume (postgres_data) still
+# hold a cluster? Asked of its contents, never its name: postgres-migrate mounts the volume, so
+# Compose creates it on every `up` — empty on a fresh 1.4 install, and empty again after an
+# operator removed it once they were done with rollback. Read through postgres-migrate, the one
+# service that mounts it (at /old); run from a 1.4+ tree. stdin is detached because `compose
+# run` attaches it by default and would swallow the rest of a `bash -s` heredoc, or the
+# terminal's input.
+service_data_pg16_cluster() {
+  docker compose run --rm --no-deps -T --entrypoint sh postgres-migrate \
+    -c 'test -s /old/PG_VERSION' </dev/null >/dev/null 2>&1
+}
+
+# service_data_pg16_volume — the PostgreSQL 16 volume's name while it still holds a cluster,
+# for doctor's leftover-volume notice; nothing otherwise. Nothing, too, on an install whose
+# compose does not run the bundled PostgreSQL: asking there would create the volumes.
+service_data_pg16_volume() {
+  local project
+  docker compose config --services 2>/dev/null | grep -qx postgres-migrate || return 0
+  service_data_pg16_cluster || return 0
+  project=$(docker compose config 2>/dev/null | sed -n 's/^name: *//p' | head -1)
+  printf '%s_postgres_data\n' "${project:-logstotal}"
+}
+
+# service_data_pg16_gone — why a rollback across the move to PostgreSQL 19 is refused once
+# the 16 cluster is gone, whatever ROLLBACK_DATA says: there is nothing to go back to.
+# PostgreSQL 16 would initialise an empty cluster in the empty volume, the older release would
+# boot on an empty database, and the next upgrade would discard the 19 cluster — the only
+# copy — to move that empty one across.
+service_data_pg16_gone() {
+  echo "  - PostgreSQL: postgres_data no longer holds the PostgreSQL 16 cluster this release moved"
+  echo "    off (it was removed after the upgrade), so the older release would start on an empty"
+  echo "    database. ROLLBACK_DATA=previous cannot accept that: stay on this release, or rebuild"
+  echo "    the older one from a database backup taken before the upgrade."
+}
+
 _service_data_redis_major() {
   sed -n 's/.*[^a-z/]redis:\([0-9][0-9]*\)[.-].*/\1/p' "$1" 2>/dev/null | head -1
 }

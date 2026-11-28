@@ -338,7 +338,7 @@ def main() -> int:
         # Wired here AND in system_checks.run_all — doctor enumerates its checks
         # explicitly rather than calling run_all, so a new check must be wired in both.
         report.add_results(system_checks.check_docker_tools(PROJECT_ROOT, in_container=args.in_container))
-        legacy_pg = system_checks.check_postgres_legacy_volume(in_container=args.in_container)
+        legacy_pg = system_checks.check_postgres_legacy_volume()
         if legacy_pg is not None:
             report.add_results([legacy_pg])
     else:

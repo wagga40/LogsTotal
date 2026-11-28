@@ -706,6 +706,12 @@ do_rollback() {
   local crossings
   crossings=$(service_data_crossings "$snap" . | tr '\n' ' ')
   crossings="${crossings% }"
+  case " $crossings " in
+    *" postgres "*)
+      service_data_pg16_cluster || die "rolling back to ${target:-the snapshot} cannot return the database:
+$(service_data_pg16_gone)
+       Nothing was changed. See docs/runbooks/upgrading.md#service-data." ;;
+  esac
   if [ -n "$crossings" ] && [ "${ROLLBACK_DATA:-}" != previous ]; then
     # shellcheck disable=SC2086  # one word per crossing
     die "rolling back to ${target:-the snapshot} crosses one-way changes to service data:

@@ -198,14 +198,20 @@ app against PostgreSQL 19.
 - **If the restore fails, PostgreSQL 19 refuses to start** rather than serve an empty
   database, with a message saying so. `docker compose up -d` discards the incomplete
   cluster and moves the data again; the PostgreSQL 16 volume is unchanged throughout.
-- **The old volume stays until you remove it.** `./logstotal doctor:docker` mentions it (so
-  does `./logstotal doctor` on a development checkout); the System tab cannot, because the
-  web container cannot list Docker volumes. Once you will not roll back past this release,
-  delete it:
+- **The old volume stays until you remove it.** `./logstotal doctor:docker` mentions it
+  while it still holds the PostgreSQL 16 database; the System tab cannot, because the web
+  container cannot look inside Docker volumes. Once you will not roll back past this
+  release, delete it:
 
   ```bash
+  docker compose rm -f postgres-migrate      # its stopped container still uses the volume
   docker volume rm logstotal_postgres_data   # the prefix is your compose project name
   ```
+
+  The next start creates `postgres_data` again, empty, because `postgres-migrate` mounts
+  it. An empty volume takes no space and doctor does not report it. From then on a rollback
+  past 1.4 is refused: there is no PostgreSQL 16 database left to return to (see
+  [Service data](#service-data)).
 
 ## Rollback
 
@@ -254,6 +260,12 @@ ROLLBACK_DATA=previous ./logstotal upgrade:rollback
 | PostgreSQL 16 → 19 (1.4) | The older release runs on `postgres_data` again, the database as it was when 1.4 first started. Rows written since stay in `postgres19_data`, unused; the 19 cluster is marked superseded, so the next upgrade copies `postgres_data` across afresh instead of reviving them. |
 | Redis 7 → 8 (1.4) | Redis 7 cannot read Redis 8's data file, so it is set aside as `dump.rdb.from-redis-8` and Redis starts empty. Queued jobs are dropped and fail once `HUEY_QUEUE_EXPIRY` passes; caches rebuild themselves. |
 | Garage → 2.5 or later (1.4) | Its metadata goes back to the copy `garage-entrypoint.sh` took before Garage 2.5 first ran; the newer metadata is kept beside it as `meta/.from-garage-2.5`. Objects stored since the upgrade — the uploads and tool outputs of jobs run after it — are no longer listed, though their bytes stay in `garage_data`. |
+
+Once `postgres_data` no longer holds the PostgreSQL 16 database — you removed it after the
+move — a rollback across PostgreSQL is refused even with `ROLLBACK_DATA=previous`, because
+the older release would start on an empty database. Stay on this release, or install the
+older one and load a database backup taken before the upgrade into it
+([Restore the database](#restore-the-database)).
 
 It applies only to services the host runs: an SQLite install with local storage only meets
 the Redis row. On a fleet, the check runs on the control plane before any host is stopped,

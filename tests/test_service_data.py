@@ -194,3 +194,113 @@ def test_the_fleet_checks_service_data_before_stopping_anything(tmp_path):
     assert result.returncode == 0, result.stdout + result.stderr
     out = result.stdout
     assert out.index("checking the database") < out.index("check cp.example.com's bundled service data") < out.index("stopping stacks")
+
+
+# ── is the PostgreSQL 16 cluster still there? ────────────────────────────────
+#
+# postgres-migrate mounts postgres_data, so Compose creates that volume on every start:
+# empty on a fresh 1.4 install, empty again after an operator removed it. Its NAME says
+# nothing; only its contents do. Two things hang on the answer — doctor's leftover-volume
+# notice, and whether a rollback across the move has a database to return to.
+
+
+def _pg16_stub(tmp_path: Path, services: str, *, cluster: bool, project: str = "logstotal", eats_stdin: bool = False) -> Path:
+    """A docker that answers the three questions the helpers ask, and logs every call."""
+    shim = tmp_path / "pg16shim"
+    shim.mkdir()
+    log = tmp_path / "docker.log"
+    probe = "exit 0" if cluster else "exit 1"
+    drain = "cat >/dev/null; " if eats_stdin else ""
+    (shim / "docker").write_text(
+        "#!/bin/sh\n"
+        f"printf '%s\\n' \"$*\" | tr '\\n' ' ' >> \"{log}\"; echo >> \"{log}\"\n"
+        'case "$*" in\n'
+        "  \"compose config --services\") printf '%s\\n' " + " ".join(services.split()) + " ;;\n"
+        f"  \"compose config\") printf 'name: {project}\\nservices: {{}}\\n' ;;\n"
+        f'  *"postgres-migrate -c test -s /old/PG_VERSION"*) {drain}{probe} ;;\n'
+        "esac\n"
+        "exit 0\n"
+    )
+    (shim / "docker").chmod(0o755)
+    return shim
+
+
+def test_the_volume_is_named_while_it_holds_the_cluster(tmp_path):
+    shim = _pg16_stub(tmp_path, "postgres postgres-migrate redis", cluster=True, project="lt")
+    assert _bash("service_data_pg16_volume", tmp_path, shim).stdout == "lt_postgres_data\n"
+
+
+def test_an_empty_volume_is_not_named(tmp_path):
+    shim = _pg16_stub(tmp_path, "postgres postgres-migrate redis", cluster=False)
+    result = _bash("service_data_pg16_volume", tmp_path, shim)
+    assert result.returncode == 0 and result.stdout == ""
+
+
+def test_an_install_without_the_bundled_database_is_never_probed(tmp_path):
+    """`compose run postgres-migrate` there would create its volumes and pull its image."""
+    shim = _pg16_stub(tmp_path, "redis web worker", cluster=True)
+    assert _bash("service_data_pg16_volume", tmp_path, shim).stdout == ""
+    assert "compose run" not in (tmp_path / "docker.log").read_text()
+
+
+def test_the_probe_never_swallows_the_script_that_runs_it(tmp_path):
+    """`compose run` attaches stdin by default. The fleet runs these helpers through
+    `bash -s <<EOS` over ssh, so an attached probe ate every line after it (measured on the
+    fleet's control plane) — here, a docker that drains its stdin stands in for it."""
+    shim = _pg16_stub(tmp_path, "postgres-migrate", cluster=True, eats_stdin=True)
+    env = {"PATH": f"{shim}:/usr/bin:/bin:/usr/sbin:/sbin", "HOME": str(tmp_path)}
+    script = f'. "{LIB}"\nservice_data_pg16_cluster\necho still-reading\n'
+    result = subprocess.run(["bash", "-s"], input=script, cwd=tmp_path, env=env, capture_output=True, text=True, check=False)
+    assert "still-reading" in result.stdout, result.stderr
+
+
+def _upgraded_across_postgres_19(tmp_path: Path, *, cluster: bool) -> Path:
+    """An install whose snapshot ran PostgreSQL 16 and whose current tree runs 19."""
+    _install(tmp_path, "0.9.14")
+    (tmp_path / "docker-compose.yml").write_text(OLD_COMPOSE)
+    shim = _make_stub_dir(tmp_path)
+    assert _run(["docker"], tmp_path, _PINNED, path_prefix=shim).returncode == 0
+    (tmp_path / "VERSION").write_text("version: 0.9.15\n")
+    (tmp_path / "docker-compose.yml").write_text(NEW_COMPOSE)
+    probe = "exit 0" if cluster else "exit 1"
+    (shim / "docker").write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        "  \"compose config --services\") printf '%s\\n' postgres postgres-migrate redis web worker; exit 0 ;;\n"
+        f'  *"postgres-migrate -c test -s /old/PG_VERSION"*) {probe} ;;\n'
+        "esac\n"
+        'echo "STUB docker $*"\nexit 0\n'
+    )
+    return shim
+
+
+def test_a_rollback_with_no_16_cluster_left_is_refused_even_with_consent(tmp_path):
+    """ROLLBACK_DATA=previous accepts losing what was written since the upgrade. It cannot
+    accept losing everything: PostgreSQL 16 would initialise an empty cluster in the empty
+    volume, and the next upgrade would discard the 19 cluster — the only copy — for it."""
+    shim = _upgraded_across_postgres_19(tmp_path, cluster=False)
+    result = _run(["rollback"], tmp_path, {"ROLLBACK_DATA": "previous"}, path_prefix=shim)
+    assert result.returncode != 0
+    assert "cannot return the database" in result.stderr and "empty" in result.stderr
+    assert (tmp_path / "VERSION").read_text() == "version: 0.9.15\n"
+    assert "service data:" not in result.stdout, "nothing may be set back before the refusal"
+    assert _snapshots(tmp_path)
+
+
+def test_with_the_16_cluster_still_there_consent_rolls_back_as_before(tmp_path):
+    shim = _upgraded_across_postgres_19(tmp_path, cluster=True)
+    result = _run(["rollback"], tmp_path, {"ROLLBACK_DATA": "previous"}, path_prefix=shim)
+    assert result.returncode == 0, result.stdout + result.stderr
+    assert "marking the PostgreSQL 19 cluster superseded" in result.stdout
+    assert (tmp_path / "VERSION").read_text() == "version: 0.9.14\n"
+
+
+def test_the_fleet_refuses_a_rollback_with_no_16_cluster_before_any_consent_is_read():
+    script = (REPO_ROOT / "scripts" / "deploy-multiserver.sh").read_text(encoding="utf-8")
+    guard = script[script.index("rollback_service_data_guard() {") :]
+    guard = guard[: guard.index("\n}\n")]
+    # Asked on the control plane, by the helper; a CP too old to answer fails the check.
+    assert "service_data_pg16_cluster || echo postgres-gone" in guard
+    assert "type service_data_pg16_cluster" in guard
+    # And refused locally before ROLLBACK_DATA is even looked at.
+    assert guard.index("grep -qx postgres-gone") < guard.index('"${ROLLBACK_DATA:-}" != previous')

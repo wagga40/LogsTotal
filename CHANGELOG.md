@@ -9,6 +9,16 @@ backup step, migration ordering, and rollback for each deployment path.
 
 ## [Unreleased]
 
+### Fixed
+
+- `./logstotal doctor:docker` reported a leftover PostgreSQL 16 volume on every fresh 1.4
+  install, and again after you had removed it, because Compose recreates the volume empty.
+  It now reports the volume only while it still holds the old database, and the removal
+  command it gives works: the stopped `postgres-migrate` container has to go first.
+- Once the PostgreSQL 16 volume was removed, a rollback past 1.4 with
+  `ROLLBACK_DATA=previous` would have started the older release on an empty database. It
+  is now refused on a single host and on a fleet.
+
 ## [1.4.1] — 2026-11-28
 
 ### Fixed

@@ -170,15 +170,16 @@ tasks:
       # the DATABASE_URL the entrypoint derived at boot, and would check an empty
       # ./logstotal.db inside the container instead of the real database.
       #
-      # LT_HOST_DOCKER_VOLUMES: the container has no Docker CLI, so the host lists its
-      # volumes for the check that reports a leftover PostgreSQL 16 volume. `-q`, not
-      # `--format`: go-task would read the format's braces as its own template.
+      # LT_HOST_PG16_VOLUME: the container has no Docker CLI, so the host looks inside the
+      # PostgreSQL 16 volume for the check that reports one left behind — by its contents,
+      # because Compose recreates that volume empty on every start (service_data.sh).
       - |
-        vols=$(docker volume ls -q 2>/dev/null | tr '\n' ' ')
+        . scripts/lib/service_data.sh
+        pg16=$(service_data_pg16_volume)
         if docker compose ps --status running web 2>/dev/null | grep -q web; then
-          docker compose exec -t -e LOGSTOTAL_ENTRYPOINT_ENV_ONLY=1 -e LT_HOST_DOCKER_VOLUMES="$vols" web /docker-entrypoint.sh python3 scripts/doctor.py --in-container
+          docker compose exec -t -e LOGSTOTAL_ENTRYPOINT_ENV_ONLY=1 -e LT_HOST_PG16_VOLUME="$pg16" web /docker-entrypoint.sh python3 scripts/doctor.py --in-container
         else
-          docker compose run --rm -e LT_HOST_DOCKER_VOLUMES="$vols" web python3 scripts/doctor.py --in-container
+          docker compose run --rm -e LT_HOST_PG16_VOLUME="$pg16" web python3 scripts/doctor.py --in-container
         fi
 
   gen-secrets:

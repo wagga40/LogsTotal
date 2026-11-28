@@ -1041,10 +1041,23 @@ LATEST=\$(ls -d "${SNAPSHOT_ROOT}"/*/ 2>/dev/null | tail -1 | sed 's#/\$##' || t
 [ -n "\$LATEST" ] || exit 0
 [ -f scripts/lib/service_data.sh ] || exit 0
 . scripts/lib/service_data.sh
-service_data_crossings "\$LATEST" .
+crossings=\$(service_data_crossings "\$LATEST" .)
+printf '%s\n' "\$crossings"
+# Crossing the move to PostgreSQL 19 needs the 16 cluster to go back to. A CP whose
+# service_data.sh predates that check cannot answer, so the guard refuses rather than passes.
+if printf '%s\n' "\$crossings" | grep -qx postgres; then
+  type service_data_pg16_cluster >/dev/null 2>&1 \
+    || { echo "this host's service_data.sh cannot tell whether the PostgreSQL 16 cluster is still there" >&2; exit 1; }
+  service_data_pg16_cluster || echo postgres-gone
+fi
 EOS
   ) || die "refusing to roll back: ${cp}'s bundled service data could not be checked (the reason
        is above). Nothing was stopped or restored."
+  if printf '%s\n' "$out" | grep -qx postgres-gone; then
+    die "refusing to roll back: on ${cp}, the database cannot be returned:
+$(service_data_pg16_gone)
+       Nothing was stopped or restored. See docs/runbooks/upgrading.md#service-data."
+  fi
   # Only the three words the check can print; anything else on the channel is not an answer.
   ROLLBACK_CROSSINGS=$(printf '%s\n' "$out" | grep -xE 'postgres|redis|garage' | tr '\n' ' ' || true)
   ROLLBACK_CROSSINGS="${ROLLBACK_CROSSINGS% }"
